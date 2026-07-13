@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <mutex>
 
 namespace MiniEngine
 {
@@ -45,6 +46,7 @@ namespace MiniEngine
         void* m_freeList = nullptr;
         std::size_t m_blockSize = 0;
         std::size_t m_blockCount = 0;
+        std::mutex m_mutex;
     };
 
     class MemoryManager

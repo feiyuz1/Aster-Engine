@@ -1,132 +1,150 @@
 #include "MiniEngine/Resource/Resource.hpp"
 
-#include <fstream>
+#include "MiniEngine/Platform/Platform.hpp"
+
+#include <algorithm>
+#include <cfloat>
+#include <sstream>
 
 namespace MiniEngine
 {
-    namespace
+    const std::string& Resource::GetPath() const { return m_path; }
+    ResourceState Resource::GetState() const { return m_state.load(); }
+    bool Resource::IsReady() const { return GetState() == ResourceState::Loaded; }
+
+    std::string Resource::GetError() const
     {
-        bool LoadFileBytes(const std::string& path, std::vector<std::uint8_t>& outBytes)
+        std::lock_guard<std::mutex> lock(m_stateMutex);
+        return m_error;
+    }
+
+    bool Resource::Wait() const
+    {
+        std::unique_lock<std::mutex> lock(m_stateMutex);
+        m_stateCv.wait(lock, [this]() { const auto state = m_state.load(); return state != ResourceState::Loading; });
+        return m_state.load() == ResourceState::Loaded;
+    }
+
+    void Resource::MarkLoading(const std::string& path)
+    {
+        if (!path.empty()) m_path = path;
+        SetState(ResourceState::Loading);
+    }
+
+    void Resource::SetState(const ResourceState state, std::string error)
+    {
         {
-            std::ifstream file(path, std::ios::binary | std::ios::ate);
-            if (!file.is_open())
-            {
-                return false;
-            }
-
-            const std::streamsize size = file.tellg();
-            if (size < 0)
-            {
-                return false;
-            }
-
-            outBytes.resize(static_cast<std::size_t>(size));
-            file.seekg(0, std::ios::beg);
-
-            if (size > 0 && !file.read(reinterpret_cast<char*>(outBytes.data()), size))
-            {
-                return false;
-            }
-
-            return true;
+            std::lock_guard<std::mutex> lock(m_stateMutex);
+            m_error = std::move(error);
+            m_state.store(state);
         }
-    }
-
-    const std::string& Resource::GetPath() const
-    {
-        return m_path;
-    }
-
-    ResourceState Resource::GetState() const
-    {
-        return m_state;
-    }
-
-    void Resource::MarkLoading()
-    {
-        m_state = ResourceState::Loading;
-    }
-
-    void Resource::SetState(const ResourceState state)
-    {
-        m_state = state;
+        m_stateCv.notify_all();
     }
 
     bool TextureResource::Load(const std::string& path)
     {
-        m_path = path;
-        SetState(ResourceState::Loading);
-
-        if (!LoadFileBytes(path, m_data))
+        MarkLoading(path);
+        m_data = PlatformFile::ReadAllBytes(path);
+        if (m_data.empty() && !PlatformFile::Exists(path))
         {
-            SetState(ResourceState::Failed);
+            SetState(ResourceState::Failed, "Texture file not found: " + path);
             return false;
         }
-
         SetState(ResourceState::Loaded);
         return true;
     }
 
-    void TextureResource::Unload()
-    {
-        m_data.clear();
-        SetState(ResourceState::Unloaded);
-    }
-
-    std::size_t TextureResource::GetByteSize() const
-    {
-        return m_data.size();
-    }
+    void TextureResource::Unload() { m_data.clear(); SetState(ResourceState::Unloaded); }
+    std::size_t TextureResource::GetByteSize() const { return m_data.size(); }
+    const std::vector<std::uint8_t>& TextureResource::GetData() const { return m_data; }
 
     bool MeshResource::Load(const std::string& path)
     {
-        m_path = path;
-        SetState(ResourceState::Loading);
-
-        if (!LoadFileBytes(path, m_data))
+        MarkLoading(path);
+        std::istringstream stream(PlatformFile::ReadAllText(path));
+        if (!stream)
         {
-            SetState(ResourceState::Failed);
+            SetState(ResourceState::Failed, "Mesh file not found: " + path);
             return false;
         }
-
+        std::vector<Vec3> positions;
+        std::string line;
+        m_vertices.clear(); m_indices.clear();
+        m_bounds.minimum = {FLT_MAX, FLT_MAX, FLT_MAX};
+        m_bounds.maximum = {-FLT_MAX, -FLT_MAX, -FLT_MAX};
+        while (std::getline(stream, line))
+        {
+            std::istringstream row(line);
+            std::string type; row >> type;
+            if (type == "v")
+            {
+                Vec3 value; if (!(row >> value.x >> value.y >> value.z)) continue;
+                positions.push_back(value);
+                m_bounds.minimum.x = std::min(m_bounds.minimum.x, value.x); m_bounds.minimum.y = std::min(m_bounds.minimum.y, value.y); m_bounds.minimum.z = std::min(m_bounds.minimum.z, value.z);
+                m_bounds.maximum.x = std::max(m_bounds.maximum.x, value.x); m_bounds.maximum.y = std::max(m_bounds.maximum.y, value.y); m_bounds.maximum.z = std::max(m_bounds.maximum.z, value.z);
+            }
+            else if (type == "f")
+            {
+                std::vector<std::uint32_t> face;
+                std::string value;
+                while (row >> value)
+                {
+                    const auto slash = value.find('/');
+                    const int index = std::stoi(value.substr(0, slash));
+                    if (index > 0 && static_cast<std::size_t>(index) <= positions.size()) face.push_back(static_cast<std::uint32_t>(index - 1));
+                }
+                for (std::size_t index = 1; index + 1 < face.size(); ++index)
+                {
+                    const Vec3 a = positions[face[0]], b = positions[face[index]], c = positions[face[index + 1]];
+                    const Vec3 normal = Normalize(Cross(b - a, c - a));
+                    const std::uint32_t base = static_cast<std::uint32_t>(m_vertices.size());
+                    m_vertices.push_back({a, normal, {0.0f, 0.0f}});
+                    m_vertices.push_back({b, normal, {1.0f, 0.0f}});
+                    m_vertices.push_back({c, normal, {0.0f, 1.0f}});
+                    m_indices.insert(m_indices.end(), {base, base + 1, base + 2});
+                }
+            }
+        }
+        if (m_vertices.empty())
+        {
+            SetState(ResourceState::Failed, "Mesh contains no valid faces: " + path);
+            return false;
+        }
         SetState(ResourceState::Loaded);
         return true;
     }
 
-    void MeshResource::Unload()
-    {
-        m_data.clear();
-        SetState(ResourceState::Unloaded);
-    }
-
-    std::size_t MeshResource::GetByteSize() const
-    {
-        return m_data.size();
-    }
+    void MeshResource::Unload() { m_vertices.clear(); m_indices.clear(); SetState(ResourceState::Unloaded); }
+    std::size_t MeshResource::GetByteSize() const { return m_vertices.size() * sizeof(MeshVertex) + m_indices.size() * sizeof(std::uint32_t); }
+    const std::vector<MeshVertex>& MeshResource::GetVertices() const { return m_vertices; }
+    const std::vector<std::uint32_t>& MeshResource::GetIndices() const { return m_indices; }
+    const Aabb& MeshResource::GetBounds() const { return m_bounds; }
 
     bool ShaderResource::Load(const std::string& path)
     {
-        m_path = path;
-        SetState(ResourceState::Loading);
+        MarkLoading(path); m_source = PlatformFile::ReadAllText(path);
+        if (m_source.empty()) { SetState(ResourceState::Failed, "Shader file is empty or missing: " + path); return false; }
+        SetState(ResourceState::Loaded); return true;
+    }
+    void ShaderResource::Unload() { m_source.clear(); SetState(ResourceState::Unloaded); }
+    std::size_t ShaderResource::GetByteSize() const { return m_source.size(); }
+    const std::string& ShaderResource::GetSource() const { return m_source; }
 
-        if (!LoadFileBytes(path, m_data))
+    bool MaterialResource::Load(const std::string& path)
+    {
+        MarkLoading(path);
+        std::istringstream stream(PlatformFile::ReadAllText(path));
+        if (!stream) { SetState(ResourceState::Failed, "Material file not found: " + path); return false; }
+        std::string key;
+        while (stream >> key)
         {
-            SetState(ResourceState::Failed);
-            return false;
+            if (key == "color") stream >> m_baseColor.x >> m_baseColor.y >> m_baseColor.z >> m_baseColor.w;
+            else if (key == "shader") stream >> m_shaderPath;
+            else { std::string ignored; std::getline(stream, ignored); }
         }
-
-        SetState(ResourceState::Loaded);
-        return true;
+        SetState(ResourceState::Loaded); return true;
     }
-
-    void ShaderResource::Unload()
-    {
-        m_data.clear();
-        SetState(ResourceState::Unloaded);
-    }
-
-    std::size_t ShaderResource::GetByteSize() const
-    {
-        return m_data.size();
-    }
+    void MaterialResource::Unload() { m_shaderPath.clear(); SetState(ResourceState::Unloaded); }
+    Vec4 MaterialResource::GetBaseColor() const { return m_baseColor; }
+    const std::string& MaterialResource::GetShaderPath() const { return m_shaderPath; }
 }

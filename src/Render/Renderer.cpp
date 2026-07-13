@@ -3,6 +3,7 @@
 #include "MiniEngine/Core/Logger.hpp"
 #include "MiniEngine/ECS/Components.hpp"
 #include "MiniEngine/ECS/ECS.hpp"
+#include "MiniEngine/Resource/ResourceManager.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -10,47 +11,16 @@
 
 namespace MiniEngine
 {
-    bool NullRenderDevice::Initialize()
-    {
-        return true;
-    }
+    bool NullRenderDevice::Initialize() { return true; }
+    void NullRenderDevice::Shutdown() {}
+    bool NullRenderDevice::PumpEvents() { return true; }
+    const InputState& NullRenderDevice::GetInputState() const { return m_inputState; }
+    void NullRenderDevice::BeginFrame(const FrameView&) {}
+    void NullRenderDevice::Draw(const RenderItem&) {}
+    void NullRenderDevice::EndFrame() {}
+    void NullRenderDevice::Present() {}
 
-    void NullRenderDevice::Shutdown()
-    {
-    }
-
-    bool NullRenderDevice::PumpEvents()
-    {
-        return true;
-    }
-
-    const InputState& NullRenderDevice::GetInputState() const
-    {
-        return m_inputState;
-    }
-
-    void NullRenderDevice::BeginFrame()
-    {
-    }
-
-    void NullRenderDevice::Draw(const RenderItem& item)
-    {
-        (void)item;
-    }
-
-    void NullRenderDevice::EndFrame()
-    {
-    }
-
-    void NullRenderDevice::Present()
-    {
-    }
-
-    void RenderQueue::AddItem(const RenderItem& item)
-    {
-        m_items.push_back(item);
-    }
-
+    void RenderQueue::AddItem(const RenderItem& item) { m_items.push_back(item); }
     void RenderQueue::Sort()
     {
         std::sort(m_items.begin(), m_items.end(), [](const RenderItem& lhs, const RenderItem& rhs)
@@ -58,153 +28,84 @@ namespace MiniEngine
             return lhs.distanceToCamera < rhs.distanceToCamera;
         });
     }
+    void RenderQueue::Clear() { m_items.clear(); }
+    const std::vector<RenderItem>& RenderQueue::GetItems() const { return m_items; }
 
-    void RenderQueue::Clear()
-    {
-        m_items.clear();
-    }
-
-    const std::vector<RenderItem>& RenderQueue::GetItems() const
-    {
-        return m_items;
-    }
-
-    void ShaderManager::Initialize()
-    {
-    }
-
-    void ShaderManager::Shutdown()
-    {
-    }
-
-    void MaterialSystem::Initialize()
-    {
-    }
-
-    void MaterialSystem::Shutdown()
-    {
-    }
-
-    void Renderer::SetLogger(Logger* logger)
-    {
-        m_logger = logger;
-    }
+    void Renderer::SetLogger(Logger* logger) { m_logger = logger; }
+    void Renderer::SetResourceManager(ResourceManager* resources) { m_resources = resources; }
 
     bool Renderer::Initialize(std::unique_ptr<RenderDevice> device)
     {
         m_device = std::move(device);
-        if (m_device == nullptr || !m_device->Initialize())
-        {
-            return false;
-        }
-
-        m_shaderManager.Initialize();
-        m_materialSystem.Initialize();
-        return true;
+        return m_device && m_device->Initialize();
     }
 
     void Renderer::Shutdown()
     {
         m_renderQueue.Clear();
-        m_materialSystem.Shutdown();
-        m_shaderManager.Shutdown();
-
-        if (m_device != nullptr)
-        {
-            m_device->Shutdown();
-            m_device.reset();
-        }
+        if (m_device) { m_device->Shutdown(); m_device.reset(); }
     }
 
-    bool Renderer::PumpEvents()
-    {
-        if (m_device == nullptr)
-        {
-            return false;
-        }
-        return m_device->PumpEvents();
-    }
-
+    bool Renderer::PumpEvents() { return m_device && m_device->PumpEvents(); }
     const InputState& Renderer::GetInputState() const
     {
-        static const InputState emptyState{};
-        if (m_device == nullptr)
-        {
-            return emptyState;
-        }
-        return m_device->GetInputState();
+        static const InputState empty{};
+        return m_device ? m_device->GetInputState() : empty;
     }
 
     void Renderer::BuildRenderQueue(World& world)
     {
         m_renderQueue.Clear();
-
-        auto& entities = world.GetEntityManager();
-        auto& components = world.GetComponentManager();
-
-        for (const Entity entity : entities.GetAliveEntities())
+        Vec3 cameraPosition{0.0f, 0.0f, 5.0f};
+        Vec3 cameraForward{0.0f, 0.0f, -1.0f};
+        CameraComponent camera{};
+        world.GetComponentManager().ForEach<CameraComponent>([&](const Entity entity, CameraComponent& candidate)
         {
-            const auto* mesh = components.Get<MeshComponent>(entity);
-            if (mesh == nullptr)
+            if (!candidate.primary) return;
+            camera = candidate;
+            if (const auto* transform = world.GetComponent<TransformComponent>(entity))
             {
-                continue;
+                cameraPosition = transform->position;
+                const float pitch = DegreesToRadians(transform->rotation.x);
+                const float yaw = DegreesToRadians(transform->rotation.y);
+                cameraForward = Normalize({std::cos(pitch) * std::sin(yaw), std::sin(pitch), -std::cos(pitch) * std::cos(yaw)});
             }
+        });
+        m_frameView.cameraPosition = cameraPosition;
+        m_frameView.view = LookAt(cameraPosition, cameraPosition + cameraForward, {0.0f, 1.0f, 0.0f});
+        m_frameView.projection = Perspective(camera.fov, 16.0f / 9.0f, camera.nearPlane, camera.farPlane);
+        world.GetComponentManager().ForEach<LightComponent>([&](Entity, LightComponent& light)
+        {
+            m_frameView.lightDirection = Normalize(light.direction);
+            m_frameView.lightColor = light.color;
+            m_frameView.lightIntensity = light.intensity;
+        });
 
-            float distance = 0.0f;
-            const auto* transform = components.Get<TransformComponent>(entity);
-            if (transform != nullptr)
-            {
-                distance = std::sqrt(
-                    transform->position.x * transform->position.x +
-                    transform->position.y * transform->position.y +
-                    transform->position.z * transform->position.z);
-            }
-
-            m_renderQueue.AddItem(RenderItem{
-                entity,
-                distance,
-                transform != nullptr ? transform->position.x : 0.0f,
-                transform != nullptr ? transform->position.y : 0.0f,
-                transform != nullptr ? transform->position.z : 0.0f,
-                transform != nullptr ? transform->rotation.x : 0.0f,
-                transform != nullptr ? transform->rotation.y : 0.0f,
-                transform != nullptr ? transform->rotation.z : 0.0f,
-                transform != nullptr ? transform->scale.x : 1.0f,
-                transform != nullptr ? transform->scale.y : 1.0f,
-                transform != nullptr ? transform->scale.z : 1.0f,
-                mesh->meshPath
-            });
-        }
-
+        world.GetComponentManager().ForEach<MeshComponent>([&](const Entity entity, MeshComponent& meshComponent)
+        {
+            if (!m_resources) return;
+            auto mesh = m_resources->Load<MeshResource>(meshComponent.meshPath);
+            if (!mesh) return;
+            auto material = m_resources->Load<MaterialResource>(meshComponent.materialPath);
+            const auto* transform = world.GetComponent<TransformComponent>(entity);
+            const Vec3 position = transform ? transform->position : Vec3{};
+            m_renderQueue.AddItem({entity, Length(position - cameraPosition), world.GetWorldMatrix(entity), std::move(mesh), std::move(material)});
+        });
         m_renderQueue.Sort();
     }
 
     void Renderer::RenderFrame(World& world)
     {
-        if (m_device == nullptr)
-        {
-            return;
-        }
-
+        if (!m_device) return;
         BuildRenderQueue(world);
-
-        m_device->BeginFrame();
-        for (const auto& item : m_renderQueue.GetItems())
-        {
-            m_device->Draw(item);
-        }
+        m_device->BeginFrame(m_frameView);
+        for (const auto& item : m_renderQueue.GetItems()) m_device->Draw(item);
         m_device->EndFrame();
         m_device->Present();
-
         m_lastDrawCalls = m_renderQueue.GetItems().size();
-        if (m_logger != nullptr)
-        {
-            m_logger->Debug("RenderFrame draw calls: " + std::to_string(m_lastDrawCalls));
-        }
+        if (m_logger) m_logger->Debug("RenderFrame draw calls: " + std::to_string(m_lastDrawCalls));
     }
 
-    std::size_t Renderer::GetLastDrawCallCount() const
-    {
-        return m_lastDrawCalls;
-    }
+    std::size_t Renderer::GetLastDrawCallCount() const { return m_lastDrawCalls; }
+    const FrameView& Renderer::GetFrameView() const { return m_frameView; }
 }

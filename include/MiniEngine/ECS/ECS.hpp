@@ -1,8 +1,10 @@
 #pragma once
 
 #include "MiniEngine/Types.hpp"
+#include "MiniEngine/Math/Math.hpp"
 
 #include <memory>
+#include <string>
 #include <type_traits>
 #include <typeindex>
 #include <unordered_map>
@@ -19,10 +21,11 @@ namespace MiniEngine
         void Destroy(Entity entity);
         bool IsAlive(Entity entity) const;
         const std::unordered_set<Entity>& GetAliveEntities() const;
+        void Reset();
 
     private:
-        Entity m_nextEntity = 1;
-        std::vector<Entity> m_freeEntities;
+        std::vector<u32> m_generations{0};
+        std::vector<u32> m_freeIndices;
         std::unordered_set<Entity> m_aliveEntities;
     };
 
@@ -32,6 +35,7 @@ namespace MiniEngine
         virtual ~IComponentStorage() = default;
         virtual void Remove(Entity entity) = 0;
         virtual bool Has(Entity entity) const = 0;
+        virtual void Clear() = 0;
     };
 
     template<typename T>
@@ -52,6 +56,8 @@ namespace MiniEngine
         {
             return m_data.find(entity) != m_data.end();
         }
+
+        void Clear() override { m_data.clear(); }
 
         T* Get(Entity entity)
         {
@@ -134,7 +140,26 @@ namespace MiniEngine
             }
         }
 
+        template<typename TFirst, typename TSecond, typename Func>
+        void ForEach(Func&& func)
+        {
+            auto* first = FindStorage<TFirst>();
+            auto* second = FindStorage<TSecond>();
+            if (first == nullptr || second == nullptr) return;
+            if (first->Data().size() <= second->Data().size())
+            {
+                for (auto& pair : first->Data())
+                    if (auto* value = second->Get(pair.first)) func(pair.first, pair.second, *value);
+            }
+            else
+            {
+                for (auto& pair : second->Data())
+                    if (auto* value = first->Get(pair.first)) func(pair.first, *value, pair.second);
+            }
+        }
+
         void RemoveAll(Entity entity);
+        void Clear();
 
     private:
         template<typename T>
@@ -223,6 +248,13 @@ namespace MiniEngine
     class World
     {
     public:
+        Entity CreateEntity(const std::string& name = "Entity");
+        void DestroyEntity(Entity entity);
+        bool IsAlive(Entity entity) const;
+        void Clear();
+        bool SetParent(Entity child, Entity parent);
+        Mat4 GetWorldMatrix(Entity entity) const;
+
         EntityManager& GetEntityManager();
         ComponentManager& GetComponentManager();
         SystemManager& GetSystemManager();
@@ -234,8 +266,11 @@ namespace MiniEngine
         template<typename T>
         void AddComponent(Entity entity, const T& component)
         {
-            m_componentManager.Add<T>(entity, component);
+            if (m_entityManager.IsAlive(entity)) m_componentManager.Add<T>(entity, component);
         }
+
+        template<typename T>
+        void RemoveComponent(Entity entity) { m_componentManager.Remove<T>(entity); }
 
         template<typename T>
         T* GetComponent(Entity entity)

@@ -1,9 +1,9 @@
 #include "MiniEngine/Runtime/Engine.hpp"
 
 #include "MiniEngine/ECS/Components.hpp"
+#include "MiniEngine/ECS/SceneSerializer.hpp"
 #include "MiniEngine/ECS/Systems.hpp"
 #include "MiniEngine/Render/SdlGlRenderDevice.hpp"
-#include "MiniEngine/Resource/Resource.hpp"
 
 #include <algorithm>
 #include <chrono>
@@ -13,77 +13,48 @@ namespace MiniEngine
 {
     bool Engine::Initialize()
     {
+        if (m_initialized) return true;
         m_logger.Info("Engine initialize begin.");
-
         m_memoryManager.Initialize();
-
         const auto hardwareCount = std::thread::hardware_concurrency();
-        const std::uint32_t workerCount = std::max(1u, hardwareCount > 1 ? hardwareCount - 1 : 1u);
-        m_jobSystem.Initialize(workerCount);
-
+        m_jobSystem.Initialize(std::max(1u, hardwareCount > 1 ? hardwareCount - 1 : 1u));
         m_resourceManager.Initialize(&m_jobSystem);
-
         m_world.GetSystemManager().RegisterSystem<MovementSystem>();
+        m_world.GetSystemManager().RegisterSystem<AnimationSystem>();
         m_world.Initialize();
-
         m_renderer.SetLogger(&m_logger);
+        m_renderer.SetResourceManager(&m_resourceManager);
         if (!m_renderer.Initialize(std::make_unique<SdlGlRenderDevice>()))
         {
             m_logger.Error("Renderer initialize failed.");
+            Shutdown();
             return false;
         }
-
+        m_audioEngine.Initialize(&m_logger);
         m_scriptEngine.Initialize(&m_logger);
-
-        m_context.logger = &m_logger;
-        m_context.memoryManager = &m_memoryManager;
-        m_context.jobSystem = &m_jobSystem;
-        m_context.resourceManager = &m_resourceManager;
-        m_context.world = &m_world;
-        m_context.renderer = &m_renderer;
-        m_context.scriptEngine = &m_scriptEngine;
-
+        m_context = {&m_logger, &m_memoryManager, &m_jobSystem, &m_resourceManager, &m_world, &m_renderer, &m_inputSystem, &m_physicsWorld, &m_audioEngine, &m_scriptEngine};
         SetupDemoScene();
-
-        m_logger.Info("Controls:");
-        m_logger.Info("Move: W/S(front/back), A/D(left/right), R/F(up/down), Shift(accelerate)");
-        m_logger.Info("Rotate: Arrow Up/Down(X), Arrow Left/Right(Y), Q/E(Z)");
-        m_logger.Info("Scale: Z enlarge, X shrink, Esc or close window to quit");
-
-        m_logger.Info("Engine initialize complete.");
+        m_initialized = true;
+        m_logger.Info("Engine initialize complete. OpenGL 3.3 core renderer active.");
         return true;
     }
 
     void Engine::Run(const std::uint32_t maxFrames)
     {
-        m_running = true;
-        m_frameIndex = 0;
-        constexpr float targetDeltaTime = 1.0f / 60.0f;
-        const bool runUnlimited = (maxFrames == 0);
-
+        if (!m_initialized) return;
+        m_running = true; m_frameIndex = 0; m_clock.Reset();
+        const bool unlimited = maxFrames == 0;
         m_logger.Info("Engine loop start.");
-
-        while (m_running && (runUnlimited || m_frameIndex < maxFrames))
+        while (m_running && (unlimited || m_frameIndex < maxFrames))
         {
-            if (!m_renderer.PumpEvents())
-            {
-                m_running = false;
-                break;
-            }
-
             const auto frameStart = std::chrono::steady_clock::now();
-            Tick(targetDeltaTime);
-            ++m_frameIndex;
-
-            const auto frameEnd = std::chrono::steady_clock::now();
-            const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(frameEnd - frameStart);
-            constexpr auto targetFrameTime = std::chrono::milliseconds(16);
-            if (elapsed < targetFrameTime)
-            {
-                std::this_thread::sleep_for(targetFrameTime - elapsed);
-            }
+            if (!m_renderer.PumpEvents()) break;
+            const float deltaTime = std::clamp(m_clock.Tick(), 0.0f, 0.25f);
+            Tick(deltaTime); ++m_frameIndex;
+            const auto elapsed = std::chrono::steady_clock::now() - frameStart;
+            constexpr auto minimumFrame = std::chrono::milliseconds(1);
+            if (elapsed < minimumFrame) std::this_thread::sleep_for(minimumFrame - elapsed);
         }
-
         m_running = false;
         m_logger.Info("Engine loop end.");
     }
@@ -91,90 +62,82 @@ namespace MiniEngine
     void Engine::Shutdown()
     {
         m_running = false;
-
         m_scriptEngine.Shutdown();
+        m_audioEngine.Shutdown();
         m_renderer.Shutdown();
+        m_physicsWorld.Clear();
         m_world.Shutdown();
         m_resourceManager.Shutdown();
         m_jobSystem.Shutdown();
         m_memoryManager.Shutdown();
-
-        m_logger.Info("Engine shutdown complete.");
+        m_context = {};
+        if (m_initialized) m_logger.Info("Engine shutdown complete.");
+        m_initialized = false;
     }
 
-    const EngineContext& Engine::GetContext() const
-    {
-        return m_context;
-    }
+    const EngineContext& Engine::GetContext() const { return m_context; }
+    void Engine::SetPaused(const bool paused) { m_paused = paused; }
+    bool Engine::IsPaused() const { return m_paused; }
+    void Engine::SetTimeScale(const float scale) { m_timeScale = std::max(0.0f, scale); }
 
-    void Engine::Tick(const float deltaTime)
+    void Engine::Tick(const float rawDeltaTime)
     {
+        const float deltaTime = m_paused ? 0.0f : rawDeltaTime * m_timeScale;
         const InputState& input = m_renderer.GetInputState();
-        if (auto* transform = m_world.GetComponent<TransformComponent>(m_playerEntity); transform != nullptr)
+        m_inputSystem.Update(input);
+        if (deltaTime > 0.0f)
         {
-            const float moveSpeed = input.sprint ? 8.0f : 3.0f;
-            const float rotateSpeed = 90.0f;
-            const float scaleSpeed = 1.2f;
-
-            transform->position.x += input.moveX * moveSpeed * deltaTime;
-            transform->position.y += input.moveY * moveSpeed * deltaTime;
-            transform->position.z += input.moveZ * moveSpeed * deltaTime;
-
-            transform->rotation.x += input.rotateX * rotateSpeed * deltaTime;
-            transform->rotation.y += input.rotateY * rotateSpeed * deltaTime;
-            transform->rotation.z += input.rotateZ * rotateSpeed * deltaTime;
-
-            const float uniformScale = std::clamp(
-                transform->scale.x + input.scale * scaleSpeed * deltaTime,
-                0.2f,
-                4.0f);
-            transform->scale = {uniformScale, uniformScale, uniformScale};
-        }
-
-        m_scriptEngine.UpdateAll(deltaTime);
-        m_world.Update(deltaTime);
-        m_renderer.RenderFrame(m_world);
-        m_memoryManager.ResetFrame();
-
-        if (m_frameIndex % 30 == 0)
-        {
-            const auto* transform = m_world.GetComponent<TransformComponent>(m_playerEntity);
-            if (transform != nullptr)
+            if (auto* transform = m_world.GetComponent<TransformComponent>(m_playerEntity))
             {
-                m_logger.Info(
-                    "Player position: (" +
-                    std::to_string(transform->position.x) + ", " +
-                    std::to_string(transform->position.y) + ", " +
-                    std::to_string(transform->position.z) + ")"
-                    + "  rotation: (" +
-                    std::to_string(transform->rotation.x) + ", " +
-                    std::to_string(transform->rotation.y) + ", " +
-                    std::to_string(transform->rotation.z) + ")"
-                    + "  scale: " +
-                    std::to_string(transform->scale.x));
+                const float moveSpeed = m_inputSystem.IsDown("Sprint") ? 8.0f : 3.0f;
+                transform->position += Vec3{m_inputSystem.GetAxis("MoveX"), m_inputSystem.GetAxis("MoveY"), m_inputSystem.GetAxis("MoveZ")} * (moveSpeed * deltaTime);
+                transform->rotation += Vec3{m_inputSystem.GetAxis("LookY"), m_inputSystem.GetAxis("LookX"), m_inputSystem.GetAxis("RotateZ")} * (90.0f * deltaTime);
+                const float uniformScale = std::clamp(transform->scale.x + m_inputSystem.GetAxis("Scale") * deltaTime, 0.2f, 4.0f);
+                transform->scale = {uniformScale, uniformScale, uniformScale};
+            }
+            m_scriptEngine.UpdateAll(deltaTime);
+            m_world.Update(deltaTime);
+            constexpr float fixedStep = 1.0f / 60.0f;
+            m_fixedAccumulator = std::min(m_fixedAccumulator + deltaTime, 0.25f);
+            while (m_fixedAccumulator >= fixedStep)
+            {
+                m_physicsWorld.Step(m_world, fixedStep);
+                m_fixedAccumulator -= fixedStep;
             }
         }
+        m_renderer.RenderFrame(m_world);
+        m_memoryManager.ResetFrame();
+        if ((m_frameIndex % 300) == 0) m_resourceManager.GarbageCollect();
     }
 
     void Engine::SetupDemoScene()
     {
-        m_playerEntity = m_world.GetEntityManager().Create();
+        m_playerEntity = m_world.CreateEntity("Player");
+        if (auto* transform = m_world.GetComponent<TransformComponent>(m_playerEntity)) transform->position = {0.0f, 1.0f, 0.0f};
+        m_world.AddComponent(m_playerEntity, MeshComponent{"assets/player.mesh", "assets/default.mat"});
+        m_world.AddComponent(m_playerEntity, ScriptComponent{"OrbitScript"});
+        m_world.AddComponent(m_playerEntity, RigidBodyComponent{});
+        m_world.AddComponent(m_playerEntity, ColliderComponent{});
 
-        TransformComponent transform{};
-        transform.position = {0.0f, 0.0f, 0.0f};
+        const Entity camera = m_world.CreateEntity("MainCamera");
+        if (auto* transform = m_world.GetComponent<TransformComponent>(camera)) { transform->position = {0.0f, 2.5f, 7.0f}; transform->rotation = {-10.0f, 0.0f, 0.0f}; }
+        m_world.AddComponent(camera, CameraComponent{});
 
-        MeshComponent mesh{};
-        mesh.meshPath = "assets/player.mesh";
-        mesh.materialPath = "assets/default.mat";
+        const Entity light = m_world.CreateEntity("Sun");
+        m_world.AddComponent(light, LightComponent{});
 
-        ScriptComponent script{};
-        script.scriptClassName = "OrbitScript";
+        const Entity floor = m_world.CreateEntity("GroundCollider");
+        if (auto* transform = m_world.GetComponent<TransformComponent>(floor)) { transform->position = {0.0f, -0.25f, 0.0f}; transform->scale = {20.0f, 0.5f, 20.0f}; }
+        m_world.AddComponent(floor, RigidBodyComponent{BodyType::Static, 0.0f, {}, false});
+        m_world.AddComponent(floor, ColliderComponent{});
 
-        m_world.AddComponent(m_playerEntity, transform);
-        m_world.AddComponent(m_playerEntity, mesh);
-        m_world.AddComponent(m_playerEntity, script);
+        const Entity animated = m_world.CreateEntity("AnimatedMesh");
+        m_world.AddComponent(animated, MeshComponent{"assets/player.mesh", "assets/default.mat"});
+        m_world.AddComponent(animated, AnimationComponent{"assets/player.anim"});
 
-        m_scriptEngine.CreateInstance(script.scriptClassName);
-        m_resourceManager.LoadAsync<MeshResource>(mesh.meshPath);
+        m_scriptEngine.CreateInstance("OrbitScript", m_playerEntity, &m_world);
+        m_resourceManager.LoadAsync<MeshResource>("assets/player.mesh");
+        m_resourceManager.LoadAsync<MaterialResource>("assets/default.mat");
+        SceneSerializer::Save(m_world, "Saved/Demo.scene");
     }
 }

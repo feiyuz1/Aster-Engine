@@ -17,7 +17,7 @@ namespace MiniEngine
         void Shutdown() override;
         bool PumpEvents() override;
         const InputState& GetInputState() const override;
-        void BeginFrame() override;
+        void BeginFrame(const FrameView& view) override;
         void Draw(const RenderItem& item) override;
         void EndFrame() override;
         void Present() override;

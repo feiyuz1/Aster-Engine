@@ -52,8 +52,8 @@ namespace MiniEngine
     }
 
     PoolAllocator::PoolAllocator(const std::size_t blockSize, const std::size_t blockCount)
-        : m_storage(std::make_unique<std::uint8_t[]>(blockSize * blockCount)),
-          m_blockSize(std::max(blockSize, sizeof(void*))),
+        : m_storage(std::make_unique<std::uint8_t[]>(((std::max(blockSize, sizeof(void*)) + alignof(std::max_align_t) - 1) & ~(alignof(std::max_align_t) - 1)) * blockCount)),
+          m_blockSize((std::max(blockSize, sizeof(void*)) + alignof(std::max_align_t) - 1) & ~(alignof(std::max_align_t) - 1)),
           m_blockCount(blockCount)
     {
         Reset();
@@ -61,8 +61,8 @@ namespace MiniEngine
 
     void* PoolAllocator::Allocate(const std::size_t size, const std::size_t alignment)
     {
-        (void)alignment;
-        if (size > m_blockSize || m_freeList == nullptr)
+        std::lock_guard<std::mutex> lock(m_mutex);
+        if (size > m_blockSize || alignment > alignof(std::max_align_t) || m_freeList == nullptr)
         {
             return nullptr;
         }
@@ -79,12 +79,14 @@ namespace MiniEngine
             return;
         }
 
+        std::lock_guard<std::mutex> lock(m_mutex);
         *reinterpret_cast<void**>(ptr) = m_freeList;
         m_freeList = ptr;
     }
 
     void PoolAllocator::Reset()
     {
+        std::lock_guard<std::mutex> lock(m_mutex);
         std::uint8_t* current = m_storage.get();
         for (std::size_t i = 0; i < m_blockCount; ++i)
         {

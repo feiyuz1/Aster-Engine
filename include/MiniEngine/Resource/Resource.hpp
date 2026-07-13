@@ -1,37 +1,42 @@
 #pragma once
 
+#include "MiniEngine/Math/Math.hpp"
+
+#include <atomic>
+#include <condition_variable>
+#include <cstddef>
 #include <cstdint>
+#include <mutex>
 #include <string>
 #include <vector>
 
 namespace MiniEngine
 {
-    enum class ResourceState
-    {
-        Unloaded,
-        Loading,
-        Loaded,
-        Failed,
-        PendingUnload
-    };
+    enum class ResourceState { Unloaded, Loading, Loaded, Failed, PendingUnload };
 
     class Resource
     {
     public:
         virtual ~Resource() = default;
-
-        const std::string& GetPath() const;
-        ResourceState GetState() const;
-
         virtual bool Load(const std::string& path) = 0;
         virtual void Unload() = 0;
 
-        void MarkLoading();
+        const std::string& GetPath() const;
+        ResourceState GetState() const;
+        std::string GetError() const;
+        bool IsReady() const;
+        bool Wait() const;
+        void MarkLoading(const std::string& path = {});
 
     protected:
-        void SetState(ResourceState state);
+        void SetState(ResourceState state, std::string error = {});
         std::string m_path;
-        ResourceState m_state = ResourceState::Unloaded;
+
+    private:
+        std::atomic<ResourceState> m_state{ResourceState::Unloaded};
+        mutable std::mutex m_stateMutex;
+        mutable std::condition_variable m_stateCv;
+        std::string m_error;
     };
 
     class TextureResource final : public Resource
@@ -39,11 +44,17 @@ namespace MiniEngine
     public:
         bool Load(const std::string& path) override;
         void Unload() override;
-
         std::size_t GetByteSize() const;
-
+        const std::vector<std::uint8_t>& GetData() const;
     private:
         std::vector<std::uint8_t> m_data;
+    };
+
+    struct MeshVertex
+    {
+        Vec3 position;
+        Vec3 normal{0.0f, 0.0f, 1.0f};
+        Vec2 uv;
     };
 
     class MeshResource final : public Resource
@@ -51,11 +62,14 @@ namespace MiniEngine
     public:
         bool Load(const std::string& path) override;
         void Unload() override;
-
         std::size_t GetByteSize() const;
-
+        const std::vector<MeshVertex>& GetVertices() const;
+        const std::vector<std::uint32_t>& GetIndices() const;
+        const Aabb& GetBounds() const;
     private:
-        std::vector<std::uint8_t> m_data;
+        std::vector<MeshVertex> m_vertices;
+        std::vector<std::uint32_t> m_indices;
+        Aabb m_bounds{};
     };
 
     class ShaderResource final : public Resource
@@ -63,10 +77,21 @@ namespace MiniEngine
     public:
         bool Load(const std::string& path) override;
         void Unload() override;
-
         std::size_t GetByteSize() const;
-
+        const std::string& GetSource() const;
     private:
-        std::vector<std::uint8_t> m_data;
+        std::string m_source;
+    };
+
+    class MaterialResource final : public Resource
+    {
+    public:
+        bool Load(const std::string& path) override;
+        void Unload() override;
+        Vec4 GetBaseColor() const;
+        const std::string& GetShaderPath() const;
+    private:
+        Vec4 m_baseColor{0.3f, 0.7f, 1.0f, 1.0f};
+        std::string m_shaderPath;
     };
 }

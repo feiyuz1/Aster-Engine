@@ -1,5 +1,7 @@
 #pragma once
 
+#include "MiniEngine/Math/Math.hpp"
+#include "MiniEngine/Resource/Resource.hpp"
 #include "MiniEngine/Types.hpp"
 
 #include <cstddef>
@@ -10,43 +12,37 @@
 namespace MiniEngine
 {
     class Logger;
+    class ResourceManager;
     class World;
-
-    class RenderContext
-    {
-    };
-
-    class RenderPass
-    {
-    };
 
     struct InputState
     {
-        float moveX = 0.0f;
-        float moveY = 0.0f;
-        float moveZ = 0.0f;
-        float rotateX = 0.0f;
-        float rotateY = 0.0f;
-        float rotateZ = 0.0f;
+        float moveX = 0.0f, moveY = 0.0f, moveZ = 0.0f;
+        float rotateX = 0.0f, rotateY = 0.0f, rotateZ = 0.0f;
         float scale = 0.0f;
+        float mouseX = 0.0f, mouseY = 0.0f;
+        bool primaryAction = false;
         bool sprint = false;
         bool quitRequested = false;
+    };
+
+    struct FrameView
+    {
+        Mat4 view = Mat4::Identity();
+        Mat4 projection = Mat4::Identity();
+        Vec3 cameraPosition{0.0f, 0.0f, 5.0f};
+        Vec3 lightDirection{-0.4f, -1.0f, -0.3f};
+        Vec3 lightColor{1.0f, 1.0f, 1.0f};
+        float lightIntensity = 1.0f;
     };
 
     struct RenderItem
     {
         Entity entity = InvalidEntity;
         float distanceToCamera = 0.0f;
-        float worldX = 0.0f;
-        float worldY = 0.0f;
-        float worldZ = 0.0f;
-        float rotationX = 0.0f;
-        float rotationY = 0.0f;
-        float rotationZ = 0.0f;
-        float scaleX = 1.0f;
-        float scaleY = 1.0f;
-        float scaleZ = 1.0f;
-        std::string meshPath;
+        Mat4 model = Mat4::Identity();
+        std::shared_ptr<MeshResource> mesh;
+        std::shared_ptr<MaterialResource> material;
     };
 
     class RenderDevice
@@ -57,7 +53,7 @@ namespace MiniEngine
         virtual void Shutdown() = 0;
         virtual bool PumpEvents() = 0;
         virtual const InputState& GetInputState() const = 0;
-        virtual void BeginFrame() = 0;
+        virtual void BeginFrame(const FrameView& view) = 0;
         virtual void Draw(const RenderItem& item) = 0;
         virtual void EndFrame() = 0;
         virtual void Present() = 0;
@@ -70,11 +66,10 @@ namespace MiniEngine
         void Shutdown() override;
         bool PumpEvents() override;
         const InputState& GetInputState() const override;
-        void BeginFrame() override;
+        void BeginFrame(const FrameView& view) override;
         void Draw(const RenderItem& item) override;
         void EndFrame() override;
         void Present() override;
-
     private:
         InputState m_inputState;
     };
@@ -86,44 +81,29 @@ namespace MiniEngine
         void Sort();
         void Clear();
         const std::vector<RenderItem>& GetItems() const;
-
     private:
         std::vector<RenderItem> m_items;
-    };
-
-    class ShaderManager
-    {
-    public:
-        void Initialize();
-        void Shutdown();
-    };
-
-    class MaterialSystem
-    {
-    public:
-        void Initialize();
-        void Shutdown();
     };
 
     class Renderer
     {
     public:
         void SetLogger(Logger* logger);
+        void SetResourceManager(ResourceManager* resources);
         bool Initialize(std::unique_ptr<RenderDevice> device);
         void Shutdown();
-
         bool PumpEvents();
         const InputState& GetInputState() const;
         void BuildRenderQueue(World& world);
         void RenderFrame(World& world);
         std::size_t GetLastDrawCallCount() const;
-
+        const FrameView& GetFrameView() const;
     private:
         Logger* m_logger = nullptr;
+        ResourceManager* m_resources = nullptr;
         std::unique_ptr<RenderDevice> m_device;
         RenderQueue m_renderQueue;
-        ShaderManager m_shaderManager;
-        MaterialSystem m_materialSystem;
+        FrameView m_frameView;
         std::size_t m_lastDrawCalls = 0;
     };
 }
