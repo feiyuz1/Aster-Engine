@@ -236,13 +236,25 @@ namespace MiniEngine
         ImGui::Begin("Scene View", nullptr, ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse);
         if (ImGui::Button("W Translate")) m_gizmoMode = GizmoMode::Translate; ImGui::SameLine();
         if (ImGui::Button("E Rotate")) m_gizmoMode = GizmoMode::Rotate; ImGui::SameLine();
-        if (ImGui::Button("R Scale")) m_gizmoMode = GizmoMode::Scale;
+        if (ImGui::Button("R Scale")) m_gizmoMode = GizmoMode::Scale; ImGui::SameLine();
+        ImGui::Checkbox("Snap", &m_gizmoSnap); ImGui::SameLine();
+        float* snapValue = m_gizmoMode == GizmoMode::Translate ? &m_translateSnap : m_gizmoMode == GizmoMode::Rotate ? &m_rotateSnap : &m_scaleSnap;
+        ImGui::SetNextItemWidth(70.0f); ImGui::DragFloat("##SnapValue", snapValue, 0.05f, 0.001f, 100.0f, "%.2f");
+        float exposure = m_device->GetExposure(); ImGui::SameLine(); ImGui::SetNextItemWidth(70.0f);
+        if (ImGui::DragFloat("Exposure", &exposure, 0.02f, 0.05f, 16.0f, "%.2f")) m_device->SetExposure(exposure);
+        ImGui::SameLine(); if (ImGui::SmallButton("Reload Shaders")) m_messages.emplace_back(m_device->ReloadShaders() ? "Shaders reloaded" : "Shader reload failed; previous program retained");
         const ImVec2 available = ImGui::GetContentRegionAvail();
         const int targetWidth = std::max(1, static_cast<int>(available.x)), targetHeight = std::max(1, static_cast<int>(available.y));
         m_device->ResizeSceneRenderTarget(targetWidth, targetHeight);
         const ImVec2 imageMinimum = ImGui::GetCursorScreenPos();
         ImGui::Image(ImTextureRef(static_cast<ImTextureID>(m_device->GetSceneColorTexture())), available, {0, 1}, {1, 0});
         const bool hovered = ImGui::IsItemHovered();
+        if (!m_engine.IsPlaying() && hovered && !ImGui::IsMouseDown(ImGuiMouseButton_Right))
+        {
+            if (ImGui::IsKeyPressed(ImGuiKey_W)) m_gizmoMode = GizmoMode::Translate;
+            if (ImGui::IsKeyPressed(ImGuiKey_E)) m_gizmoMode = GizmoMode::Rotate;
+            if (ImGui::IsKeyPressed(ImGuiKey_R)) m_gizmoMode = GizmoMode::Scale;
+        }
         ImGuiIO& io = ImGui::GetIO();
         const float pitch = DegreesToRadians(m_editorCameraRotation.x), yaw = DegreesToRadians(m_editorCameraRotation.y);
         const Vec3 forward = Normalize(Vec3{std::cos(pitch) * std::sin(yaw), std::sin(pitch), -std::cos(pitch) * std::cos(yaw)});
@@ -267,6 +279,34 @@ namespace MiniEngine
             const float normalizedX = (mouse.x - imageMinimum.x) / std::max(1.0f, available.x);
             const float normalizedY = (mouse.y - imageMinimum.y) / std::max(1.0f, available.y);
             m_selected = PickEntity(normalizedX, normalizedY);
+        }
+        if (!m_engine.IsPlaying() && ImGui::BeginDragDropTarget())
+        {
+            if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("TINY_ASSET_PATH"))
+            {
+                const std::string path(static_cast<const char*>(payload->Data));
+                const auto asset = m_engine.GetContext().resourceManager->GetAssetRegistry().Find(path);
+                if (asset)
+                {
+                    World& world = *m_engine.GetContext().world; RecordUndo();
+                    if (asset->type == "Prefab")
+                    {
+                        const auto roots = Prefab::Instantiate(world, path); if (!roots.empty()) m_selected = roots.front();
+                    }
+                    else if (asset->type == "Mesh")
+                    {
+                        if (!world.IsAlive(m_selected)) m_selected = world.CreateEntity(std::filesystem::path(path).stem().string());
+                        if (auto* mesh = world.GetComponent<MeshComponent>(m_selected)) mesh->meshPath = path;
+                        else world.AddComponent(m_selected, MeshComponent{path, "assets/default.mat"});
+                    }
+                    else if (asset->type == "Material" && world.IsAlive(m_selected))
+                    {
+                        if (auto* mesh = world.GetComponent<MeshComponent>(m_selected)) mesh->materialPath = path;
+                    }
+                    m_messages.emplace_back("Dropped asset: " + path);
+                }
+            }
+            ImGui::EndDragDropTarget();
         }
         ImGui::End();
     }
@@ -315,16 +355,25 @@ namespace MiniEngine
             drawList->AddLine(start, end, axisHovered || m_activeGizmoAxis == axis ? IM_COL32(255, 225, 80, 255) : colors[axis], axisHovered ? 4.0f : 2.5f);
             drawList->AddCircleFilled(end, 5.0f, colors[axis]);
         }
-        if (hoveredAxis >= 0 && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) { RecordUndo(); m_activeGizmoAxis = hoveredAxis; }
+        if (hoveredAxis >= 0 && ImGui::IsMouseClicked(ImGuiMouseButton_Left))
+        {
+            RecordUndo(); m_activeGizmoAxis = hoveredAxis; m_gizmoAccumulatedMotion = 0.0f; m_gizmoAppliedMotion = 0.0f;
+        }
         if (m_activeGizmoAxis >= 0)
         {
             if (!ImGui::IsMouseDown(ImGuiMouseButton_Left)) m_activeGizmoAxis = -1;
             else if (auto* transform = world.GetComponent<TransformComponent>(m_selected))
             {
-                const ImVec2 delta = ImGui::GetIO().MouseDelta; const float motion = (delta.x - delta.y) * 0.01f * handleLength;
+                const ImVec2 delta = ImGui::GetIO().MouseDelta;
+                const float rawMotion = m_gizmoMode == GizmoMode::Translate ? (delta.x - delta.y) * 0.01f * handleLength :
+                    m_gizmoMode == GizmoMode::Rotate ? (delta.x - delta.y) * 0.5f : (delta.x - delta.y) * 0.01f;
+                m_gizmoAccumulatedMotion += rawMotion;
+                const float step = m_gizmoMode == GizmoMode::Translate ? m_translateSnap : m_gizmoMode == GizmoMode::Rotate ? m_rotateSnap : m_scaleSnap;
+                const float targetMotion = m_gizmoSnap ? std::round(m_gizmoAccumulatedMotion / std::max(0.001f, step)) * step : m_gizmoAccumulatedMotion;
+                const float motion = targetMotion - m_gizmoAppliedMotion; m_gizmoAppliedMotion = targetMotion;
                 if (m_gizmoMode == GizmoMode::Translate) { if (m_activeGizmoAxis == 0) transform->position.x += motion; else if (m_activeGizmoAxis == 1) transform->position.y += motion; else transform->position.z += motion; }
-                else if (m_gizmoMode == GizmoMode::Rotate) { const float degrees = (delta.x - delta.y) * 0.5f; if (m_activeGizmoAxis == 0) transform->rotation.x += degrees; else if (m_activeGizmoAxis == 1) transform->rotation.y += degrees; else transform->rotation.z += degrees; }
-                else { const float scale = (delta.x - delta.y) * 0.01f; if (m_activeGizmoAxis == 0) transform->scale.x = std::max(0.001f, transform->scale.x + scale); else if (m_activeGizmoAxis == 1) transform->scale.y = std::max(0.001f, transform->scale.y + scale); else transform->scale.z = std::max(0.001f, transform->scale.z + scale); }
+                else if (m_gizmoMode == GizmoMode::Rotate) { if (m_activeGizmoAxis == 0) transform->rotation.x += motion; else if (m_activeGizmoAxis == 1) transform->rotation.y += motion; else transform->rotation.z += motion; }
+                else { if (m_activeGizmoAxis == 0) transform->scale.x = std::max(0.001f, transform->scale.x + motion); else if (m_activeGizmoAxis == 1) transform->scale.y = std::max(0.001f, transform->scale.y + motion); else transform->scale.z = std::max(0.001f, transform->scale.z + motion); }
             }
         }
         return hovered || m_activeGizmoAxis >= 0;
@@ -338,11 +387,10 @@ namespace MiniEngine
         ImGui::SetNextWindowPos({viewport->WorkPos.x, top}, ImGuiCond_Always);
         ImGui::SetNextWindowSize({halfWidth, viewport->WorkPos.y + viewport->WorkSize.y - top}, ImGuiCond_Always);
         ImGui::Begin("Assets");
-        static std::string selectedAsset;
 #ifdef TINYENGINE_HAS_ASSIMP
         if (ImGui::Button("Import Model...")) ImGui::OpenPopup("ImportModelPopup");
         ImGui::SameLine();
-        const auto selectedInfo = selectedAsset.empty() ? std::optional<AssetInfo>{} : m_engine.GetContext().resourceManager->GetAssetRegistry().Find(selectedAsset);
+        const auto selectedInfo = m_selectedAsset.empty() ? std::optional<AssetInfo>{} : m_engine.GetContext().resourceManager->GetAssetRegistry().Find(m_selectedAsset);
         ImGui::BeginDisabled(!selectedInfo || selectedInfo->type != "Prefab" || selectedInfo->importSettings.count("source") == 0);
         if (ImGui::Button("Reimport"))
         {
@@ -392,7 +440,12 @@ namespace MiniEngine
         for (const auto& asset : assets)
         {
             ImGui::PushID(asset.id.c_str()); ImGui::TextDisabled("%s", asset.type.c_str()); ImGui::SameLine(90.0f);
-            if (ImGui::Selectable(asset.path.c_str(), selectedAsset == asset.path)) selectedAsset = asset.path;
+            if (ImGui::Selectable(asset.path.c_str(), m_selectedAsset == asset.path)) m_selectedAsset = asset.path;
+            if (ImGui::BeginDragDropSource())
+            {
+                ImGui::SetDragDropPayload("TINY_ASSET_PATH", asset.path.c_str(), asset.path.size() + 1);
+                ImGui::TextUnformatted(asset.path.c_str()); ImGui::EndDragDropSource();
+            }
             if (!m_engine.IsPlaying() && asset.extension == ".prefab" && ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left))
             {
                 RecordUndo(); const auto roots = Prefab::Instantiate(*m_engine.GetContext().world, asset.path);

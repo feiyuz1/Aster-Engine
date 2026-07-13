@@ -1,6 +1,6 @@
 # TinyEngine 架构说明
 
-本文对应 TinyEngine 0.5.0，最后同步于 2026-07-14。
+本文对应 TinyEngine 0.6.0，最后同步于 2026-07-14。
 
 ## 依赖方向
 
@@ -43,19 +43,23 @@ FBX/glTF/OBJ/... -> AssimpImporter
   -> Cooked directory -> TPAK -> VFS mount
 ```
 
-材质导入保留 base color、opacity、metallic、roughness、emissive 和 base-color texture。PNG/JPG/BMP/TIFF 由 Windows WIC 解码；Radiance HDR 当前在资源加载阶段转为 RGBA8，因此还不是线性浮点 HDR 渲染管线。
+材质导入保留 base color、opacity、metallic、roughness、emissive 和 base-color texture。PNG/JPG/BMP/TIFF 由 Windows WIC 解码；Radiance HDR 源纹理当前仍转为 RGBA8，但场景光照使用 RGBA16F FBO，并经 ACES Filmic 与可调曝光输出到 RGBA8 Viewport。
 
 ```text
 SDL events -> semantic input / ImGui
 -> GameInstance / Script / Systems
 -> fixed physics
 -> render collection / culling / sort
--> OpenGL Scene FBO
+-> directional shadow depth pass
+-> OpenGL RGBA16F Scene FBO
+-> ACES Tonemap to Viewport texture
 -> Scene View texture + editor overlay
 -> present
 ```
 
-编辑态由 Renderer 的 camera override 使用编辑器相机；Play 时恢复场景 Primary Camera。Scene View 从离屏颜色纹理显示，拾取在 CPU 侧将屏幕坐标转为射线并检测 Mesh/Collider AABB；Gizmo 直接修改 Transform 并接入 Undo。
+编辑态由 Renderer 的 camera override 使用编辑器相机；Play 时恢复场景 Primary Camera。Scene View 显示 Tonemap 后的颜色纹理，拾取在 CPU 侧将屏幕坐标转为射线并检测 Mesh/Collider AABB；Gizmo 修改 Transform、支持步长吸附并接入 Undo。资产浏览器通过 ImGui payload 将 Prefab、Mesh 或 Material 拖入 Scene View。
+
+默认 PBR Shader 是独立 `.vert/.frag` 资产。RenderDevice 监测修改时间并尝试原子替换 OpenGL program；编译或链接失败时继续使用上一份有效 program。阴影使用单方向光、固定 2048² 深度图和 3×3 PCF。
 
 ## 数据格式与约束
 

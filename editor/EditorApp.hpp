@@ -45,5 +45,12 @@ namespace MiniEngine
         float m_editorCameraFov = 60.0f;
         GizmoMode m_gizmoMode = GizmoMode::Translate;
         int m_activeGizmoAxis = -1;
+        bool m_gizmoSnap = false;
+        float m_translateSnap = 0.5f;
+        float m_rotateSnap = 15.0f;
+        float m_scaleSnap = 0.1f;
+        float m_gizmoAccumulatedMotion = 0.0f;
+        float m_gizmoAppliedMotion = 0.0f;
+        std::string m_selectedAsset;
     };
 }

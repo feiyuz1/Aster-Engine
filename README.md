@@ -2,7 +2,7 @@
 
 TinyEngine 是参考 Unreal Engine 5.3.2 模块职责、以 C++17 实现的轻量 3D 引擎。目标不是复制 UE 的 UObject/UHT、完整 RHI 或大型编辑器，而是形成“项目—资产—场景—运行时—渲染—打包—编辑器”的最小可用闭环。
 
-当前版本：0.5.0（P0 前半增强）。
+当前版本：0.6.0（P0 渲染与编辑器增强）。
 
 ## 已实现
 
@@ -10,9 +10,10 @@ TinyEngine 是参考 Unreal Engine 5.3.2 模块职责、以 C++17 实现的轻�
 - 世界：generation Entity、组件查询、父子层级、Active/Tag/Layer、生命周期、Prefab、`TINYSCENE 3`。
 - 资产：Assimp 6.0.5 模型导入、稳定 GUID/`.meta`、依赖和导入参数、异步资源、Cook、TPAK、VFS。
 - 图片：PPM，以及 Windows WIC 的 PNG/JPG/BMP/TIFF；Radiance HDR 解码并转为运行时 RGBA8。
-- 渲染：SDL2 + OpenGL 3.3、离屏 Scene RenderTarget、Mesh/Texture、基础 metallic/roughness/emissive PBR、方向光、粗裁剪、透明排序和 Alpha 混合。
+- 渲染：SDL2 + OpenGL 3.3、RGBA16F Scene RenderTarget、ACES Tonemap/曝光、2048² 方向光 PCF 阴影、基础 PBR、粗裁剪、透明排序和 Alpha 混合。
 - 物理：固定步长、SAP、Box/Sphere/Capsule、层过滤、Trigger、Raycast/SphereCast/Overlap、基础角色移动。
-- 编辑器：Dear ImGui、独立 Scene View、编辑器飞行相机、鼠标拾取、Translate/Rotate/Scale Gizmo、Hierarchy、Inspector、资产导入/重导入、Play/Stop、Undo/Redo。
+- 编辑器：Dear ImGui、独立 Scene View、编辑器飞行相机、鼠标拾取、带 snapping 的 Translate/Rotate/Scale Gizmo、资源拖入视口、Shader/曝光控制、Hierarchy、Inspector、Play/Stop、Undo/Redo。
+- Shader：`assets/shaders/default.vert/.frag` 外部资产，文件变化自动热重载；编译失败时保留上一份有效程序。
 - 工程化：Git、CTest、CPack、AssetTool 和 SceneTool。
 
 ## 构建和运行
@@ -32,4 +33,4 @@ Scene View 操作：按住鼠标右键并使用 WASD/QE 飞行，Shift 加速；
 
 ## 当前边界
 
-这次完成的是待补能力的前一半。要达到可发布的通用小型引擎，还缺少阴影、Skybox/IBL、线性 HDR 帧缓冲与 Tonemap、Shader 资产管线/热重载、多灯和 GPU 优化；成熟物理后端与调试绘制；骨骼动画；音频格式/空间音频；字体 Atlas 和完整 UI 布局；资源拖拽、属性反射、场景标签页；CI、崩溃报告和发布冒烟测试。优先级见[技术设计](设计.md)，模块约束见[架构说明](docs/ARCHITECTURE.md)。
+要达到可发布的通用小型引擎，还缺少 Skybox/IBL、sRGB 纹理、多灯和 GPU 优化；Shader include/variant 与完整错误面板；成熟物理后端；骨骼动画；空间音频；字体 Atlas 和完整 UI 布局；属性反射、场景标签页；CI、崩溃报告和发布冒烟测试。优先级见[技术设计](设计.md)，模块约束见[架构说明](docs/ARCHITECTURE.md)。

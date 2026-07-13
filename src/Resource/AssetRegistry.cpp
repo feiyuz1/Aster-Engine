@@ -26,6 +26,7 @@ namespace MiniEngine
             if (extension == ".mesh" || extension == ".gltf" || extension == ".glb") return "Mesh";
             if (extension == ".ppm" || extension == ".png" || extension == ".jpg" || extension == ".jpeg" || extension == ".hdr") return "Texture";
             if (extension == ".mat") return "Material";
+            if (extension == ".vert" || extension == ".frag" || extension == ".glsl") return "Shader";
             if (extension == ".scene") return "Scene";
             if (extension == ".prefab") return "Prefab";
             if (extension == ".wav" || extension == ".ogg") return "Audio";

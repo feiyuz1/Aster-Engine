@@ -16,6 +16,9 @@ namespace MiniEngine
     bool NullRenderDevice::PumpEvents() { return true; }
     const InputState& NullRenderDevice::GetInputState() const { return m_inputState; }
     float NullRenderDevice::GetAspectRatio() const { return 16.0f / 9.0f; }
+    void NullRenderDevice::BeginShadowPass(const FrameView&) {}
+    void NullRenderDevice::DrawShadow(const RenderItem&) {}
+    void NullRenderDevice::EndShadowPass() {}
     void NullRenderDevice::BeginFrame(const FrameView&) {}
     void NullRenderDevice::Draw(const RenderItem&) {}
     void NullRenderDevice::EndFrame() {}
@@ -90,6 +93,11 @@ namespace MiniEngine
             m_frameView.lightColor = light.color;
             m_frameView.lightIntensity = light.intensity;
         });
+        const Vec3 shadowFocus = cameraPosition + cameraForward * 10.0f;
+        const Vec3 lightDirection = Normalize(m_frameView.lightDirection);
+        const Vec3 shadowUp = std::abs(Dot(lightDirection, Vec3{0.0f, 1.0f, 0.0f})) > 0.95f ? Vec3{0.0f, 0.0f, 1.0f} : Vec3{0.0f, 1.0f, 0.0f};
+        m_frameView.lightViewProjection = Orthographic(-24.0f, 24.0f, -24.0f, 24.0f, 0.1f, 80.0f) *
+            LookAt(shadowFocus - lightDirection * 35.0f, shadowFocus, shadowUp);
 
         world.GetComponentManager().ForEach<MeshComponent>([&](const Entity entity, MeshComponent& meshComponent)
         {
@@ -117,6 +125,9 @@ namespace MiniEngine
     {
         if (!m_device) return;
         BuildRenderQueue(world);
+        m_device->BeginShadowPass(m_frameView);
+        for (const auto& item : m_renderQueue.GetItems()) if (!item.transparent) m_device->DrawShadow(item);
+        m_device->EndShadowPass();
         m_device->BeginFrame(m_frameView);
         for (const auto& item : m_renderQueue.GetItems()) m_device->Draw(item);
         if (m_uiSystem) m_device->DrawUi(m_uiSystem->BuildDrawList());

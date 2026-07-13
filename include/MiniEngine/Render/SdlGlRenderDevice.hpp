@@ -19,6 +19,9 @@ namespace MiniEngine
         bool PumpEvents() override;
         const InputState& GetInputState() const override;
         float GetAspectRatio() const override;
+        void BeginShadowPass(const FrameView& view) override;
+        void DrawShadow(const RenderItem& item) override;
+        void EndShadowPass() override;
         void BeginFrame(const FrameView& view) override;
         void Draw(const RenderItem& item) override;
         void EndFrame() override;
@@ -32,6 +35,9 @@ namespace MiniEngine
         std::uintptr_t GetSceneColorTexture() const;
         int GetSceneTargetWidth() const;
         int GetSceneTargetHeight() const;
+        bool ReloadShaders();
+        void SetExposure(float exposure);
+        float GetExposure() const;
 
     private:
         struct Impl;

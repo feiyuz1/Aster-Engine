@@ -42,6 +42,8 @@ int main()
     const Aabb firstBounds{{-1, -1, -1}, {1, 1, 1}};
     const Aabb secondBounds{{0, 0, 0}, {2, 2, 2}};
     CHECK(firstBounds.Intersects(secondBounds));
+    const Mat4 orthographic = Orthographic(-2.0f, 2.0f, -1.0f, 1.0f, 0.1f, 10.0f);
+    CHECK(std::abs(orthographic.At(0, 0) - 0.5f) < 0.0001f && std::abs(orthographic.At(1, 1) - 1.0f) < 0.0001f);
 
     World world;
     const Entity first = world.CreateEntity("First");
@@ -141,6 +143,9 @@ int main()
     CHECK(pbrMaterial.Load("Saved/TestPbr.mat"));
     CHECK(std::abs(pbrMaterial.GetMetallic() - 0.8f) < 0.001f && std::abs(pbrMaterial.GetRoughness() - 0.25f) < 0.001f);
     CHECK(std::abs(pbrMaterial.GetEmissive().y - 0.2f) < 0.001f && pbrMaterial.GetTexturePath() == "Saved/Test.png");
+    ShaderResource shader;
+    CHECK(shader.Load("assets/shaders/default.vert"));
+    CHECK(shader.GetSource().find("uLightViewProjection") != std::string::npos);
     CHECK(PakArchive::PackDirectory("assets", "Saved/Test.tpak"));
     CHECK(PakArchive::List("Saved/Test.tpak").size() >= 4);
     const auto packedMesh = PakArchive::ReadFile("Saved/Test.tpak", "player.mesh");
@@ -150,6 +155,8 @@ int main()
     const auto meshInfo = registry.Find("assets/player.mesh");
     CHECK(meshInfo.has_value() && meshInfo->id.size() == 32);
     CHECK(registry.FindById(meshInfo->id).has_value());
+    const auto shaderInfo = registry.Find("assets/shaders/default.frag");
+    CHECK(shaderInfo.has_value() && shaderInfo->type == "Shader");
     CHECK(registry.MarkImported("assets/player.mesh"));
     CHECK(!registry.NeedsReimport("assets/player.mesh"));
     const auto cook = AssetCooker::Cook("assets", "Saved/CookedTest", "Saved/CookedTest.tpak");

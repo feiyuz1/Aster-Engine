@@ -164,6 +164,18 @@ namespace MiniEngine
         return result;
     }
 
+    inline Mat4 Orthographic(const float left, const float right, const float bottom, const float top, const float nearPlane, const float farPlane)
+    {
+        Mat4 result = Mat4::Identity();
+        result.At(0, 0) = 2.0f / (right - left);
+        result.At(1, 1) = 2.0f / (top - bottom);
+        result.At(2, 2) = -2.0f / (farPlane - nearPlane);
+        result.At(0, 3) = -(right + left) / (right - left);
+        result.At(1, 3) = -(top + bottom) / (top - bottom);
+        result.At(2, 3) = -(farPlane + nearPlane) / (farPlane - nearPlane);
+        return result;
+    }
+
     inline Mat4 LookAt(const Vec3& eye, const Vec3& target, const Vec3& up)
     {
         const Vec3 forward = Normalize(target - eye);
