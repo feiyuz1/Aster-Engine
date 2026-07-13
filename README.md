@@ -33,4 +33,4 @@ Scene View 操作：按住鼠标右键并使用 WASD/QE 飞行，Shift 加速；
 
 ## 当前边界
 
-要达到可发布的通用小型引擎，还缺少 Skybox/IBL、sRGB 纹理、多灯和 GPU 优化；Shader include/variant 与完整错误面板；成熟物理后端；骨骼动画；空间音频；字体 Atlas 和完整 UI 布局；属性反射、场景标签页；CI、崩溃报告和发布冒烟测试。优先级见[技术设计](设计.md)，模块约束见[架构说明](docs/ARCHITECTURE.md)。
+要达到可发布的通用小型引擎，还缺少 Skybox/IBL、sRGB 纹理、多灯和 GPU 优化；Shader include/variant 与完整错误面板；成熟物理后端；骨骼动画；空间音频；字体 Atlas 和完整 UI 布局；属性反射、场景标签页；CI、崩溃报告和发布冒烟测试。优先级见[技术设计](设计.md)，模块约束见[架构说明](docs/ARCHITECTURE.md)，历次实现方式见[实现更新日志](docs/IMPLEMENTATION_LOG.md)。
