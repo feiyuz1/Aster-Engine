@@ -20,6 +20,7 @@ namespace MiniEngine
 
     bool Config::Load(const std::string& path)
     {
+        if (!PlatformFile::Exists(path)) return false;
         std::istringstream stream(PlatformFile::ReadAllText(path));
         if (!stream) return false;
         std::string line;
@@ -52,4 +53,5 @@ namespace MiniEngine
         if (value == "false" || value == "0" || value == "no" || value == "off") return false;
         return fallback;
     }
+    const std::unordered_map<std::string, std::string>& Config::GetValues() const { return m_values; }
 }

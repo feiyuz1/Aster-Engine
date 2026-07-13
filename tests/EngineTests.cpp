@@ -4,8 +4,11 @@
 #include "MiniEngine/ECS/SceneSerializer.hpp"
 #include "MiniEngine/Math/Math.hpp"
 #include "MiniEngine/Physics/PhysicsWorld.hpp"
+#include "MiniEngine/Platform/Platform.hpp"
 #include "MiniEngine/Project/Project.hpp"
 #include "MiniEngine/Resource/Resource.hpp"
+#include "MiniEngine/Resource/AssetCooker.hpp"
+#include "MiniEngine/Resource/AssetRegistry.hpp"
 #include "MiniEngine/Resource/PakArchive.hpp"
 #include "MiniEngine/Task/JobSystem.hpp"
 
@@ -96,6 +99,19 @@ int main()
     CHECK(PakArchive::List("Saved/Test.tpak").size() >= 4);
     const auto packedMesh = PakArchive::ReadFile("Saved/Test.tpak", "player.mesh");
     CHECK(packedMesh.has_value() && !packedMesh->empty());
+    AssetRegistry registry;
+    registry.Scan("assets");
+    const auto meshInfo = registry.Find("assets/player.mesh");
+    CHECK(meshInfo.has_value() && meshInfo->id.size() == 32);
+    CHECK(registry.FindById(meshInfo->id).has_value());
+    CHECK(registry.MarkImported("assets/player.mesh"));
+    CHECK(!registry.NeedsReimport("assets/player.mesh"));
+    const auto cook = AssetCooker::Cook("assets", "Saved/CookedTest", "Saved/CookedTest.tpak");
+    CHECK(cook.success && cook.cookedFiles >= 4);
+    PlatformFile::ClearMounts();
+    CHECK(PlatformFile::MountPak("Saved/CookedTest.tpak"));
+    CHECK(!PlatformFile::ReadAllBytes("player.mesh").empty());
+    PlatformFile::ClearMounts();
 
     World physicsScene;
     const Entity body = physicsScene.CreateEntity("Body");

@@ -15,6 +15,7 @@ namespace MiniEngine
         int GetInt(const std::string& key, int fallback = 0) const;
         float GetFloat(const std::string& key, float fallback = 0.0f) const;
         bool GetBool(const std::string& key, bool fallback = false) const;
+        const std::unordered_map<std::string, std::string>& GetValues() const;
     private:
         std::unordered_map<std::string, std::string> m_values;
     };

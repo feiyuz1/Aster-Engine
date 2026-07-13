@@ -34,6 +34,7 @@ add_library(tinyengine STATIC
     src/Task/JobSystem.cpp
     src/Resource/Resource.cpp
     src/Resource/AssetRegistry.cpp
+    src/Resource/AssetCooker.cpp
     src/Resource/PakArchive.cpp
     src/Resource/ResourceManager.cpp
     src/ECS/ECS.cpp

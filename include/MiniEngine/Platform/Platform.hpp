@@ -17,6 +17,9 @@ namespace MiniEngine
         static bool WriteAllBytes(const std::filesystem::path& path, const std::vector<std::uint8_t>& data);
         static bool WriteAllText(const std::filesystem::path& path, const std::string& text);
         static std::filesystem::path Normalize(const std::filesystem::path& path);
+        static void MountDirectory(const std::filesystem::path& directory, int priority = 0);
+        static bool MountPak(const std::filesystem::path& archive, int priority = 0);
+        static void ClearMounts();
     };
 
     class EngineClock

@@ -1,23 +1,67 @@
 #include "MiniEngine/Platform/Platform.hpp"
+#include "MiniEngine/Resource/PakArchive.hpp"
 
+#include <algorithm>
 #include <fstream>
 #include <iterator>
+#include <mutex>
+#include <optional>
 
 namespace MiniEngine
 {
-    bool PlatformFile::Exists(const std::filesystem::path& path) { return std::filesystem::exists(path); }
+    namespace
+    {
+        struct Mount { std::filesystem::path path; int priority = 0; bool pak = false; };
+        std::vector<Mount> mounts;
+        std::mutex mountMutex;
+
+        std::optional<std::vector<std::uint8_t>> ReadMounted(const std::filesystem::path& path)
+        {
+            if (path.is_absolute()) return std::nullopt;
+            const std::string normalized = path.lexically_normal().generic_string();
+            std::lock_guard<std::mutex> lock(mountMutex);
+            for (const auto& mount : mounts)
+            {
+                if (mount.pak)
+                {
+                    if (auto data = PakArchive::ReadFile(mount.path, normalized)) return data;
+                }
+                else
+                {
+                    const auto candidate = mount.path / path;
+                    std::ifstream stream(candidate, std::ios::binary);
+                    if (stream) return std::vector<std::uint8_t>{std::istreambuf_iterator<char>(stream), std::istreambuf_iterator<char>()};
+                }
+            }
+            return std::nullopt;
+        }
+    }
+
+    bool PlatformFile::Exists(const std::filesystem::path& path)
+    {
+        if (std::filesystem::exists(path)) return true;
+        return ReadMounted(path).has_value();
+    }
 
     std::vector<std::uint8_t> PlatformFile::ReadAllBytes(const std::filesystem::path& path)
     {
         std::ifstream stream(path, std::ios::binary);
-        if (!stream) return {};
+        if (!stream)
+        {
+            auto mounted = ReadMounted(path);
+            return mounted ? std::move(*mounted) : std::vector<std::uint8_t>{};
+        }
         return {std::istreambuf_iterator<char>(stream), std::istreambuf_iterator<char>()};
     }
 
     std::string PlatformFile::ReadAllText(const std::filesystem::path& path)
     {
         std::ifstream stream(path, std::ios::binary);
-        if (!stream) return {};
+        if (!stream)
+        {
+            auto mounted = ReadMounted(path);
+            return mounted ? std::string(mounted->begin(), mounted->end()) : std::string{};
+        }
         return {std::istreambuf_iterator<char>(stream), std::istreambuf_iterator<char>()};
     }
 
@@ -43,6 +87,25 @@ namespace MiniEngine
     {
         return path.lexically_normal();
     }
+
+    void PlatformFile::MountDirectory(const std::filesystem::path& directory, const int priority)
+    {
+        if (!std::filesystem::is_directory(directory)) return;
+        std::lock_guard<std::mutex> lock(mountMutex);
+        mounts.push_back({std::filesystem::absolute(directory).lexically_normal(), priority, false});
+        std::stable_sort(mounts.begin(), mounts.end(), [](const Mount& a, const Mount& b) { return a.priority > b.priority; });
+    }
+
+    bool PlatformFile::MountPak(const std::filesystem::path& archive, const int priority)
+    {
+        if (PakArchive::List(archive).empty()) return false;
+        std::lock_guard<std::mutex> lock(mountMutex);
+        mounts.push_back({std::filesystem::absolute(archive).lexically_normal(), priority, true});
+        std::stable_sort(mounts.begin(), mounts.end(), [](const Mount& a, const Mount& b) { return a.priority > b.priority; });
+        return true;
+    }
+
+    void PlatformFile::ClearMounts() { std::lock_guard<std::mutex> lock(mountMutex); mounts.clear(); }
 
     void EngineClock::Reset() { m_start = m_previous = Clock::now(); }
 
