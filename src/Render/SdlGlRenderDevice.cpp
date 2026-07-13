@@ -147,7 +147,9 @@ namespace MiniEngine
             }
             void main()
             {
-                vec3 hdr = texture(uHdrTexture, vUv).rgb * uExposure;
+                vec4 scene = texture(uHdrTexture, vUv);
+                vec3 sky = mix(vec3(0.035, 0.055, 0.09), vec3(0.22, 0.42, 0.72), clamp(vUv.y, 0.0, 1.0));
+                vec3 hdr = mix(sky, scene.rgb, scene.a) * uExposure;
                 outColor = vec4(pow(AcesFilm(hdr), vec3(1.0 / 2.2)), 1.0);
             }
         )GLSL";
@@ -184,6 +186,7 @@ namespace MiniEngine
         using Uniform1fProc = void (APIENTRY*)(GLint, GLfloat);
         using Uniform1iProc = void (APIENTRY*)(GLint, GLint);
         using ActiveTextureProc = void (APIENTRY*)(GLenum);
+        using GenerateMipmapProc = void (APIENTRY*)(GLenum);
         using GenFramebuffersProc = void (APIENTRY*)(GLsizei, GLuint*);
         using BindFramebufferProc = void (APIENTRY*)(GLenum, GLuint);
         using DeleteFramebuffersProc = void (APIENTRY*)(GLsizei, const GLuint*);
@@ -205,6 +208,11 @@ namespace MiniEngine
         GLint metallicLocation = -1, roughnessLocation = -1, emissiveLocation = -1, cameraPositionLocation = -1;
         GLint lightDirectionLocation = -1, lightColorLocation = -1, lightIntensityLocation = -1;
         GLint textureLocation = -1, hasTextureLocation = -1, shadowMapLocation = -1;
+        GLint lightCountLocation = -1;
+        std::array<GLint, FrameView::MaxLights> lightDirectionsLocations{}, lightColorsLocations{}, lightIntensitiesLocations{};
+        GLint normalTextureLocation = -1, hasNormalTextureLocation = -1, metallicTextureLocation = -1, hasMetallicTextureLocation = -1;
+        GLint roughnessTextureLocation = -1, hasRoughnessTextureLocation = -1, aoTextureLocation = -1, hasAoTextureLocation = -1;
+        GLint emissiveTextureLocation = -1, hasEmissiveTextureLocation = -1;
         GLint shadowMvpLocation = -1, toneTextureLocation = -1, exposureLocation = -1;
         FileWatcher vertexShaderWatcher, fragmentShaderWatcher;
         std::filesystem::path vertexShaderPath{"assets/shaders/default.vert"}, fragmentShaderPath{"assets/shaders/default.frag"};
@@ -238,6 +246,7 @@ namespace MiniEngine
         Uniform1fProc Uniform1f = nullptr;
         Uniform1iProc Uniform1i = nullptr;
         ActiveTextureProc ActiveTexture = nullptr;
+        GenerateMipmapProc GenerateMipmap = nullptr;
         GenFramebuffersProc GenFramebuffers = nullptr;
         BindFramebufferProc BindFramebuffer = nullptr;
         DeleteFramebuffersProc DeleteFramebuffers = nullptr;
@@ -263,7 +272,7 @@ namespace MiniEngine
                 LoadGl(DeleteProgram, "glDeleteProgram") && LoadGl(UseProgram, "glUseProgram") &&
                 LoadGl(GetUniformLocation, "glGetUniformLocation") && LoadGl(UniformMatrix4fv, "glUniformMatrix4fv") &&
                 LoadGl(Uniform4f, "glUniform4f") && LoadGl(Uniform3f, "glUniform3f") && LoadGl(Uniform1f, "glUniform1f") &&
-                LoadGl(Uniform1i, "glUniform1i") && LoadGl(ActiveTexture, "glActiveTexture") &&
+                LoadGl(Uniform1i, "glUniform1i") && LoadGl(ActiveTexture, "glActiveTexture") && LoadGl(GenerateMipmap, "glGenerateMipmap") &&
                 LoadGl(GenFramebuffers, "glGenFramebuffers") && LoadGl(BindFramebuffer, "glBindFramebuffer") &&
                 LoadGl(DeleteFramebuffers, "glDeleteFramebuffers") && LoadGl(FramebufferTexture2D, "glFramebufferTexture2D") &&
                 LoadGl(CheckFramebufferStatus, "glCheckFramebufferStatus");
@@ -367,9 +376,22 @@ namespace MiniEngine
             lightViewProjectionLocation = GetUniformLocation(program, "uLightViewProjection");
             baseColorLocation = GetUniformLocation(program, "uBaseColor"); lightDirectionLocation = GetUniformLocation(program, "uLightDirection");
             lightColorLocation = GetUniformLocation(program, "uLightColor"); lightIntensityLocation = GetUniformLocation(program, "uLightIntensity");
+            lightCountLocation = GetUniformLocation(program, "uLightCount");
+            for (std::size_t index = 0; index < FrameView::MaxLights; ++index)
+            {
+                const std::string suffix = "[" + std::to_string(index) + "]";
+                lightDirectionsLocations[index] = GetUniformLocation(program, ("uLightDirections" + suffix).c_str());
+                lightColorsLocations[index] = GetUniformLocation(program, ("uLightColors" + suffix).c_str());
+                lightIntensitiesLocations[index] = GetUniformLocation(program, ("uLightIntensities" + suffix).c_str());
+            }
             metallicLocation = GetUniformLocation(program, "uMetallic"); roughnessLocation = GetUniformLocation(program, "uRoughness");
             emissiveLocation = GetUniformLocation(program, "uEmissive"); cameraPositionLocation = GetUniformLocation(program, "uCameraPosition");
             textureLocation = GetUniformLocation(program, "uTexture"); hasTextureLocation = GetUniformLocation(program, "uHasTexture");
+            normalTextureLocation = GetUniformLocation(program, "uNormalTexture"); hasNormalTextureLocation = GetUniformLocation(program, "uHasNormalTexture");
+            metallicTextureLocation = GetUniformLocation(program, "uMetallicTexture"); hasMetallicTextureLocation = GetUniformLocation(program, "uHasMetallicTexture");
+            roughnessTextureLocation = GetUniformLocation(program, "uRoughnessTexture"); hasRoughnessTextureLocation = GetUniformLocation(program, "uHasRoughnessTexture");
+            aoTextureLocation = GetUniformLocation(program, "uAoTexture"); hasAoTextureLocation = GetUniformLocation(program, "uHasAoTexture");
+            emissiveTextureLocation = GetUniformLocation(program, "uEmissiveTexture"); hasEmissiveTextureLocation = GetUniformLocation(program, "uHasEmissiveTexture");
             shadowMapLocation = GetUniformLocation(program, "uShadowMap");
             return true;
         }
@@ -420,22 +442,26 @@ namespace MiniEngine
             EnableVertexAttribArray(1); BindVertexArray(0);
             BindVertexArray(mesh.vao);
             VertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, sizeof(MeshVertex), reinterpret_cast<void*>(offsetof(MeshVertex, uv)));
-            EnableVertexAttribArray(2); BindVertexArray(0);
+            EnableVertexAttribArray(2);
+            VertexAttribPointer(3, 3, GL_FLOAT, GL_FALSE, sizeof(MeshVertex), reinterpret_cast<void*>(offsetof(MeshVertex, tangent)));
+            EnableVertexAttribArray(3); BindVertexArray(0);
             mesh.indexCount = static_cast<GLsizei>(indices.size());
             return &meshes.emplace(resource->GetPath(), mesh).first->second;
         }
 
-        GLuint GetOrCreateTexture(const std::shared_ptr<TextureResource>& resource)
+        GLuint GetOrCreateTexture(const std::shared_ptr<TextureResource>& resource, const bool srgb)
         {
             if (!resource || !resource->IsReady()) return 0;
-            const auto found = textures.find(resource->GetPath());
+            const std::string key = resource->GetPath() + (srgb ? "#srgb" : "#linear");
+            const auto found = textures.find(key);
             if (found != textures.end()) return found->second;
             GLuint texture = 0; glGenTextures(1, &texture); glBindTexture(GL_TEXTURE_2D, texture);
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR); glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR); glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT); glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
             glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
-            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, resource->GetWidth(), resource->GetHeight(), 0, GL_RGBA, GL_UNSIGNED_BYTE, resource->GetData().data());
-            glBindTexture(GL_TEXTURE_2D, 0); textures[resource->GetPath()] = texture; return texture;
+            if (resource->IsHdr()) glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA16F, resource->GetWidth(), resource->GetHeight(), 0, GL_RGBA, GL_FLOAT, resource->GetFloatData().data());
+            else glTexImage2D(GL_TEXTURE_2D, 0, srgb ? GL_SRGB8_ALPHA8 : GL_RGBA8, resource->GetWidth(), resource->GetHeight(), 0, GL_RGBA, GL_UNSIGNED_BYTE, resource->GetData().data());
+            GenerateMipmap(GL_TEXTURE_2D); glBindTexture(GL_TEXTURE_2D, 0); textures[key] = texture; return texture;
         }
     };
 
@@ -553,12 +579,19 @@ namespace MiniEngine
         {
             m_impl->BindFramebuffer(GL_FRAMEBUFFER, 0); int width = 0, height = 0; SDL_GL_GetDrawableSize(m_impl->window, &width, &height); glViewport(0, 0, width, height);
         }
-        glDepthMask(GL_TRUE); glEnable(GL_DEPTH_TEST); glClearColor(0.04f, 0.07f, 0.11f, 1.0f); glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+        glDepthMask(GL_TRUE); glEnable(GL_DEPTH_TEST); glClearColor(0.0f, 0.0f, 0.0f, 0.0f); glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
         m_impl->UseProgram(m_impl->program);
         m_impl->UniformMatrix4fv(m_impl->lightViewProjectionLocation, 1, GL_FALSE, view.lightViewProjection.Data());
         m_impl->Uniform3f(m_impl->lightDirectionLocation, view.lightDirection.x, view.lightDirection.y, view.lightDirection.z);
         m_impl->Uniform3f(m_impl->lightColorLocation, view.lightColor.x, view.lightColor.y, view.lightColor.z);
         m_impl->Uniform1f(m_impl->lightIntensityLocation, view.lightIntensity);
+        m_impl->Uniform1i(m_impl->lightCountLocation, view.lightCount);
+        for (int index = 0; index < view.lightCount && index < static_cast<int>(FrameView::MaxLights); ++index)
+        {
+            m_impl->Uniform3f(m_impl->lightDirectionsLocations[index], view.lightDirections[index].x, view.lightDirections[index].y, view.lightDirections[index].z);
+            m_impl->Uniform3f(m_impl->lightColorsLocations[index], view.lightColors[index].x, view.lightColors[index].y, view.lightColors[index].z);
+            m_impl->Uniform1f(m_impl->lightIntensitiesLocations[index], view.lightIntensities[index]);
+        }
         m_impl->Uniform3f(m_impl->cameraPositionLocation, view.cameraPosition.x, view.cameraPosition.y, view.cameraPosition.z);
         m_impl->Uniform1i(m_impl->textureLocation, 0);
         m_impl->Uniform1i(m_impl->shadowMapLocation, 1);
@@ -580,9 +613,19 @@ namespace MiniEngine
         m_impl->Uniform4f(m_impl->baseColorLocation, color.x, color.y, color.z, color.w);
         m_impl->Uniform1f(m_impl->metallicLocation, metallic); m_impl->Uniform1f(m_impl->roughnessLocation, roughness);
         m_impl->Uniform3f(m_impl->emissiveLocation, emissive.x, emissive.y, emissive.z);
-        const GLuint texture = m_impl->GetOrCreateTexture(item.texture);
-        m_impl->ActiveTexture(GL_TEXTURE0); glBindTexture(GL_TEXTURE_2D, texture);
-        m_impl->Uniform1i(m_impl->hasTextureLocation, texture != 0 ? 1 : 0);
+        auto bindTexture = [&](const std::shared_ptr<TextureResource>& resource, const int unit, const bool srgb, const GLint samplerLocation, const GLint enabledLocation)
+        {
+            const GLuint texture = m_impl->GetOrCreateTexture(resource, srgb);
+            m_impl->ActiveTexture(GL_TEXTURE0 + unit); glBindTexture(GL_TEXTURE_2D, texture);
+            m_impl->Uniform1i(samplerLocation, unit); m_impl->Uniform1i(enabledLocation, texture != 0 ? 1 : 0);
+        };
+        bindTexture(item.texture, 0, true, m_impl->textureLocation, m_impl->hasTextureLocation);
+        bindTexture(item.normalTexture, 2, false, m_impl->normalTextureLocation, m_impl->hasNormalTextureLocation);
+        bindTexture(item.metallicTexture, 3, false, m_impl->metallicTextureLocation, m_impl->hasMetallicTextureLocation);
+        bindTexture(item.roughnessTexture, 4, false, m_impl->roughnessTextureLocation, m_impl->hasRoughnessTextureLocation);
+        bindTexture(item.aoTexture, 5, false, m_impl->aoTextureLocation, m_impl->hasAoTextureLocation);
+        bindTexture(item.emissiveTexture, 6, true, m_impl->emissiveTextureLocation, m_impl->hasEmissiveTextureLocation);
+        m_impl->ActiveTexture(GL_TEXTURE0);
         m_impl->BindVertexArray(mesh->vao); glDrawElements(GL_TRIANGLES, mesh->indexCount, GL_UNSIGNED_INT, nullptr); m_impl->BindVertexArray(0);
     }
 

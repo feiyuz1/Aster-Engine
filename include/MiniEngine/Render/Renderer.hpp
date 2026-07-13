@@ -6,6 +6,7 @@
 #include "MiniEngine/UI/UISystem.hpp"
 
 #include <cstddef>
+#include <array>
 #include <functional>
 #include <memory>
 #include <string>
@@ -31,6 +32,7 @@ namespace MiniEngine
 
     struct FrameView
     {
+        static constexpr std::size_t MaxLights = 4;
         Mat4 view = Mat4::Identity();
         Mat4 projection = Mat4::Identity();
         Vec3 cameraPosition{0.0f, 0.0f, 5.0f};
@@ -38,6 +40,10 @@ namespace MiniEngine
         Vec3 lightColor{1.0f, 1.0f, 1.0f};
         float lightIntensity = 1.0f;
         Mat4 lightViewProjection = Mat4::Identity();
+        std::array<Vec3, MaxLights> lightDirections{};
+        std::array<Vec3, MaxLights> lightColors{};
+        std::array<float, MaxLights> lightIntensities{};
+        int lightCount = 0;
     };
 
     struct RenderItem
@@ -48,6 +54,11 @@ namespace MiniEngine
         std::shared_ptr<MeshResource> mesh;
         std::shared_ptr<MaterialResource> material;
         std::shared_ptr<TextureResource> texture;
+        std::shared_ptr<TextureResource> normalTexture;
+        std::shared_ptr<TextureResource> metallicTexture;
+        std::shared_ptr<TextureResource> roughnessTexture;
+        std::shared_ptr<TextureResource> aoTexture;
+        std::shared_ptr<TextureResource> emissiveTexture;
         bool transparent = false;
     };
 

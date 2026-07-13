@@ -1,5 +1,6 @@
 #version 330 core
 in vec3 vNormal;
+in vec3 vTangent;
 in vec3 vWorldPosition;
 in vec2 vUv;
 in vec4 vLightSpace;
@@ -8,11 +9,22 @@ uniform float uMetallic;
 uniform float uRoughness;
 uniform vec3 uEmissive;
 uniform vec3 uCameraPosition;
-uniform vec3 uLightDirection;
-uniform vec3 uLightColor;
-uniform float uLightIntensity;
+uniform int uLightCount;
+uniform vec3 uLightDirections[4];
+uniform vec3 uLightColors[4];
+uniform float uLightIntensities[4];
 uniform sampler2D uTexture;
 uniform int uHasTexture;
+uniform sampler2D uNormalTexture;
+uniform int uHasNormalTexture;
+uniform sampler2D uMetallicTexture;
+uniform int uHasMetallicTexture;
+uniform sampler2D uRoughnessTexture;
+uniform int uHasRoughnessTexture;
+uniform sampler2D uAoTexture;
+uniform int uHasAoTexture;
+uniform sampler2D uEmissiveTexture;
+uniform int uHasEmissiveTexture;
 uniform sampler2D uShadowMap;
 out vec4 outColor;
 
@@ -55,20 +67,32 @@ void main()
 {
     vec4 surface = uHasTexture != 0 ? texture(uTexture, vUv) : vec4(1.0);
     vec3 albedo = uBaseColor.rgb * surface.rgb;
-    vec3 normal = normalize(vNormal);
+    vec3 geometricNormal = normalize(vNormal);
+    vec3 tangent = normalize(vTangent - geometricNormal * dot(geometricNormal, vTangent));
+    vec3 bitangent = normalize(cross(geometricNormal, tangent));
+    vec3 normal = uHasNormalTexture != 0 ? normalize(mat3(tangent, bitangent, geometricNormal) * (texture(uNormalTexture, vUv).xyz * 2.0 - 1.0)) : geometricNormal;
+    float metallic = clamp(uMetallic * (uHasMetallicTexture != 0 ? texture(uMetallicTexture, vUv).b : 1.0), 0.0, 1.0);
+    float roughness = clamp(uRoughness * (uHasRoughnessTexture != 0 ? texture(uRoughnessTexture, vUv).g : 1.0), 0.04, 1.0);
+    float ao = uHasAoTexture != 0 ? texture(uAoTexture, vUv).r : 1.0;
+    vec3 emissive = uEmissive * (uHasEmissiveTexture != 0 ? texture(uEmissiveTexture, vUv).rgb : vec3(1.0));
     vec3 view = normalize(uCameraPosition - vWorldPosition);
-    vec3 light = normalize(-uLightDirection);
-    vec3 halfway = normalize(view + light);
-    float nl = max(dot(normal, light), 0.0);
-    float nv = max(dot(normal, view), 0.0);
-    vec3 f0 = mix(vec3(0.04), albedo, uMetallic);
-    vec3 fresnel = FresnelSchlick(max(dot(halfway, view), 0.0), f0);
-    float distribution = DistributionGGX(normal, halfway, uRoughness);
-    float geometry = GeometrySchlickGGX(nv, uRoughness) * GeometrySchlickGGX(nl, uRoughness);
-    vec3 specular = distribution * geometry * fresnel / max(4.0 * nv * nl, 0.0001);
-    vec3 diffuse = (vec3(1.0) - fresnel) * (1.0 - uMetallic) * albedo / 3.14159265;
-    float shadow = ShadowFactor(normal, light);
-    vec3 direct = (diffuse + specular) * uLightColor * uLightIntensity * nl * (1.0 - shadow);
-    vec3 color = albedo * 0.04 + direct + uEmissive;
+    vec3 f0 = mix(vec3(0.04), albedo, metallic);
+    vec3 direct = vec3(0.0);
+    for (int index = 0; index < uLightCount; ++index)
+    {
+        vec3 light = normalize(-uLightDirections[index]);
+        vec3 halfway = normalize(view + light);
+        float nl = max(dot(normal, light), 0.0);
+        float nv = max(dot(normal, view), 0.0);
+        vec3 fresnel = FresnelSchlick(max(dot(halfway, view), 0.0), f0);
+        float distribution = DistributionGGX(normal, halfway, roughness);
+        float geometry = GeometrySchlickGGX(nv, roughness) * GeometrySchlickGGX(nl, roughness);
+        vec3 specular = distribution * geometry * fresnel / max(4.0 * nv * nl, 0.0001);
+        vec3 diffuse = (vec3(1.0) - fresnel) * (1.0 - metallic) * albedo / 3.14159265;
+        float visibility = index == 0 ? 1.0 - ShadowFactor(normal, light) : 1.0;
+        direct += (diffuse + specular) * uLightColors[index] * uLightIntensities[index] * nl * visibility;
+    }
+    vec3 skyAmbient = mix(vec3(0.025, 0.035, 0.055), vec3(0.12, 0.18, 0.28), clamp(normal.y * 0.5 + 0.5, 0.0, 1.0));
+    vec3 color = albedo * skyAmbient * ao + direct + emissive;
     outColor = vec4(color, uBaseColor.a * surface.a);
 }

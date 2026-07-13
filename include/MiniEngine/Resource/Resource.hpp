@@ -46,10 +46,13 @@ namespace MiniEngine
         void Unload() override;
         std::size_t GetByteSize() const;
         const std::vector<std::uint8_t>& GetData() const;
+        const std::vector<float>& GetFloatData() const;
+        bool IsHdr() const;
         int GetWidth() const;
         int GetHeight() const;
     private:
         std::vector<std::uint8_t> m_data;
+        std::vector<float> m_floatData;
         int m_width = 0;
         int m_height = 0;
     };
@@ -59,6 +62,7 @@ namespace MiniEngine
         Vec3 position;
         Vec3 normal{0.0f, 0.0f, 1.0f};
         Vec2 uv;
+        Vec3 tangent{1.0f, 0.0f, 0.0f};
     };
 
     class MeshResource final : public Resource
@@ -95,6 +99,11 @@ namespace MiniEngine
         Vec4 GetBaseColor() const;
         const std::string& GetShaderPath() const;
         const std::string& GetTexturePath() const;
+        const std::string& GetNormalTexturePath() const;
+        const std::string& GetMetallicTexturePath() const;
+        const std::string& GetRoughnessTexturePath() const;
+        const std::string& GetAoTexturePath() const;
+        const std::string& GetEmissiveTexturePath() const;
         float GetMetallic() const;
         float GetRoughness() const;
         Vec3 GetEmissive() const;
@@ -103,6 +112,11 @@ namespace MiniEngine
         Vec4 m_baseColor{0.3f, 0.7f, 1.0f, 1.0f};
         std::string m_shaderPath;
         std::string m_texturePath;
+        std::string m_normalTexturePath;
+        std::string m_metallicTexturePath;
+        std::string m_roughnessTexturePath;
+        std::string m_aoTexturePath;
+        std::string m_emissiveTexturePath;
         float m_metallic = 0.0f;
         float m_roughness = 0.7f;
         Vec3 m_emissive{};

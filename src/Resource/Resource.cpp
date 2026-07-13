@@ -52,7 +52,7 @@ namespace MiniEngine
         }
 #endif
 
-        bool LoadRadianceHdr(const std::vector<std::uint8_t>& bytes, int& width, int& height, std::vector<std::uint8_t>& pixels)
+        bool LoadRadianceHdr(const std::vector<std::uint8_t>& bytes, int& width, int& height, std::vector<float>& pixels)
         {
             if (bytes.size() < 16) return false;
             std::size_t offset = 0; std::string line, resolution;
@@ -97,10 +97,9 @@ namespace MiniEngine
                 for (int channel = 0; channel < 3; ++channel)
                 {
                     const float linear = exponent ? std::ldexp(static_cast<float>(rgbe[index * 4 + channel]) + 0.5f, static_cast<int>(exponent) - 136) : 0.0f;
-                    const float mapped = std::pow(std::max(0.0f, linear) / (1.0f + std::max(0.0f, linear)), 1.0f / 2.2f);
-                    pixels[index * 4 + channel] = static_cast<std::uint8_t>(std::clamp(mapped * 255.0f, 0.0f, 255.0f));
+                    pixels[index * 4 + channel] = std::max(0.0f, linear);
                 }
-                pixels[index * 4 + 3] = 255;
+                pixels[index * 4 + 3] = 1.0f;
             }
             return true;
         }
@@ -142,11 +141,12 @@ namespace MiniEngine
     bool TextureResource::Load(const std::string& path)
     {
         MarkLoading(path);
+        m_data.clear(); m_floatData.clear(); m_width = m_height = 0;
         const auto bytes = PlatformFile::ReadAllBytes(path);
         std::string extension = std::filesystem::path(path).extension().string(); std::transform(extension.begin(), extension.end(), extension.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
         if (extension == ".hdr")
         {
-            if (!LoadRadianceHdr(bytes, m_width, m_height, m_data)) { SetState(ResourceState::Failed, "Invalid Radiance HDR texture: " + path); return false; }
+            if (!LoadRadianceHdr(bytes, m_width, m_height, m_floatData)) { SetState(ResourceState::Failed, "Invalid Radiance HDR texture: " + path); return false; }
             SetState(ResourceState::Loaded); return true;
         }
 #ifdef _WIN32
@@ -190,9 +190,11 @@ namespace MiniEngine
         return true;
     }
 
-    void TextureResource::Unload() { m_data.clear(); m_width = m_height = 0; SetState(ResourceState::Unloaded); }
-    std::size_t TextureResource::GetByteSize() const { return m_data.size(); }
+    void TextureResource::Unload() { m_data.clear(); m_floatData.clear(); m_width = m_height = 0; SetState(ResourceState::Unloaded); }
+    std::size_t TextureResource::GetByteSize() const { return m_data.size() + m_floatData.size() * sizeof(float); }
     const std::vector<std::uint8_t>& TextureResource::GetData() const { return m_data; }
+    const std::vector<float>& TextureResource::GetFloatData() const { return m_floatData; }
+    bool TextureResource::IsHdr() const { return !m_floatData.empty(); }
     int TextureResource::GetWidth() const { return m_width; }
     int TextureResource::GetHeight() const { return m_height; }
 
@@ -282,6 +284,21 @@ namespace MiniEngine
             SetState(ResourceState::Failed, "Mesh contains no valid faces: " + path);
             return false;
         }
+        for (std::size_t triangle = 0; triangle + 2 < m_indices.size(); triangle += 3)
+        {
+            MeshVertex& first = m_vertices[m_indices[triangle]]; MeshVertex& second = m_vertices[m_indices[triangle + 1]]; MeshVertex& third = m_vertices[m_indices[triangle + 2]];
+            const Vec3 edge1 = second.position - first.position, edge2 = third.position - first.position;
+            const float du1 = second.uv.x - first.uv.x, dv1 = second.uv.y - first.uv.y;
+            const float du2 = third.uv.x - first.uv.x, dv2 = third.uv.y - first.uv.y;
+            const float determinant = du1 * dv2 - du2 * dv1;
+            const Vec3 tangent = std::abs(determinant) > 1e-8f ? (edge1 * dv2 - edge2 * dv1) / determinant : Vec3{1.0f, 0.0f, 0.0f};
+            for (MeshVertex* vertex : {&first, &second, &third})
+            {
+                const Vec3 orthogonalTangent = Normalize(tangent - vertex->normal * Dot(vertex->normal, tangent));
+                vertex->tangent = LengthSquared(orthogonalTangent) > 1e-8f ? orthogonalTangent : Normalize(Cross({0.0f, 1.0f, 0.0f}, vertex->normal));
+                if (LengthSquared(vertex->tangent) < 1e-8f) vertex->tangent = {1.0f, 0.0f, 0.0f};
+            }
+        }
         SetState(ResourceState::Loaded);
         return true;
     }
@@ -306,7 +323,8 @@ namespace MiniEngine
     {
         MarkLoading(path);
         m_baseColor = {0.3f, 0.7f, 1.0f, 1.0f}; m_metallic = 0.0f; m_roughness = 0.7f; m_emissive = {}; m_transparent = false;
-        m_shaderPath.clear(); m_texturePath.clear();
+        m_shaderPath.clear(); m_texturePath.clear(); m_normalTexturePath.clear(); m_metallicTexturePath.clear();
+        m_roughnessTexturePath.clear(); m_aoTexturePath.clear(); m_emissiveTexturePath.clear();
         std::istringstream stream(PlatformFile::ReadAllText(path));
         if (!stream) { SetState(ResourceState::Failed, "Material file not found: " + path); return false; }
         std::string key;
@@ -318,16 +336,30 @@ namespace MiniEngine
             else if (key == "emissive") stream >> m_emissive.x >> m_emissive.y >> m_emissive.z;
             else if (key == "shader") stream >> m_shaderPath;
             else if (key == "texture") stream >> m_texturePath;
+            else if (key == "normalTexture") stream >> m_normalTexturePath;
+            else if (key == "metallicTexture") stream >> m_metallicTexturePath;
+            else if (key == "roughnessTexture") stream >> m_roughnessTexturePath;
+            else if (key == "aoTexture") stream >> m_aoTexturePath;
+            else if (key == "emissiveTexture") stream >> m_emissiveTexturePath;
             else if (key == "blend") { std::string value; stream >> value; m_transparent = value == "alpha" || value == "transparent"; }
             else { std::string ignored; std::getline(stream, ignored); }
         }
         m_metallic = std::clamp(m_metallic, 0.0f, 1.0f); m_roughness = std::clamp(m_roughness, 0.04f, 1.0f);
         SetState(ResourceState::Loaded); return true;
     }
-    void MaterialResource::Unload() { m_shaderPath.clear(); m_texturePath.clear(); SetState(ResourceState::Unloaded); }
+    void MaterialResource::Unload()
+    {
+        m_shaderPath.clear(); m_texturePath.clear(); m_normalTexturePath.clear(); m_metallicTexturePath.clear();
+        m_roughnessTexturePath.clear(); m_aoTexturePath.clear(); m_emissiveTexturePath.clear(); SetState(ResourceState::Unloaded);
+    }
     Vec4 MaterialResource::GetBaseColor() const { return m_baseColor; }
     const std::string& MaterialResource::GetShaderPath() const { return m_shaderPath; }
     const std::string& MaterialResource::GetTexturePath() const { return m_texturePath; }
+    const std::string& MaterialResource::GetNormalTexturePath() const { return m_normalTexturePath; }
+    const std::string& MaterialResource::GetMetallicTexturePath() const { return m_metallicTexturePath; }
+    const std::string& MaterialResource::GetRoughnessTexturePath() const { return m_roughnessTexturePath; }
+    const std::string& MaterialResource::GetAoTexturePath() const { return m_aoTexturePath; }
+    const std::string& MaterialResource::GetEmissiveTexturePath() const { return m_emissiveTexturePath; }
     float MaterialResource::GetMetallic() const { return m_metallic; }
     float MaterialResource::GetRoughness() const { return m_roughness; }
     Vec3 MaterialResource::GetEmissive() const { return m_emissive; }

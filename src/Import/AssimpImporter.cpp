@@ -105,17 +105,23 @@ namespace MiniEngine
             out << "metallic " << std::clamp(metallic, 0.0f, 1.0f) << "\nroughness " << std::clamp(roughness, 0.04f, 1.0f)
                 << "\nemissive " << emissive.r << ' ' << emissive.g << ' ' << emissive.b << '\n';
             if (color.a < 0.999f) out << "blend alpha\n";
-            aiString textureName;
-            if (material.GetTexture(aiTextureType_BASE_COLOR, 0, &textureName) != AI_SUCCESS) material.GetTexture(aiTextureType_DIFFUSE, 0, &textureName);
-            std::filesystem::path copied;
-            if (CopyTexture(scene, source, textureName, outputDirectory, copied))
+            auto importTexture = [&](const aiTextureType type, const char* key, const aiTextureType fallback = aiTextureType_NONE)
             {
+                aiString textureName;
+                if (material.GetTexture(type, 0, &textureName) != AI_SUCCESS && fallback != aiTextureType_NONE) material.GetTexture(fallback, 0, &textureName);
+                std::filesystem::path copied; if (!CopyTexture(scene, source, textureName, outputDirectory, copied)) return;
                 result.assets.push_back({"TextureSource", copied});
                 std::string extension = copied.extension().string(); std::transform(extension.begin(), extension.end(), extension.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
                 if (extension == ".ppm" || extension == ".png" || extension == ".jpg" || extension == ".jpeg" || extension == ".bmp" || extension == ".tif" || extension == ".tiff" || extension == ".hdr")
-                    out << "texture " << ResourcePath(copied, outputDirectory, options).generic_string() << '\n';
+                    out << key << ' ' << ResourcePath(copied, outputDirectory, options).generic_string() << '\n';
                 else result.warnings.push_back("Copied texture but runtime decoder does not support it: " + copied.generic_string());
-            }
+            };
+            importTexture(aiTextureType_BASE_COLOR, "texture", aiTextureType_DIFFUSE);
+            importTexture(aiTextureType_NORMALS, "normalTexture", aiTextureType_HEIGHT);
+            importTexture(aiTextureType_METALNESS, "metallicTexture");
+            importTexture(aiTextureType_DIFFUSE_ROUGHNESS, "roughnessTexture");
+            importTexture(aiTextureType_AMBIENT_OCCLUSION, "aoTexture", aiTextureType_LIGHTMAP);
+            importTexture(aiTextureType_EMISSIVE, "emissiveTexture");
             return PlatformFile::WriteAllText(path, out.str());
         }
 
@@ -143,7 +149,7 @@ namespace MiniEngine
         std::error_code error; std::filesystem::create_directories(outputDirectory, error);
         if (error) { result.error = "Cannot create output directory: " + error.message(); return result; }
 
-        unsigned int flags = aiProcess_Triangulate | aiProcess_JoinIdenticalVertices | aiProcess_ImproveCacheLocality | aiProcess_ValidateDataStructure | aiProcess_SortByPType;
+        unsigned int flags = aiProcess_Triangulate | aiProcess_JoinIdenticalVertices | aiProcess_ImproveCacheLocality | aiProcess_ValidateDataStructure | aiProcess_SortByPType | aiProcess_CalcTangentSpace;
         if (options.generateSmoothNormals) flags |= aiProcess_GenSmoothNormals;
         if (options.flipUvs) flags |= aiProcess_FlipUVs;
         if (options.optimizeMeshes) flags |= aiProcess_OptimizeMeshes;

@@ -6,6 +6,7 @@
 #include "MiniEngine/Physics/PhysicsWorld.hpp"
 #include "MiniEngine/Platform/Platform.hpp"
 #include "MiniEngine/Project/Project.hpp"
+#include "MiniEngine/Render/Renderer.hpp"
 #include "MiniEngine/Resource/Resource.hpp"
 #include "MiniEngine/Resource/AssetCooker.hpp"
 #include "MiniEngine/Resource/AssetRegistry.hpp"
@@ -69,6 +70,10 @@ int main()
     CHECK(Prefab::Save(loaded, *loaded.GetEntityManager().GetAliveEntities().begin(), "Saved/Test.prefab"));
     World prefabTarget;
     CHECK(!Prefab::Instantiate(prefabTarget, "Saved/Test.prefab").empty());
+    World lightingWorld;
+    for (int index = 0; index < 6; ++index) lightingWorld.AddComponent(lightingWorld.CreateEntity("Light"), LightComponent{{1.0f, 0.8f, 0.6f}, static_cast<float>(index + 1), {-0.4f, -1.0f, -0.3f}});
+    Renderer lightingRenderer; CHECK(lightingRenderer.Initialize(std::make_unique<NullRenderDevice>()));
+    lightingRenderer.BuildRenderQueue(lightingWorld); CHECK(lightingRenderer.GetFrameView().lightCount == static_cast<int>(FrameView::MaxLights)); lightingRenderer.Shutdown();
 
     ProjectSettings project;
     project.name = "TestGame";
@@ -104,6 +109,7 @@ int main()
     CHECK(mesh.Load("assets/player.mesh"));
     CHECK(mesh.GetVertices().size() == 3);
     CHECK(mesh.GetIndices().size() == 3);
+    CHECK(Length(mesh.GetVertices().front().tangent) > 0.9f && std::abs(Dot(mesh.GetVertices().front().normal, mesh.GetVertices().front().tangent)) < 0.001f);
 #ifdef TINYENGINE_HAS_ASSIMP
     CHECK(PlatformFile::WriteAllText("Saved/ImportTriangle.obj", "o Triangle\nv 0 0 0\nv 2 0 0\nv 0 2 0\nvt 0 0\nvt 1 0\nvt 0 1\nf 1/1 2/2 3/3\n"));
     ModelImportOptions importOptions; importOptions.resourcePrefix = "assets/ImportedTest";
@@ -137,12 +143,15 @@ int main()
     CHECK(PlatformFile::WriteAllBytes("Saved/Test.hdr", hdrBytes));
     TextureResource hdrTexture;
     CHECK(hdrTexture.Load("Saved/Test.hdr"));
-    CHECK(hdrTexture.GetWidth() == 1 && hdrTexture.GetHeight() == 1 && hdrTexture.GetData().size() == 4);
-    CHECK(PlatformFile::WriteAllText("Saved/TestPbr.mat", "color 0.2 0.3 0.4 1\nmetallic 0.8\nroughness 0.25\nemissive 0.1 0.2 0.3\ntexture Saved/Test.png\n"));
+    CHECK(hdrTexture.GetWidth() == 1 && hdrTexture.GetHeight() == 1 && hdrTexture.IsHdr() && hdrTexture.GetFloatData().size() == 4);
+    CHECK(hdrTexture.GetFloatData()[0] > 0.0f && hdrTexture.GetByteSize() == 4 * sizeof(float));
+    CHECK(PlatformFile::WriteAllText("Saved/TestPbr.mat", "color 0.2 0.3 0.4 1\nmetallic 0.8\nroughness 0.25\nemissive 0.1 0.2 0.3\ntexture Saved/Test.png\nnormalTexture Saved/Test.png\nmetallicTexture Saved/Test.png\nroughnessTexture Saved/Test.png\naoTexture Saved/Test.png\nemissiveTexture Saved/Test.png\n"));
     MaterialResource pbrMaterial;
     CHECK(pbrMaterial.Load("Saved/TestPbr.mat"));
     CHECK(std::abs(pbrMaterial.GetMetallic() - 0.8f) < 0.001f && std::abs(pbrMaterial.GetRoughness() - 0.25f) < 0.001f);
     CHECK(std::abs(pbrMaterial.GetEmissive().y - 0.2f) < 0.001f && pbrMaterial.GetTexturePath() == "Saved/Test.png");
+    CHECK(pbrMaterial.GetNormalTexturePath() == "Saved/Test.png" && pbrMaterial.GetMetallicTexturePath() == "Saved/Test.png");
+    CHECK(pbrMaterial.GetRoughnessTexturePath() == "Saved/Test.png" && pbrMaterial.GetAoTexturePath() == "Saved/Test.png" && pbrMaterial.GetEmissiveTexturePath() == "Saved/Test.png");
     ShaderResource shader;
     CHECK(shader.Load("assets/shaders/default.vert"));
     CHECK(shader.GetSource().find("uLightViewProjection") != std::string::npos);

@@ -87,12 +87,21 @@ namespace MiniEngine
         m_frameView.cameraPosition = cameraPosition;
         m_frameView.view = LookAt(cameraPosition, cameraPosition + cameraForward, {0.0f, 1.0f, 0.0f});
         m_frameView.projection = Perspective(camera.fov, m_device ? m_device->GetAspectRatio() : 16.0f / 9.0f, camera.nearPlane, camera.farPlane);
+        m_frameView.lightCount = 0;
         world.GetComponentManager().ForEach<LightComponent>([&](Entity, LightComponent& light)
         {
-            m_frameView.lightDirection = Normalize(light.direction);
-            m_frameView.lightColor = light.color;
-            m_frameView.lightIntensity = light.intensity;
+            if (m_frameView.lightCount >= static_cast<int>(FrameView::MaxLights)) return;
+            const int index = m_frameView.lightCount++;
+            m_frameView.lightDirections[index] = Normalize(light.direction);
+            m_frameView.lightColors[index] = light.color;
+            m_frameView.lightIntensities[index] = light.intensity;
+            if (index == 0) { m_frameView.lightDirection = m_frameView.lightDirections[index]; m_frameView.lightColor = light.color; m_frameView.lightIntensity = light.intensity; }
         });
+        if (m_frameView.lightCount == 0)
+        {
+            m_frameView.lightCount = 1; m_frameView.lightDirections[0] = m_frameView.lightDirection;
+            m_frameView.lightColors[0] = m_frameView.lightColor; m_frameView.lightIntensities[0] = m_frameView.lightIntensity;
+        }
         const Vec3 shadowFocus = cameraPosition + cameraForward * 10.0f;
         const Vec3 lightDirection = Normalize(m_frameView.lightDirection);
         const Vec3 shadowUp = std::abs(Dot(lightDirection, Vec3{0.0f, 1.0f, 0.0f})) > 0.95f ? Vec3{0.0f, 0.0f, 1.0f} : Vec3{0.0f, 1.0f, 0.0f};
@@ -106,8 +115,7 @@ namespace MiniEngine
             auto mesh = m_resources->Load<MeshResource>(meshComponent.meshPath);
             if (!mesh) return;
             auto material = m_resources->Load<MaterialResource>(meshComponent.materialPath);
-            std::shared_ptr<TextureResource> texture;
-            if (material && !material->GetTexturePath().empty()) texture = m_resources->Load<TextureResource>(material->GetTexturePath());
+            auto loadTexture = [&](const std::string& path) { return path.empty() ? std::shared_ptr<TextureResource>{} : m_resources->Load<TextureResource>(path); };
             const auto* transform = world.GetComponent<TransformComponent>(entity);
             const Vec3 position = transform ? transform->position : Vec3{};
             const Vec3 offset = position - cameraPosition;
@@ -116,7 +124,14 @@ namespace MiniEngine
             const float halfFov = DegreesToRadians(camera.fov * 0.65f);
             if (distance > camera.farPlane || (distance > camera.nearPlane && facing < std::cos(halfFov))) { ++m_lastCulled; return; }
             const bool transparent = material && material->IsTransparent();
-            m_renderQueue.AddItem({entity, distance, world.GetWorldMatrix(entity), std::move(mesh), std::move(material), std::move(texture), transparent});
+            RenderItem item; item.entity = entity; item.distanceToCamera = distance; item.model = world.GetWorldMatrix(entity); item.mesh = std::move(mesh); item.transparent = transparent;
+            if (material)
+            {
+                item.texture = loadTexture(material->GetTexturePath()); item.normalTexture = loadTexture(material->GetNormalTexturePath());
+                item.metallicTexture = loadTexture(material->GetMetallicTexturePath()); item.roughnessTexture = loadTexture(material->GetRoughnessTexturePath());
+                item.aoTexture = loadTexture(material->GetAoTexturePath()); item.emissiveTexture = loadTexture(material->GetEmissiveTexturePath());
+            }
+            item.material = std::move(material); m_renderQueue.AddItem(item);
         });
         m_renderQueue.Sort();
     }

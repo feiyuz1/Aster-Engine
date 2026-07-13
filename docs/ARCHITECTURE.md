@@ -43,7 +43,7 @@ FBX/glTF/OBJ/... -> AssimpImporter
   -> Cooked directory -> TPAK -> VFS mount
 ```
 
-材质导入保留 base color、opacity、metallic、roughness、emissive 和 base-color texture。PNG/JPG/BMP/TIFF 由 Windows WIC 解码；Radiance HDR 源纹理当前仍转为 RGBA8，但场景光照使用 RGBA16F FBO，并经 ACES Filmic 与可调曝光输出到 RGBA8 Viewport。
+材质导入保留 base color、opacity、metallic、roughness、emissive，以及 base-color/normal/metallic/roughness/AO/emissive 贴图。MeshResource 从三角形 UV 生成正交 Tangent。PNG/JPG/BMP/TIFF 由 Windows WIC 解码；Radiance HDR 保持线性 float RGBA，上传为 RGBA16F。颜色贴图使用 sRGB，数据贴图保持线性，全部生成 Mipmap。
 
 ```text
 SDL events -> semantic input / ImGui
@@ -59,7 +59,7 @@ SDL events -> semantic input / ImGui
 
 编辑态由 Renderer 的 camera override 使用编辑器相机；Play 时恢复场景 Primary Camera。Scene View 显示 Tonemap 后的颜色纹理，拾取在 CPU 侧将屏幕坐标转为射线并检测 Mesh/Collider AABB；Gizmo 修改 Transform、支持步长吸附并接入 Undo。资产浏览器通过 ImGui payload 将 Prefab、Mesh 或 Material 拖入 Scene View。
 
-默认 PBR Shader 是独立 `.vert/.frag` 资产。RenderDevice 监测修改时间并尝试原子替换 OpenGL program；编译或链接失败时继续使用上一份有效 program。阴影使用单方向光、固定 2048² 深度图和 3×3 PCF。
+默认 PBR Shader 是独立 `.vert/.frag` 资产。RenderDevice 监测修改时间并尝试原子替换 OpenGL program；编译或链接失败时继续使用上一份有效 program。每帧最多收集四盏方向光，第一盏灯使用固定 2048² 深度图和 3×3 PCF；其余灯只计算直接 PBR 光照。Tonemap Pass 在无几何覆盖的像素绘制程序化天空渐变，并为物体提供半球环境近似。
 
 ## 数据格式与约束
 
