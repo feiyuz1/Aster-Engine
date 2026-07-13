@@ -1,11 +1,13 @@
 # TinyEngine 架构说明
 
-本文对应 TinyEngine 0.3.0，最后同步于 2026-07-13。
+本文对应 TinyEngine 0.4.0，最后同步于 2026-07-14。
 
 ## 依赖方向
 
 ```text
-Editor / Demo / Tools
+Editor / Demo / AssetTool
+        |            |
+   Dear ImGui   Assimp Importers
         |
 Runtime / Project / UI
         |
@@ -26,7 +28,7 @@ Task | Memory | Core | Math | Platform
 |---|---|---|
 | Project/SceneManager/GameInstance | Projects、UGameInstance、World | 小型配置与显式生命周期，无 UObject |
 | ECS/Scene/Prefab | Actor、Component、Level | generation Entity + 稀疏组件存储 |
-| AssetRegistry/Cooker/TPAK/VFS | AssetRegistry、Cook、PakFile | 单机 GUID/meta 和简单归档，无 DDC/IoStore |
+| AssimpImporter/AssetRegistry/Cooker/TPAK/VFS | Interchange、AssetRegistry、Cook、PakFile | Authoring 时转换，Runtime 不链接 Assimp |
 | Renderer/RenderDevice | Renderer、RenderCore、RHI | 单 OpenGL 3.3 后端 |
 | PhysicsWorld | Chaos/PhysicsCore | 自研基础后端，API 可替换 Jolt |
 | UISystem | UMG/Slate Runtime | 小型 Widget、命中和焦点模型 |
@@ -45,8 +47,8 @@ Stop      -> destroy runtime instances -> restore snapshot -> Edit World
 资产：
 
 ```text
-source asset -> scan -> .meta GUID/import settings/dependencies
-             -> importer/reimport -> cooked directory
+FBX/glTF/OBJ/... -> AssimpImporter -> .mesh/.mat/.prefab + .meta GUID/dependencies
+                                    -> cooked directory
              -> TPAK -> PlatformFile mount -> ResourceManager -> GPU upload
 ```
 
@@ -72,6 +74,7 @@ SDL events -> semantic input + UI hit test
 
 - 新持久组件必须同步 SceneSerializer 与测试。
 - 新资源格式通过导入/资源层进入，不允许渲染器直接解析源文件。
+- `tinyengine_importers` 只允许被 Editor、AssetTool 和导入测试依赖，Runtime 发布不携带 Assimp。
 - 新图形后端实现 `RenderDevice`；游戏世界不接触 SDL/OpenGL。
 - 成熟物理后端应复用 Collider、PhysicsQuery 与事件 API。
 - Editor 代码不得链接回核心静态库。

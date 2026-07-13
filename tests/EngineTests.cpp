@@ -12,7 +12,11 @@
 #include "MiniEngine/Resource/PakArchive.hpp"
 #include "MiniEngine/Task/JobSystem.hpp"
 #include "MiniEngine/UI/UISystem.hpp"
+#ifdef TINYENGINE_HAS_ASSIMP
+#include "MiniEngine/Import/AssimpImporter.hpp"
+#endif
 
+#include <algorithm>
 #include <atomic>
 #include <cmath>
 #include <iostream>
@@ -98,6 +102,20 @@ int main()
     CHECK(mesh.Load("assets/player.mesh"));
     CHECK(mesh.GetVertices().size() == 3);
     CHECK(mesh.GetIndices().size() == 3);
+#ifdef TINYENGINE_HAS_ASSIMP
+    CHECK(PlatformFile::WriteAllText("Saved/ImportTriangle.obj", "o Triangle\nv 0 0 0\nv 2 0 0\nv 0 2 0\nvt 0 0\nvt 1 0\nvt 0 1\nf 1/1 2/2 3/3\n"));
+    ModelImportOptions importOptions; importOptions.resourcePrefix = "assets/ImportedTest";
+    const auto imported = AssimpImporter::ImportModel("Saved/ImportTriangle.obj", "Saved/ImportedTest", importOptions);
+    CHECK(imported.success && !imported.prefabPath.empty());
+    const auto importedMesh = std::find_if(imported.assets.begin(), imported.assets.end(), [](const ImportedAsset& asset) { return asset.type == "Mesh"; });
+    CHECK(importedMesh != imported.assets.end());
+    MeshResource convertedMesh;
+    CHECK(importedMesh != imported.assets.end() && convertedMesh.Load(importedMesh->path.string()));
+    CHECK(convertedMesh.GetVertices().size() == 3 && std::abs(convertedMesh.GetVertices()[1].uv.x - 1.0f) < 0.001f);
+    AssetRegistry importedRegistry; importedRegistry.Scan("Saved/ImportedTest", false);
+    const auto importedPrefab = importedRegistry.Find(imported.prefabPath.generic_string());
+    CHECK(importedPrefab.has_value() && importedPrefab->dependencies.size() >= 2 && importedPrefab->importSettings.count("source") == 1);
+#endif
     TextureResource texture;
     CHECK(texture.Load("assets/default.ppm"));
     CHECK(texture.GetWidth() == 2 && texture.GetHeight() == 2 && texture.GetData().size() == 16);

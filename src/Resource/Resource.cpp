@@ -94,6 +94,8 @@ namespace MiniEngine
             return false;
         }
         std::vector<Vec3> positions;
+        std::vector<Vec3> normals;
+        std::vector<Vec2> uvs;
         std::string line;
         m_vertices.clear(); m_indices.clear();
         m_bounds.minimum = {FLT_MAX, FLT_MAX, FLT_MAX};
@@ -109,24 +111,56 @@ namespace MiniEngine
                 m_bounds.minimum.x = std::min(m_bounds.minimum.x, value.x); m_bounds.minimum.y = std::min(m_bounds.minimum.y, value.y); m_bounds.minimum.z = std::min(m_bounds.minimum.z, value.z);
                 m_bounds.maximum.x = std::max(m_bounds.maximum.x, value.x); m_bounds.maximum.y = std::max(m_bounds.maximum.y, value.y); m_bounds.maximum.z = std::max(m_bounds.maximum.z, value.z);
             }
+            else if (type == "vt")
+            {
+                Vec2 value; if (row >> value.x >> value.y) uvs.push_back(value);
+            }
+            else if (type == "vn")
+            {
+                Vec3 value; if (row >> value.x >> value.y >> value.z) normals.push_back(Normalize(value));
+            }
             else if (type == "f")
             {
-                std::vector<std::uint32_t> face;
+                struct FaceIndex { int position = -1, uv = -1, normal = -1; };
+                std::vector<FaceIndex> face;
                 std::string value;
                 while (row >> value)
                 {
-                    const auto slash = value.find('/');
-                    const int index = std::stoi(value.substr(0, slash));
-                    if (index > 0 && static_cast<std::size_t>(index) <= positions.size()) face.push_back(static_cast<std::uint32_t>(index - 1));
+                    FaceIndex parsed;
+                    try
+                    {
+                        const auto firstSlash = value.find('/');
+                        const auto secondSlash = firstSlash == std::string::npos ? std::string::npos : value.find('/', firstSlash + 1);
+                        auto resolve = [](const std::string& token, const std::size_t size)
+                        {
+                            if (token.empty()) return -1;
+                            const int raw = std::stoi(token);
+                            const int resolved = raw > 0 ? raw - 1 : static_cast<int>(size) + raw;
+                            return resolved >= 0 && static_cast<std::size_t>(resolved) < size ? resolved : -1;
+                        };
+                        parsed.position = resolve(value.substr(0, firstSlash), positions.size());
+                        if (firstSlash != std::string::npos)
+                        {
+                            parsed.uv = resolve(value.substr(firstSlash + 1, secondSlash == std::string::npos ? std::string::npos : secondSlash - firstSlash - 1), uvs.size());
+                            if (secondSlash != std::string::npos) parsed.normal = resolve(value.substr(secondSlash + 1), normals.size());
+                        }
+                    }
+                    catch (...) { parsed.position = -1; }
+                    if (parsed.position >= 0) face.push_back(parsed);
                 }
                 for (std::size_t index = 1; index + 1 < face.size(); ++index)
                 {
-                    const Vec3 a = positions[face[0]], b = positions[face[index]], c = positions[face[index + 1]];
-                    const Vec3 normal = Normalize(Cross(b - a, c - a));
+                    const FaceIndex triangle[3] = {face[0], face[index], face[index + 1]};
+                    const Vec3 a = positions[triangle[0].position], b = positions[triangle[1].position], c = positions[triangle[2].position];
+                    const Vec3 faceNormal = Normalize(Cross(b - a, c - a));
                     const std::uint32_t base = static_cast<std::uint32_t>(m_vertices.size());
-                    m_vertices.push_back({a, normal, {0.0f, 0.0f}});
-                    m_vertices.push_back({b, normal, {1.0f, 0.0f}});
-                    m_vertices.push_back({c, normal, {0.0f, 1.0f}});
+                    const Vec3 trianglePositions[3] = {a, b, c};
+                    for (int corner = 0; corner < 3; ++corner)
+                    {
+                        const Vec3 normal = triangle[corner].normal >= 0 ? normals[triangle[corner].normal] : faceNormal;
+                        const Vec2 uv = triangle[corner].uv >= 0 ? uvs[triangle[corner].uv] : Vec2{corner == 1 ? 1.0f : 0.0f, corner == 2 ? 1.0f : 0.0f};
+                        m_vertices.push_back({trianglePositions[corner], normal, uv});
+                    }
                     m_indices.insert(m_indices.end(), {base, base + 1, base + 2});
                 }
             }

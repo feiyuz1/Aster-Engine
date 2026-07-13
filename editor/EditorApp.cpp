@@ -3,6 +3,9 @@
 #include "MiniEngine/ECS/Components.hpp"
 #include "MiniEngine/Project/Project.hpp"
 #include "MiniEngine/Render/SdlGlRenderDevice.hpp"
+#ifdef TINYENGINE_HAS_ASSIMP
+#include "MiniEngine/Import/AssimpImporter.hpp"
+#endif
 
 #include <SDL.h>
 #include <imgui.h>
@@ -11,6 +14,7 @@
 
 #include <algorithm>
 #include <cstring>
+#include <optional>
 
 namespace MiniEngine
 {
@@ -19,8 +23,9 @@ namespace MiniEngine
         if (!m_engine.Initialize(projectFile, false)) return false;
         m_device = dynamic_cast<SdlGlRenderDevice*>(m_engine.GetContext().renderer->GetDevice());
         if (!m_device) { m_engine.Shutdown(); return false; }
+        SDL_SetWindowTitle(static_cast<SDL_Window*>(m_device->GetNativeWindow()), "TinyEngine Editor");
         IMGUI_CHECKVERSION(); ImGui::CreateContext();
-        ImGuiIO& io = ImGui::GetIO(); io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard | ImGuiConfigFlags_DockingEnable;
+        ImGuiIO& io = ImGui::GetIO(); io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
         ImGui::StyleColorsDark();
         if (!ImGui_ImplSDL2_InitForOpenGL(static_cast<SDL_Window*>(m_device->GetNativeWindow()), m_device->GetGlContext()) || !ImGui_ImplOpenGL3_Init("#version 330"))
         { ImGui::DestroyContext(); m_engine.Shutdown(); return false; }
@@ -43,7 +48,6 @@ namespace MiniEngine
     void EditorApp::Draw()
     {
         ImGui_ImplOpenGL3_NewFrame(); ImGui_ImplSDL2_NewFrame(); ImGui::NewFrame();
-        ImGui::DockSpaceOverViewport(0, ImGui::GetMainViewport());
         DrawMenuBar(); DrawHierarchy(); DrawInspector(); DrawAssets(); DrawConsole();
         ImGuiIO& io = ImGui::GetIO();
         if (!io.WantTextInput && io.KeyCtrl)
@@ -80,6 +84,11 @@ namespace MiniEngine
 
     void EditorApp::DrawHierarchy()
     {
+        const ImGuiViewport* viewport = ImGui::GetMainViewport();
+        const float top = viewport->WorkPos.y;
+        const float upperHeight = viewport->WorkSize.y * 0.67f;
+        ImGui::SetNextWindowPos({viewport->WorkPos.x, top}, ImGuiCond_Always);
+        ImGui::SetNextWindowSize({260.0f, upperHeight}, ImGuiCond_Always);
         ImGui::Begin("Hierarchy");
         World& world = *m_engine.GetContext().world;
         if (!m_engine.IsPlaying() && ImGui::Button("+ Entity")) { RecordUndo(); m_selected = world.CreateEntity(); }
@@ -102,6 +111,11 @@ namespace MiniEngine
 
     void EditorApp::DrawInspector()
     {
+        const ImGuiViewport* viewport = ImGui::GetMainViewport();
+        const float width = 350.0f;
+        const float upperHeight = viewport->WorkSize.y * 0.67f;
+        ImGui::SetNextWindowPos({viewport->WorkPos.x + viewport->WorkSize.x - width, viewport->WorkPos.y}, ImGuiCond_Always);
+        ImGui::SetNextWindowSize({width, upperHeight}, ImGuiCond_Always);
         ImGui::Begin("Inspector"); World& world = *m_engine.GetContext().world;
         if (!world.IsAlive(m_selected)) { ImGui::TextDisabled("Select an entity"); ImGui::End(); return; }
         const bool editable = !m_engine.IsPlaying(); ImGui::BeginDisabled(!editable);
@@ -124,6 +138,14 @@ namespace MiniEngine
             if (ImGui::InputText("Tag", buffer, sizeof(buffer), ImGuiInputTextFlags_EnterReturnsTrue)) { RecordUndo(); tag->tag = buffer; }
         }
         if (auto* layer = world.GetComponent<LayerComponent>(m_selected)) { int value = static_cast<int>(layer->layer); if (ImGui::InputInt("Layer", &value)) { RecordUndo(); layer->layer = static_cast<std::uint32_t>(std::max(0, value)); } }
+        if (auto* mesh = world.GetComponent<MeshComponent>(m_selected))
+        {
+            ImGui::SeparatorText("Mesh Renderer");
+            char meshPath[512]{}; char materialPath[512]{};
+            std::strncpy(meshPath, mesh->meshPath.c_str(), sizeof(meshPath) - 1); std::strncpy(materialPath, mesh->materialPath.c_str(), sizeof(materialPath) - 1);
+            if (ImGui::InputText("Mesh", meshPath, sizeof(meshPath), ImGuiInputTextFlags_EnterReturnsTrue)) { RecordUndo(); mesh->meshPath = meshPath; }
+            if (ImGui::InputText("Material", materialPath, sizeof(materialPath), ImGuiInputTextFlags_EnterReturnsTrue)) { RecordUndo(); mesh->materialPath = materialPath; }
+        }
         if (auto* camera = world.GetComponent<CameraComponent>(m_selected)) { ImGui::SeparatorText("Camera"); ImGui::DragFloat("FOV", &camera->fov, 0.25f, 1.0f, 179.0f); if (ImGui::IsItemActivated()) RecordUndo(); ImGui::Checkbox("Primary", &camera->primary); }
         if (auto* light = world.GetComponent<LightComponent>(m_selected)) { ImGui::SeparatorText("Light"); ImGui::ColorEdit3("Color", &light->color.x); if (ImGui::IsItemActivated()) RecordUndo(); ImGui::DragFloat("Intensity", &light->intensity, 0.05f, 0.0f, 1000.0f); if (ImGui::IsItemActivated()) RecordUndo(); }
         if (ImGui::Button("Add Component")) ImGui::OpenPopup("AddComponentPopup");
@@ -142,15 +164,84 @@ namespace MiniEngine
 
     void EditorApp::DrawAssets()
     {
+        const ImGuiViewport* viewport = ImGui::GetMainViewport();
+        const float top = viewport->WorkPos.y + viewport->WorkSize.y * 0.67f;
+        const float halfWidth = viewport->WorkSize.x * 0.58f;
+        ImGui::SetNextWindowPos({viewport->WorkPos.x, top}, ImGuiCond_Always);
+        ImGui::SetNextWindowSize({halfWidth, viewport->WorkPos.y + viewport->WorkSize.y - top}, ImGuiCond_Always);
         ImGui::Begin("Assets");
+        static std::string selectedAsset;
+#ifdef TINYENGINE_HAS_ASSIMP
+        if (ImGui::Button("Import Model...")) ImGui::OpenPopup("ImportModelPopup");
+        ImGui::SameLine();
+        const auto selectedInfo = selectedAsset.empty() ? std::optional<AssetInfo>{} : m_engine.GetContext().resourceManager->GetAssetRegistry().Find(selectedAsset);
+        ImGui::BeginDisabled(!selectedInfo || selectedInfo->type != "Prefab" || selectedInfo->importSettings.count("source") == 0);
+        if (ImGui::Button("Reimport"))
+        {
+            const std::filesystem::path source = selectedInfo->importSettings.at("source");
+            ModelImportOptions options;
+            if (const auto scale = selectedInfo->importSettings.find("scale"); scale != selectedInfo->importSettings.end()) { try { options.scale = std::stof(scale->second); } catch (...) {} }
+            if (const auto flip = selectedInfo->importSettings.find("flipUvs"); flip != selectedInfo->importSettings.end()) options.flipUvs = flip->second == "true";
+            const std::filesystem::path output = std::filesystem::path(selectedInfo->path).parent_path();
+            const auto projectRoot = m_engine.GetProjectSettings().projectFile.empty() ? std::filesystem::current_path() : m_engine.GetProjectSettings().projectFile.parent_path();
+            options.resourcePrefix = std::filesystem::relative(output, projectRoot);
+            const auto result = AssimpImporter::ImportModel(source, output, options);
+            m_engine.GetContext().resourceManager->GetAssetRegistry().Scan(m_engine.GetProjectSettings().Resolve(m_engine.GetProjectSettings().assetDirectory));
+            m_messages.emplace_back(result.success ? "Reimported model: " + source.generic_string() : "Reimport failed: " + result.error);
+        }
+        ImGui::EndDisabled();
+        if (ImGui::BeginPopupModal("ImportModelPopup", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
+        {
+            static char sourcePath[1024]{};
+            static float scale = 1.0f;
+            static bool flipUvs = false;
+            ImGui::InputText("Source", sourcePath, sizeof(sourcePath));
+            ImGui::DragFloat("Scale", &scale, 0.01f, 0.0001f, 1000.0f);
+            ImGui::Checkbox("Flip UVs", &flipUvs);
+            if (ImGui::Button("Import") && sourcePath[0] != '\0')
+            {
+                const std::filesystem::path source(sourcePath);
+                const std::string folderName = source.stem().empty() ? "Model" : source.stem().string();
+                const auto relativeOutput = m_engine.GetProjectSettings().assetDirectory / "Imported" / folderName;
+                const auto output = m_engine.GetProjectSettings().Resolve(relativeOutput);
+                ModelImportOptions options; options.scale = scale; options.flipUvs = flipUvs; options.resourcePrefix = relativeOutput;
+                const auto result = AssimpImporter::ImportModel(source, output, options);
+                if (result.success)
+                {
+                    m_engine.GetContext().resourceManager->GetAssetRegistry().Scan(m_engine.GetProjectSettings().Resolve(m_engine.GetProjectSettings().assetDirectory));
+                    m_messages.emplace_back("Imported model: " + source.generic_string()); ImGui::CloseCurrentPopup();
+                }
+                else m_messages.emplace_back("Import failed: " + result.error);
+                for (const auto& warning : result.warnings) m_messages.emplace_back("Import warning: " + warning);
+            }
+            ImGui::SameLine(); if (ImGui::Button("Cancel")) ImGui::CloseCurrentPopup();
+            ImGui::EndPopup();
+        }
+        ImGui::Separator();
+#endif
         auto assets = m_engine.GetContext().resourceManager->GetAssetRegistry().GetAssets();
         std::sort(assets.begin(), assets.end(), [](const AssetInfo& a, const AssetInfo& b) { return a.path < b.path; });
-        for (const auto& asset : assets) { ImGui::TextDisabled("%s", asset.type.c_str()); ImGui::SameLine(90.0f); ImGui::TextUnformatted(asset.path.c_str()); }
+        for (const auto& asset : assets)
+        {
+            ImGui::PushID(asset.id.c_str()); ImGui::TextDisabled("%s", asset.type.c_str()); ImGui::SameLine(90.0f);
+            if (ImGui::Selectable(asset.path.c_str(), selectedAsset == asset.path)) selectedAsset = asset.path;
+            if (!m_engine.IsPlaying() && asset.extension == ".prefab" && ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left))
+            {
+                RecordUndo(); const auto roots = Prefab::Instantiate(*m_engine.GetContext().world, asset.path);
+                if (!roots.empty()) { m_selected = roots.front(); m_messages.emplace_back("Instantiated prefab: " + asset.path); }
+            }
+            ImGui::PopID();
+        }
         ImGui::End();
     }
 
     void EditorApp::DrawConsole()
     {
+        const ImGuiViewport* viewport = ImGui::GetMainViewport();
+        const float top = viewport->WorkPos.y + viewport->WorkSize.y * 0.67f;
+        const float left = viewport->WorkPos.x + viewport->WorkSize.x * 0.58f;
+        ImGui::SetNextWindowPos({left, top}, ImGuiCond_Always);
+        ImGui::SetNextWindowSize({viewport->WorkPos.x + viewport->WorkSize.x - left, viewport->WorkPos.y + viewport->WorkSize.y - top}, ImGuiCond_Always);
         ImGui::Begin("Console / Stats");
         const Renderer* renderer = m_engine.GetContext().renderer;
         ImGui::Text("Draw calls: %zu | Culled: %zu", renderer->GetLastDrawCallCount(), renderer->GetLastCulledCount());

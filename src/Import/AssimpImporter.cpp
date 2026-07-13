@@ -1,0 +1,206 @@
+#include "MiniEngine/Import/AssimpImporter.hpp"
+
+#include "MiniEngine/ECS/Components.hpp"
+#include "MiniEngine/ECS/ECS.hpp"
+#include "MiniEngine/ECS/SceneSerializer.hpp"
+#include "MiniEngine/Platform/Platform.hpp"
+#include "MiniEngine/Resource/AssetRegistry.hpp"
+
+#include <assimp/Importer.hpp>
+#include <assimp/material.h>
+#include <assimp/postprocess.h>
+#include <assimp/scene.h>
+
+#include <algorithm>
+#include <cctype>
+#include <cmath>
+#include <iomanip>
+#include <functional>
+#include <sstream>
+#include <unordered_map>
+
+namespace MiniEngine
+{
+    namespace
+    {
+        std::string SafeName(std::string value, const std::string& fallback)
+        {
+            for (char& character : value)
+                if (!std::isalnum(static_cast<unsigned char>(character)) && character != '-' && character != '_') character = '_';
+            while (!value.empty() && value.back() == '_') value.pop_back();
+            return value.empty() ? fallback : value;
+        }
+
+        std::filesystem::path ResourcePath(const std::filesystem::path& file, const std::filesystem::path& outputDirectory, const ModelImportOptions& options)
+        {
+            const auto relative = std::filesystem::relative(file, outputDirectory);
+            return options.resourcePrefix.empty() ? file.lexically_normal() : (options.resourcePrefix / relative).lexically_normal();
+        }
+
+        bool WriteMesh(const aiMesh& mesh, const std::filesystem::path& path, const float scale)
+        {
+            std::ostringstream out; out << std::setprecision(9) << "TINY_MESH 2\n";
+            for (unsigned int index = 0; index < mesh.mNumVertices; ++index)
+            {
+                const aiVector3D& value = mesh.mVertices[index]; out << "v " << value.x * scale << ' ' << value.y * scale << ' ' << value.z * scale << '\n';
+            }
+            for (unsigned int index = 0; index < mesh.mNumVertices; ++index)
+            {
+                const aiVector3D value = mesh.HasTextureCoords(0) ? mesh.mTextureCoords[0][index] : aiVector3D{}; out << "vt " << value.x << ' ' << value.y << '\n';
+            }
+            for (unsigned int index = 0; index < mesh.mNumVertices; ++index)
+            {
+                const aiVector3D value = mesh.HasNormals() ? mesh.mNormals[index] : aiVector3D{0, 0, 1}; out << "vn " << value.x << ' ' << value.y << ' ' << value.z << '\n';
+            }
+            for (unsigned int faceIndex = 0; faceIndex < mesh.mNumFaces; ++faceIndex)
+            {
+                const aiFace& face = mesh.mFaces[faceIndex]; if (face.mNumIndices != 3) continue;
+                out << "f";
+                for (unsigned int corner = 0; corner < 3; ++corner) { const unsigned int index = face.mIndices[corner] + 1; out << ' ' << index << '/' << index << '/' << index; }
+                out << '\n';
+            }
+            return PlatformFile::WriteAllText(path, out.str());
+        }
+
+        bool CopyTexture(const aiScene& scene, const std::filesystem::path& source, const aiString& textureName, const std::filesystem::path& outputDirectory, std::filesystem::path& copied)
+        {
+            const std::string name = textureName.C_Str();
+            if (name.empty()) return false;
+            if (name.front() == '*')
+            {
+                const aiTexture* texture = scene.GetEmbeddedTexture(name.c_str()); if (!texture) return false;
+                if (texture->mHeight == 0)
+                {
+                    std::string extension = texture->achFormatHint;
+                    if (extension.empty()) extension = "bin";
+                    copied = outputDirectory / ("embedded_" + name.substr(1) + "." + extension);
+                    const auto* begin = reinterpret_cast<const std::uint8_t*>(texture->pcData);
+                    return PlatformFile::WriteAllBytes(copied, std::vector<std::uint8_t>(begin, begin + texture->mWidth));
+                }
+                copied = outputDirectory / ("embedded_" + name.substr(1) + ".ppm");
+                std::ostringstream ppm; ppm << "P3\n" << texture->mWidth << ' ' << texture->mHeight << "\n255\n";
+                for (unsigned int index = 0; index < texture->mWidth * texture->mHeight; ++index)
+                {
+                    const aiTexel& pixel = texture->pcData[index]; ppm << static_cast<unsigned int>(pixel.r) << ' ' << static_cast<unsigned int>(pixel.g) << ' ' << static_cast<unsigned int>(pixel.b) << '\n';
+                }
+                return PlatformFile::WriteAllText(copied, ppm.str());
+            }
+            const std::filesystem::path textureSource = (source.parent_path() / std::filesystem::path(name)).lexically_normal();
+            if (!std::filesystem::is_regular_file(textureSource)) return false;
+            copied = outputDirectory / textureSource.filename();
+            std::error_code error; std::filesystem::copy_file(textureSource, copied, std::filesystem::copy_options::overwrite_existing, error);
+            return !error;
+        }
+
+        bool WriteMaterial(const aiScene& scene, const aiMaterial& material, const std::filesystem::path& source, const std::filesystem::path& path, const std::filesystem::path& outputDirectory, const ModelImportOptions& options, ModelImportResult& result)
+        {
+            aiColor4D color{0.7f, 0.7f, 0.7f, 1.0f};
+            if (aiGetMaterialColor(&material, AI_MATKEY_BASE_COLOR, &color) != AI_SUCCESS) aiGetMaterialColor(&material, AI_MATKEY_COLOR_DIFFUSE, &color);
+            float opacity = color.a; material.Get(AI_MATKEY_OPACITY, opacity); color.a = opacity;
+            std::ostringstream out; out << std::setprecision(7) << "color " << color.r << ' ' << color.g << ' ' << color.b << ' ' << color.a << '\n';
+            if (color.a < 0.999f) out << "blend alpha\n";
+            aiString textureName;
+            if (material.GetTexture(aiTextureType_BASE_COLOR, 0, &textureName) != AI_SUCCESS) material.GetTexture(aiTextureType_DIFFUSE, 0, &textureName);
+            std::filesystem::path copied;
+            if (CopyTexture(scene, source, textureName, outputDirectory, copied))
+            {
+                result.assets.push_back({"TextureSource", copied});
+                std::string extension = copied.extension().string(); std::transform(extension.begin(), extension.end(), extension.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+                if (extension == ".ppm") out << "texture " << ResourcePath(copied, outputDirectory, options).generic_string() << '\n';
+                else result.warnings.push_back("Copied texture but runtime decoder does not yet support it: " + copied.generic_string());
+            }
+            return PlatformFile::WriteAllText(path, out.str());
+        }
+
+        Vec3 RadiansToDegrees(const aiVector3D& value) { return {value.x * 180.0f / Pi, value.y * 180.0f / Pi, value.z * 180.0f / Pi}; }
+    }
+
+    bool AssimpImporter::CanImport(const std::filesystem::path& source)
+    {
+        Assimp::Importer importer;
+        return importer.IsExtensionSupported(source.extension().string());
+    }
+
+    std::vector<std::string> AssimpImporter::GetSupportedExtensions()
+    {
+        Assimp::Importer importer; aiString extensions; importer.GetExtensionList(extensions);
+        std::vector<std::string> result; std::istringstream stream(extensions.C_Str()); std::string extension;
+        while (std::getline(stream, extension, ';')) { if (extension.rfind("*.", 0) == 0) extension.erase(0, 1); if (!extension.empty()) result.push_back(extension); }
+        return result;
+    }
+
+    ModelImportResult AssimpImporter::ImportModel(const std::filesystem::path& source, const std::filesystem::path& outputDirectory, const ModelImportOptions& options)
+    {
+        ModelImportResult result;
+        if (!std::filesystem::is_regular_file(source)) { result.error = "Source model does not exist: " + source.generic_string(); return result; }
+        std::error_code error; std::filesystem::create_directories(outputDirectory, error);
+        if (error) { result.error = "Cannot create output directory: " + error.message(); return result; }
+
+        unsigned int flags = aiProcess_Triangulate | aiProcess_JoinIdenticalVertices | aiProcess_ImproveCacheLocality | aiProcess_ValidateDataStructure | aiProcess_SortByPType;
+        if (options.generateSmoothNormals) flags |= aiProcess_GenSmoothNormals;
+        if (options.flipUvs) flags |= aiProcess_FlipUVs;
+        if (options.optimizeMeshes) flags |= aiProcess_OptimizeMeshes;
+        Assimp::Importer importer;
+        const aiScene* scene = importer.ReadFile(source.string(), flags);
+        if (!scene || !scene->mRootNode || scene->mNumMeshes == 0) { result.error = importer.GetErrorString(); return result; }
+
+        const std::string baseName = SafeName(source.stem().string(), "Model");
+        std::vector<std::filesystem::path> materialPaths(scene->mNumMaterials);
+        for (unsigned int index = 0; index < scene->mNumMaterials; ++index)
+        {
+            aiString materialName; scene->mMaterials[index]->Get(AI_MATKEY_NAME, materialName);
+            const auto path = outputDirectory / (baseName + "_Mat" + std::to_string(index) + "_" + SafeName(materialName.C_Str(), "Material") + ".mat");
+            if (!WriteMaterial(*scene, *scene->mMaterials[index], source, path, outputDirectory, options, result)) { result.error = "Failed to write material: " + path.generic_string(); return result; }
+            materialPaths[index] = path; result.assets.push_back({"Material", path});
+        }
+
+        std::vector<std::filesystem::path> meshPaths(scene->mNumMeshes);
+        for (unsigned int index = 0; index < scene->mNumMeshes; ++index)
+        {
+            const aiMesh& mesh = *scene->mMeshes[index];
+            const auto path = outputDirectory / (baseName + "_Mesh" + std::to_string(index) + "_" + SafeName(mesh.mName.C_Str(), "Mesh") + ".mesh");
+            if (!WriteMesh(mesh, path, options.scale)) { result.error = "Failed to write mesh: " + path.generic_string(); return result; }
+            meshPaths[index] = path; result.assets.push_back({"Mesh", path});
+        }
+
+        World prefabWorld;
+        std::function<void(const aiNode&, Entity)> importNode = [&](const aiNode& node, const Entity parent)
+        {
+            const Entity entity = prefabWorld.CreateEntity(SafeName(node.mName.C_Str(), "Node"));
+            if (parent != InvalidEntity) prefabWorld.SetParent(entity, parent);
+            aiVector3D scale, rotation, position; node.mTransformation.Decompose(scale, rotation, position);
+            if (auto* transform = prefabWorld.GetComponent<TransformComponent>(entity))
+            {
+                transform->position = {position.x * options.scale, position.y * options.scale, position.z * options.scale};
+                transform->rotation = RadiansToDegrees(rotation); transform->scale = {scale.x, scale.y, scale.z};
+            }
+            for (unsigned int localIndex = 0; localIndex < node.mNumMeshes; ++localIndex)
+            {
+                const unsigned int meshIndex = node.mMeshes[localIndex]; const aiMesh& mesh = *scene->mMeshes[meshIndex];
+                Entity target = entity;
+                if (localIndex > 0) { target = prefabWorld.CreateEntity(SafeName(mesh.mName.C_Str(), "Mesh")); prefabWorld.SetParent(target, entity); }
+                const auto material = mesh.mMaterialIndex < materialPaths.size() ? materialPaths[mesh.mMaterialIndex] : std::filesystem::path{};
+                prefabWorld.AddComponent(target, MeshComponent{ResourcePath(meshPaths[meshIndex], outputDirectory, options).generic_string(), material.empty() ? std::string{} : ResourcePath(material, outputDirectory, options).generic_string()});
+            }
+            for (unsigned int index = 0; index < node.mNumChildren; ++index) importNode(*node.mChildren[index], entity);
+        };
+        importNode(*scene->mRootNode, InvalidEntity);
+        result.prefabPath = outputDirectory / (baseName + ".prefab");
+        if (!SceneSerializer::Save(prefabWorld, result.prefabPath)) { result.error = "Failed to write prefab"; return result; }
+        result.assets.push_back({"Prefab", result.prefabPath});
+        AssetRegistry registry; registry.Scan(outputDirectory);
+        std::vector<std::string> dependencyIds;
+        for (const auto& asset : result.assets)
+        {
+            if (asset.path == result.prefabPath) continue;
+            if (const auto info = registry.Find(asset.path.generic_string())) dependencyIds.push_back(info->id);
+        }
+        registry.SetDependencies(result.prefabPath.generic_string(), std::move(dependencyIds));
+        registry.SetImportSetting(result.prefabPath.generic_string(), "source", std::filesystem::absolute(source).lexically_normal().generic_string());
+        registry.SetImportSetting(result.prefabPath.generic_string(), "scale", std::to_string(options.scale));
+        registry.SetImportSetting(result.prefabPath.generic_string(), "flipUvs", options.flipUvs ? "true" : "false");
+        registry.SetImportSetting(result.prefabPath.generic_string(), "optimizeMeshes", options.optimizeMeshes ? "true" : "false");
+        for (const auto& asset : result.assets) registry.MarkImported(asset.path.generic_string());
+        result.success = true; return result;
+    }
+}

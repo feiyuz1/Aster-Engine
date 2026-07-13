@@ -1,9 +1,13 @@
 cmake_minimum_required(VERSION 3.20)
-project(TinyEngine VERSION 0.3.0 LANGUAGES CXX)
+project(TinyEngine VERSION 0.4.0 LANGUAGES C CXX)
 
 option(TINYENGINE_BUILD_TESTS "Build TinyEngine tests" ON)
 option(TINYENGINE_BUILD_DEMO "Build TinyEngine demo" ON)
-option(TINYENGINE_BUILD_EDITOR "Build TinyEngine editor (downloads Dear ImGui)" OFF)
+option(TINYENGINE_BUILD_EDITOR "Build TinyEngine editor" ON)
+option(TINYENGINE_BUILD_IMPORTERS "Build Assimp based asset importers" ON)
+
+set(TINYENGINE_ASSIMP_DIR "D:/OpenSourceProject/assimp-master" CACHE PATH "Path to the Assimp source tree")
+set(TINYENGINE_IMGUI_DIR "D:/OpenSourceProject/imgui-master" CACHE PATH "Path to the Dear ImGui source tree")
 
 include(FetchContent)
 
@@ -25,13 +29,23 @@ if (NOT SDL2_FOUND)
     FetchContent_MakeAvailable(SDL2)
 endif()
 
-if(TINYENGINE_BUILD_EDITOR)
-    FetchContent_Declare(
-        imgui
-        URL https://github.com/ocornut/imgui/archive/refs/tags/v1.92.8.zip
-        DOWNLOAD_EXTRACT_TIMESTAMP TRUE
-    )
-    FetchContent_MakeAvailable(imgui)
+if(TINYENGINE_BUILD_IMPORTERS)
+    if(NOT EXISTS "${TINYENGINE_ASSIMP_DIR}/CMakeLists.txt")
+        message(FATAL_ERROR "Assimp source tree not found: ${TINYENGINE_ASSIMP_DIR}")
+    endif()
+    set(ASSIMP_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+    set(ASSIMP_BUILD_ASSIMP_TOOLS OFF CACHE BOOL "" FORCE)
+    set(ASSIMP_BUILD_SAMPLES OFF CACHE BOOL "" FORCE)
+    set(ASSIMP_INSTALL OFF CACHE BOOL "" FORCE)
+    set(ASSIMP_WARNINGS_AS_ERRORS OFF CACHE BOOL "" FORCE)
+    set(ASSIMP_BUILD_ZLIB ON CACHE BOOL "" FORCE)
+    set(ASSIMP_BUILD_ALL_IMPORTERS_BY_DEFAULT ON CACHE BOOL "" FORCE)
+    set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+    add_subdirectory("${TINYENGINE_ASSIMP_DIR}" "${CMAKE_BINARY_DIR}/_deps/assimp-build" EXCLUDE_FROM_ALL)
+endif()
+
+if(TINYENGINE_BUILD_EDITOR AND NOT EXISTS "${TINYENGINE_IMGUI_DIR}/imgui.cpp")
+    message(FATAL_ERROR "Dear ImGui source tree not found: ${TINYENGINE_IMGUI_DIR}")
 endif()
 
 find_package(OpenGL REQUIRED)
@@ -84,24 +98,43 @@ if(TINYENGINE_BUILD_DEMO)
     target_link_libraries(tinyengine_demo PRIVATE tinyengine)
 endif()
 
+if(TINYENGINE_BUILD_IMPORTERS)
+    add_library(tinyengine_importers STATIC src/Import/AssimpImporter.cpp)
+    target_include_directories(tinyengine_importers PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include> $<INSTALL_INTERFACE:include>)
+    target_link_libraries(tinyengine_importers PUBLIC tinyengine assimp::assimp)
+    if(MSVC)
+        target_compile_options(tinyengine_importers PRIVATE /W4 /permissive-)
+    else()
+        target_compile_options(tinyengine_importers PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+endif()
+
 if(TINYENGINE_BUILD_EDITOR)
     add_library(tinyengine_imgui STATIC
-        ${imgui_SOURCE_DIR}/imgui.cpp
-        ${imgui_SOURCE_DIR}/imgui_draw.cpp
-        ${imgui_SOURCE_DIR}/imgui_tables.cpp
-        ${imgui_SOURCE_DIR}/imgui_widgets.cpp
-        ${imgui_SOURCE_DIR}/backends/imgui_impl_sdl2.cpp
-        ${imgui_SOURCE_DIR}/backends/imgui_impl_opengl3.cpp
+        ${TINYENGINE_IMGUI_DIR}/imgui.cpp
+        ${TINYENGINE_IMGUI_DIR}/imgui_draw.cpp
+        ${TINYENGINE_IMGUI_DIR}/imgui_tables.cpp
+        ${TINYENGINE_IMGUI_DIR}/imgui_widgets.cpp
+        ${TINYENGINE_IMGUI_DIR}/backends/imgui_impl_sdl2.cpp
+        ${TINYENGINE_IMGUI_DIR}/backends/imgui_impl_opengl3.cpp
     )
-    target_include_directories(tinyengine_imgui PUBLIC ${imgui_SOURCE_DIR} ${imgui_SOURCE_DIR}/backends)
+    target_include_directories(tinyengine_imgui PUBLIC ${TINYENGINE_IMGUI_DIR} ${TINYENGINE_IMGUI_DIR}/backends)
     target_link_libraries(tinyengine_imgui PUBLIC tinyengine)
     add_executable(tinyengine_editor editor/EditorMain.cpp editor/EditorApp.cpp)
     target_include_directories(tinyengine_editor PRIVATE editor)
     target_link_libraries(tinyengine_editor PRIVATE tinyengine tinyengine_imgui)
+    if(TINYENGINE_BUILD_IMPORTERS)
+        target_link_libraries(tinyengine_editor PRIVATE tinyengine_importers)
+        target_compile_definitions(tinyengine_editor PRIVATE TINYENGINE_HAS_ASSIMP=1)
+    endif()
 endif()
 
 add_executable(tinyengine_asset_tool tools/AssetTool.cpp)
 target_link_libraries(tinyengine_asset_tool PRIVATE tinyengine)
+if(TINYENGINE_BUILD_IMPORTERS)
+    target_link_libraries(tinyengine_asset_tool PRIVATE tinyengine_importers)
+    target_compile_definitions(tinyengine_asset_tool PRIVATE TINYENGINE_HAS_ASSIMP=1)
+endif()
 add_executable(tinyengine_scene_tool tools/SceneTool.cpp)
 target_link_libraries(tinyengine_scene_tool PRIVATE tinyengine)
 
@@ -109,6 +142,10 @@ if(TINYENGINE_BUILD_TESTS)
     enable_testing()
     add_executable(tinyengine_tests tests/EngineTests.cpp)
     target_link_libraries(tinyengine_tests PRIVATE tinyengine)
+    if(TINYENGINE_BUILD_IMPORTERS)
+        target_link_libraries(tinyengine_tests PRIVATE tinyengine_importers)
+        target_compile_definitions(tinyengine_tests PRIVATE TINYENGINE_HAS_ASSIMP=1)
+    endif()
     add_test(NAME tinyengine_core COMMAND tinyengine_tests)
     set_tests_properties(tinyengine_core PROPERTIES WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
 endif()
@@ -123,7 +160,7 @@ if(TINYENGINE_BUILD_EDITOR)
 endif()
 install(TARGETS tinyengine_asset_tool RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 install(TARGETS tinyengine_scene_tool RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
-install(DIRECTORY include/ DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
+install(DIRECTORY include/ DESTINATION ${CMAKE_INSTALL_INCLUDEDIR} PATTERN "Import" EXCLUDE)
 install(DIRECTORY assets/ DESTINATION ${CMAKE_INSTALL_DATADIR}/tinyengine/assets)
 install(FILES TinyEngine.tinyproject DESTINATION .)
 

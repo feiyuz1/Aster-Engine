@@ -1,5 +1,6 @@
 # CMake build trees
 /build/
+/build-*/
 /out/
 /cmake-build-*/
 CMakeCache.txt
@@ -32,6 +33,7 @@ CTestTestfile.cmake
 *.suo
 .DS_Store
 Thumbs.db
+/imgui.ini
 
 # Runtime/generated data
 /Saved/
