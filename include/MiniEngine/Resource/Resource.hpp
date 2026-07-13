@@ -95,11 +95,17 @@ namespace MiniEngine
         Vec4 GetBaseColor() const;
         const std::string& GetShaderPath() const;
         const std::string& GetTexturePath() const;
+        float GetMetallic() const;
+        float GetRoughness() const;
+        Vec3 GetEmissive() const;
         bool IsTransparent() const;
     private:
         Vec4 m_baseColor{0.3f, 0.7f, 1.0f, 1.0f};
         std::string m_shaderPath;
         std::string m_texturePath;
+        float m_metallic = 0.0f;
+        float m_roughness = 0.7f;
+        Vec3 m_emissive{};
         bool m_transparent = false;
     };
 }

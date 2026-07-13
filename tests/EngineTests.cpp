@@ -119,6 +119,28 @@ int main()
     TextureResource texture;
     CHECK(texture.Load("assets/default.ppm"));
     CHECK(texture.GetWidth() == 2 && texture.GetHeight() == 2 && texture.GetData().size() == 16);
+    const std::vector<std::uint8_t> pngBytes{
+        0x89,0x50,0x4e,0x47,0x0d,0x0a,0x1a,0x0a,0x00,0x00,0x00,0x0d,0x49,0x48,0x44,0x52,
+        0x00,0x00,0x00,0x01,0x00,0x00,0x00,0x01,0x08,0x06,0x00,0x00,0x00,0x1f,0x15,0xc4,
+        0x89,0x00,0x00,0x00,0x0d,0x49,0x44,0x41,0x54,0x08,0xd7,0x63,0xf8,0xcf,0xc0,0xf0,
+        0x1f,0x00,0x05,0x00,0x01,0xff,0x89,0x99,0x3d,0x1d,0x00,0x00,0x00,0x00,0x49,0x45,
+        0x4e,0x44,0xae,0x42,0x60,0x82};
+    CHECK(PlatformFile::WriteAllBytes("Saved/Test.png", pngBytes));
+    TextureResource pngTexture;
+    CHECK(pngTexture.Load("Saved/Test.png"));
+    CHECK(pngTexture.GetWidth() == 1 && pngTexture.GetHeight() == 1 && pngTexture.GetData().size() == 4);
+    const std::string hdrHeader = "#?RADIANCE\nFORMAT=32-bit_rle_rgbe\n\n-Y 1 +X 1\n";
+    std::vector<std::uint8_t> hdrBytes(hdrHeader.begin(), hdrHeader.end());
+    hdrBytes.insert(hdrBytes.end(), {128, 64, 32, 129});
+    CHECK(PlatformFile::WriteAllBytes("Saved/Test.hdr", hdrBytes));
+    TextureResource hdrTexture;
+    CHECK(hdrTexture.Load("Saved/Test.hdr"));
+    CHECK(hdrTexture.GetWidth() == 1 && hdrTexture.GetHeight() == 1 && hdrTexture.GetData().size() == 4);
+    CHECK(PlatformFile::WriteAllText("Saved/TestPbr.mat", "color 0.2 0.3 0.4 1\nmetallic 0.8\nroughness 0.25\nemissive 0.1 0.2 0.3\ntexture Saved/Test.png\n"));
+    MaterialResource pbrMaterial;
+    CHECK(pbrMaterial.Load("Saved/TestPbr.mat"));
+    CHECK(std::abs(pbrMaterial.GetMetallic() - 0.8f) < 0.001f && std::abs(pbrMaterial.GetRoughness() - 0.25f) < 0.001f);
+    CHECK(std::abs(pbrMaterial.GetEmissive().y - 0.2f) < 0.001f && pbrMaterial.GetTexturePath() == "Saved/Test.png");
     CHECK(PakArchive::PackDirectory("assets", "Saved/Test.tpak"));
     CHECK(PakArchive::List("Saved/Test.tpak").size() >= 4);
     const auto packedMesh = PakArchive::ReadFile("Saved/Test.tpak", "player.mesh");

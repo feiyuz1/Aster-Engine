@@ -27,6 +27,11 @@ namespace MiniEngine
         void* GetNativeWindow() const;
         void* GetGlContext() const;
         void SetEventCallback(std::function<void(const void*)> callback);
+        bool EnableSceneRenderTarget(bool enabled, int width = 960, int height = 540);
+        bool ResizeSceneRenderTarget(int width, int height);
+        std::uintptr_t GetSceneColorTexture() const;
+        int GetSceneTargetWidth() const;
+        int GetSceneTargetHeight() const;
 
     private:
         struct Impl;

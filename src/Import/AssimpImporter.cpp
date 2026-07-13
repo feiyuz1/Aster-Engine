@@ -8,6 +8,7 @@
 
 #include <assimp/Importer.hpp>
 #include <assimp/material.h>
+#include <assimp/pbrmaterial.h>
 #include <assimp/postprocess.h>
 #include <assimp/scene.h>
 
@@ -98,6 +99,11 @@ namespace MiniEngine
             if (aiGetMaterialColor(&material, AI_MATKEY_BASE_COLOR, &color) != AI_SUCCESS) aiGetMaterialColor(&material, AI_MATKEY_COLOR_DIFFUSE, &color);
             float opacity = color.a; material.Get(AI_MATKEY_OPACITY, opacity); color.a = opacity;
             std::ostringstream out; out << std::setprecision(7) << "color " << color.r << ' ' << color.g << ' ' << color.b << ' ' << color.a << '\n';
+            float metallic = 0.0f, roughness = 0.7f;
+            material.Get(AI_MATKEY_METALLIC_FACTOR, metallic); material.Get(AI_MATKEY_ROUGHNESS_FACTOR, roughness);
+            aiColor3D emissive{}; material.Get(AI_MATKEY_COLOR_EMISSIVE, emissive);
+            out << "metallic " << std::clamp(metallic, 0.0f, 1.0f) << "\nroughness " << std::clamp(roughness, 0.04f, 1.0f)
+                << "\nemissive " << emissive.r << ' ' << emissive.g << ' ' << emissive.b << '\n';
             if (color.a < 0.999f) out << "blend alpha\n";
             aiString textureName;
             if (material.GetTexture(aiTextureType_BASE_COLOR, 0, &textureName) != AI_SUCCESS) material.GetTexture(aiTextureType_DIFFUSE, 0, &textureName);
@@ -106,8 +112,9 @@ namespace MiniEngine
             {
                 result.assets.push_back({"TextureSource", copied});
                 std::string extension = copied.extension().string(); std::transform(extension.begin(), extension.end(), extension.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-                if (extension == ".ppm") out << "texture " << ResourcePath(copied, outputDirectory, options).generic_string() << '\n';
-                else result.warnings.push_back("Copied texture but runtime decoder does not yet support it: " + copied.generic_string());
+                if (extension == ".ppm" || extension == ".png" || extension == ".jpg" || extension == ".jpeg" || extension == ".bmp" || extension == ".tif" || extension == ".tiff" || extension == ".hdr")
+                    out << "texture " << ResourcePath(copied, outputDirectory, options).generic_string() << '\n';
+                else result.warnings.push_back("Copied texture but runtime decoder does not support it: " + copied.generic_string());
             }
             return PlatformFile::WriteAllText(path, out.str());
         }

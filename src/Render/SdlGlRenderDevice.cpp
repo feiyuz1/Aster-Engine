@@ -29,11 +29,13 @@ namespace MiniEngine
             uniform mat4 uMvp;
             uniform mat4 uModel;
             out vec3 vNormal;
+            out vec3 vWorldPosition;
             out vec2 vUv;
             void main()
             {
                 gl_Position = uMvp * vec4(aPosition, 1.0);
                 vNormal = normalize(mat3(uModel) * aNormal);
+                vWorldPosition = vec3(uModel * vec4(aPosition, 1.0));
                 vUv = aUv;
             }
         )GLSL";
@@ -41,20 +43,51 @@ namespace MiniEngine
         constexpr const char* FragmentShaderSource = R"GLSL(
             #version 330 core
             in vec3 vNormal;
+            in vec3 vWorldPosition;
             in vec2 vUv;
             uniform vec4 uBaseColor;
+            uniform float uMetallic;
+            uniform float uRoughness;
+            uniform vec3 uEmissive;
+            uniform vec3 uCameraPosition;
             uniform vec3 uLightDirection;
             uniform vec3 uLightColor;
             uniform float uLightIntensity;
             uniform sampler2D uTexture;
             uniform int uHasTexture;
             out vec4 outColor;
+            float DistributionGGX(vec3 normal, vec3 halfway, float roughness)
+            {
+                float a = roughness * roughness; float a2 = a * a;
+                float nh = max(dot(normal, halfway), 0.0); float nh2 = nh * nh;
+                float denominator = nh2 * (a2 - 1.0) + 1.0;
+                return a2 / max(3.14159265 * denominator * denominator, 0.0001);
+            }
+            float GeometrySchlickGGX(float nv, float roughness)
+            {
+                float r = roughness + 1.0; float k = r * r / 8.0;
+                return nv / max(nv * (1.0 - k) + k, 0.0001);
+            }
+            vec3 FresnelSchlick(float cosine, vec3 f0)
+            {
+                return f0 + (1.0 - f0) * pow(clamp(1.0 - cosine, 0.0, 1.0), 5.0);
+            }
             void main()
             {
-                float diffuse = max(dot(normalize(vNormal), normalize(-uLightDirection)), 0.0);
-                vec3 lighting = vec3(0.16) + uLightColor * diffuse * uLightIntensity;
                 vec4 surface = uHasTexture != 0 ? texture(uTexture, vUv) : vec4(1.0);
-                outColor = vec4(uBaseColor.rgb * surface.rgb * lighting, uBaseColor.a * surface.a);
+                vec3 albedo = uBaseColor.rgb * surface.rgb;
+                vec3 normal = normalize(vNormal); vec3 view = normalize(uCameraPosition - vWorldPosition);
+                vec3 light = normalize(-uLightDirection); vec3 halfway = normalize(view + light);
+                float nl = max(dot(normal, light), 0.0); float nv = max(dot(normal, view), 0.0);
+                vec3 f0 = mix(vec3(0.04), albedo, uMetallic);
+                vec3 fresnel = FresnelSchlick(max(dot(halfway, view), 0.0), f0);
+                float distribution = DistributionGGX(normal, halfway, uRoughness);
+                float geometry = GeometrySchlickGGX(nv, uRoughness) * GeometrySchlickGGX(nl, uRoughness);
+                vec3 specular = distribution * geometry * fresnel / max(4.0 * nv * nl, 0.0001);
+                vec3 diffuse = (vec3(1.0) - fresnel) * (1.0 - uMetallic) * albedo / 3.14159265;
+                vec3 direct = (diffuse + specular) * uLightColor * uLightIntensity * nl;
+                vec3 color = albedo * 0.04 + direct + uEmissive;
+                outColor = vec4(color, uBaseColor.a * surface.a);
             }
         )GLSL";
     }
@@ -90,13 +123,22 @@ namespace MiniEngine
         using Uniform1fProc = void (APIENTRY*)(GLint, GLfloat);
         using Uniform1iProc = void (APIENTRY*)(GLint, GLint);
         using ActiveTextureProc = void (APIENTRY*)(GLenum);
+        using GenFramebuffersProc = void (APIENTRY*)(GLsizei, GLuint*);
+        using BindFramebufferProc = void (APIENTRY*)(GLenum, GLuint);
+        using DeleteFramebuffersProc = void (APIENTRY*)(GLsizei, const GLuint*);
+        using FramebufferTexture2DProc = void (APIENTRY*)(GLenum, GLenum, GLenum, GLuint, GLint);
+        using CheckFramebufferStatusProc = GLenum (APIENTRY*)(GLenum);
 
         SDL_Window* window = nullptr;
         SDL_GLContext context = nullptr;
         InputState input;
         FrameView view;
         GLuint program = 0;
+        GLuint sceneFramebuffer = 0, sceneColor = 0, sceneDepth = 0;
+        int sceneWidth = 0, sceneHeight = 0;
+        bool sceneTargetEnabled = false;
         GLint mvpLocation = -1, modelLocation = -1, baseColorLocation = -1;
+        GLint metallicLocation = -1, roughnessLocation = -1, emissiveLocation = -1, cameraPositionLocation = -1;
         GLint lightDirectionLocation = -1, lightColorLocation = -1, lightIntensityLocation = -1;
         GLint textureLocation = -1, hasTextureLocation = -1;
 
@@ -129,6 +171,11 @@ namespace MiniEngine
         Uniform1fProc Uniform1f = nullptr;
         Uniform1iProc Uniform1i = nullptr;
         ActiveTextureProc ActiveTexture = nullptr;
+        GenFramebuffersProc GenFramebuffers = nullptr;
+        BindFramebufferProc BindFramebuffer = nullptr;
+        DeleteFramebuffersProc DeleteFramebuffers = nullptr;
+        FramebufferTexture2DProc FramebufferTexture2D = nullptr;
+        CheckFramebufferStatusProc CheckFramebufferStatus = nullptr;
 
         struct GpuMesh { GLuint vao = 0, vertexBuffer = 0, indexBuffer = 0; GLsizei indexCount = 0; };
         std::unordered_map<std::string, GpuMesh> meshes;
@@ -149,7 +196,37 @@ namespace MiniEngine
                 LoadGl(DeleteProgram, "glDeleteProgram") && LoadGl(UseProgram, "glUseProgram") &&
                 LoadGl(GetUniformLocation, "glGetUniformLocation") && LoadGl(UniformMatrix4fv, "glUniformMatrix4fv") &&
                 LoadGl(Uniform4f, "glUniform4f") && LoadGl(Uniform3f, "glUniform3f") && LoadGl(Uniform1f, "glUniform1f") &&
-                LoadGl(Uniform1i, "glUniform1i") && LoadGl(ActiveTexture, "glActiveTexture");
+                LoadGl(Uniform1i, "glUniform1i") && LoadGl(ActiveTexture, "glActiveTexture") &&
+                LoadGl(GenFramebuffers, "glGenFramebuffers") && LoadGl(BindFramebuffer, "glBindFramebuffer") &&
+                LoadGl(DeleteFramebuffers, "glDeleteFramebuffers") && LoadGl(FramebufferTexture2D, "glFramebufferTexture2D") &&
+                LoadGl(CheckFramebufferStatus, "glCheckFramebufferStatus");
+        }
+
+        void DestroySceneTarget()
+        {
+            if (sceneColor) glDeleteTextures(1, &sceneColor);
+            if (sceneDepth) glDeleteTextures(1, &sceneDepth);
+            if (sceneFramebuffer) DeleteFramebuffers(1, &sceneFramebuffer);
+            sceneColor = sceneDepth = sceneFramebuffer = 0; sceneWidth = sceneHeight = 0;
+        }
+
+        bool CreateSceneTarget(const int width, const int height)
+        {
+            if (width < 1 || height < 1) return false;
+            DestroySceneTarget();
+            GenFramebuffers(1, &sceneFramebuffer); BindFramebuffer(GL_FRAMEBUFFER, sceneFramebuffer);
+            glGenTextures(1, &sceneColor); glBindTexture(GL_TEXTURE_2D, sceneColor);
+            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR); glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+            FramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, sceneColor, 0);
+            glGenTextures(1, &sceneDepth); glBindTexture(GL_TEXTURE_2D, sceneDepth);
+            glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT24, width, height, 0, GL_DEPTH_COMPONENT, GL_UNSIGNED_INT, nullptr);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST); glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+            FramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, sceneDepth, 0);
+            const bool complete = CheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE;
+            BindFramebuffer(GL_FRAMEBUFFER, 0); glBindTexture(GL_TEXTURE_2D, 0);
+            if (!complete) { DestroySceneTarget(); return false; }
+            sceneWidth = width; sceneHeight = height; return true;
         }
 
         GLuint Compile(const GLenum type, const char* source)
@@ -183,6 +260,8 @@ namespace MiniEngine
             mvpLocation = GetUniformLocation(program, "uMvp"); modelLocation = GetUniformLocation(program, "uModel");
             baseColorLocation = GetUniformLocation(program, "uBaseColor"); lightDirectionLocation = GetUniformLocation(program, "uLightDirection");
             lightColorLocation = GetUniformLocation(program, "uLightColor"); lightIntensityLocation = GetUniformLocation(program, "uLightIntensity");
+            metallicLocation = GetUniformLocation(program, "uMetallic"); roughnessLocation = GetUniformLocation(program, "uRoughness");
+            emissiveLocation = GetUniformLocation(program, "uEmissive"); cameraPositionLocation = GetUniformLocation(program, "uCameraPosition");
             textureLocation = GetUniformLocation(program, "uTexture"); hasTextureLocation = GetUniformLocation(program, "uHasTexture");
             return true;
         }
@@ -250,6 +329,7 @@ namespace MiniEngine
         if (!m_impl) return;
         if (m_impl->context)
         {
+            m_impl->DestroySceneTarget();
             for (const auto& pair : m_impl->meshes)
             {
                 m_impl->DeleteBuffers(1, &pair.second.vertexBuffer); m_impl->DeleteBuffers(1, &pair.second.indexBuffer);
@@ -292,15 +372,28 @@ namespace MiniEngine
     }
 
     const InputState& SdlGlRenderDevice::GetInputState() const { return m_impl->input; }
-    float SdlGlRenderDevice::GetAspectRatio() const { return m_aspect; }
+    float SdlGlRenderDevice::GetAspectRatio() const
+    {
+        return m_impl && m_impl->sceneTargetEnabled && m_impl->sceneHeight > 0 ? static_cast<float>(m_impl->sceneWidth) / static_cast<float>(m_impl->sceneHeight) : m_aspect;
+    }
 
     void SdlGlRenderDevice::BeginFrame(const FrameView& view)
     {
-        m_impl->view = view; glClearColor(0.04f, 0.07f, 0.11f, 1.0f); glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+        m_impl->view = view;
+        if (m_impl->sceneTargetEnabled && m_impl->sceneFramebuffer)
+        {
+            m_impl->BindFramebuffer(GL_FRAMEBUFFER, m_impl->sceneFramebuffer); glViewport(0, 0, m_impl->sceneWidth, m_impl->sceneHeight);
+        }
+        else
+        {
+            m_impl->BindFramebuffer(GL_FRAMEBUFFER, 0); int width = 0, height = 0; SDL_GL_GetDrawableSize(m_impl->window, &width, &height); glViewport(0, 0, width, height);
+        }
+        glDepthMask(GL_TRUE); glEnable(GL_DEPTH_TEST); glClearColor(0.04f, 0.07f, 0.11f, 1.0f); glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
         m_impl->UseProgram(m_impl->program);
         m_impl->Uniform3f(m_impl->lightDirectionLocation, view.lightDirection.x, view.lightDirection.y, view.lightDirection.z);
         m_impl->Uniform3f(m_impl->lightColorLocation, view.lightColor.x, view.lightColor.y, view.lightColor.z);
         m_impl->Uniform1f(m_impl->lightIntensityLocation, view.lightIntensity);
+        m_impl->Uniform3f(m_impl->cameraPositionLocation, view.cameraPosition.x, view.cameraPosition.y, view.cameraPosition.z);
         m_impl->Uniform1i(m_impl->textureLocation, 0);
     }
 
@@ -311,20 +404,33 @@ namespace MiniEngine
         const auto* mesh = m_impl->GetOrCreateMesh(item.mesh); if (!mesh) return;
         const Mat4 mvp = m_impl->view.projection * m_impl->view.view * item.model;
         const Vec4 color = item.material ? item.material->GetBaseColor() : Vec4{0.3f, 0.7f, 1.0f, 1.0f};
+        const float metallic = item.material ? item.material->GetMetallic() : 0.0f;
+        const float roughness = item.material ? item.material->GetRoughness() : 0.7f;
+        const Vec3 emissive = item.material ? item.material->GetEmissive() : Vec3{};
         m_impl->UniformMatrix4fv(m_impl->mvpLocation, 1, GL_FALSE, mvp.Data());
         m_impl->UniformMatrix4fv(m_impl->modelLocation, 1, GL_FALSE, item.model.Data());
         m_impl->Uniform4f(m_impl->baseColorLocation, color.x, color.y, color.z, color.w);
+        m_impl->Uniform1f(m_impl->metallicLocation, metallic); m_impl->Uniform1f(m_impl->roughnessLocation, roughness);
+        m_impl->Uniform3f(m_impl->emissiveLocation, emissive.x, emissive.y, emissive.z);
         const GLuint texture = m_impl->GetOrCreateTexture(item.texture);
         m_impl->ActiveTexture(GL_TEXTURE0); glBindTexture(GL_TEXTURE_2D, texture);
         m_impl->Uniform1i(m_impl->hasTextureLocation, texture != 0 ? 1 : 0);
         m_impl->BindVertexArray(mesh->vao); glDrawElements(GL_TRIANGLES, mesh->indexCount, GL_UNSIGNED_INT, nullptr); m_impl->BindVertexArray(0);
     }
 
-    void SdlGlRenderDevice::EndFrame() {}
+    void SdlGlRenderDevice::EndFrame()
+    {
+        if (!m_impl->sceneTargetEnabled) return;
+        m_impl->BindFramebuffer(GL_FRAMEBUFFER, 0);
+        int width = 0, height = 0; SDL_GL_GetDrawableSize(m_impl->window, &width, &height); glViewport(0, 0, width, height);
+        glDepthMask(GL_TRUE); glDisable(GL_SCISSOR_TEST); glClearColor(0.025f, 0.03f, 0.04f, 1.0f); glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    }
     void SdlGlRenderDevice::DrawUi(const std::vector<UIDrawCommand>& commands)
     {
         if (!m_impl || !m_impl->window) return;
-        int width = 0, height = 0; SDL_GL_GetDrawableSize(m_impl->window, &width, &height);
+        int width = 0, height = 0;
+        if (m_impl->sceneTargetEnabled) { width = m_impl->sceneWidth; height = m_impl->sceneHeight; }
+        else SDL_GL_GetDrawableSize(m_impl->window, &width, &height);
         glDisable(GL_DEPTH_TEST); glEnable(GL_BLEND); glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA); glEnable(GL_SCISSOR_TEST);
         for (const auto& command : commands)
         {
@@ -338,4 +444,20 @@ namespace MiniEngine
     void* SdlGlRenderDevice::GetNativeWindow() const { return m_impl ? m_impl->window : nullptr; }
     void* SdlGlRenderDevice::GetGlContext() const { return m_impl ? m_impl->context : nullptr; }
     void SdlGlRenderDevice::SetEventCallback(std::function<void(const void*)> callback) { m_eventCallback = std::move(callback); }
+    bool SdlGlRenderDevice::EnableSceneRenderTarget(const bool enabled, const int width, const int height)
+    {
+        if (!m_impl || !m_impl->context) return false;
+        m_impl->sceneTargetEnabled = enabled;
+        if (!enabled) { m_impl->DestroySceneTarget(); return true; }
+        return m_impl->CreateSceneTarget(width, height);
+    }
+    bool SdlGlRenderDevice::ResizeSceneRenderTarget(const int width, const int height)
+    {
+        if (!m_impl || !m_impl->sceneTargetEnabled) return false;
+        if (m_impl->sceneWidth == width && m_impl->sceneHeight == height) return true;
+        return m_impl->CreateSceneTarget(width, height);
+    }
+    std::uintptr_t SdlGlRenderDevice::GetSceneColorTexture() const { return m_impl ? static_cast<std::uintptr_t>(m_impl->sceneColor) : 0; }
+    int SdlGlRenderDevice::GetSceneTargetWidth() const { return m_impl ? m_impl->sceneWidth : 0; }
+    int SdlGlRenderDevice::GetSceneTargetHeight() const { return m_impl ? m_impl->sceneHeight : 0; }
 }

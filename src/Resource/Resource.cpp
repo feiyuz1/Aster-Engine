@@ -4,10 +4,108 @@
 
 #include <algorithm>
 #include <cfloat>
+#include <cmath>
+#include <cctype>
+#include <filesystem>
+#include <limits>
 #include <sstream>
+
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <Windows.h>
+#include <wincodec.h>
+#endif
 
 namespace MiniEngine
 {
+    namespace
+    {
+#ifdef _WIN32
+        bool LoadWicTexture(const std::vector<std::uint8_t>& bytes, int& width, int& height, std::vector<std::uint8_t>& pixels)
+        {
+            if (bytes.empty() || bytes.size() > static_cast<std::size_t>(std::numeric_limits<DWORD>::max())) return false;
+            const HRESULT initialized = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+            IWICImagingFactory* factory = nullptr; IWICStream* stream = nullptr; IWICBitmapDecoder* decoder = nullptr; IWICBitmapFrameDecode* frame = nullptr; IWICFormatConverter* converter = nullptr;
+            bool success = false;
+            if (SUCCEEDED(CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&factory))) &&
+                SUCCEEDED(factory->CreateStream(&stream)) && SUCCEEDED(stream->InitializeFromMemory(const_cast<BYTE*>(bytes.data()), static_cast<DWORD>(bytes.size()))) &&
+                SUCCEEDED(factory->CreateDecoderFromStream(stream, nullptr, WICDecodeMetadataCacheOnLoad, &decoder)) && SUCCEEDED(decoder->GetFrame(0, &frame)) &&
+                SUCCEEDED(factory->CreateFormatConverter(&converter)) && SUCCEEDED(converter->Initialize(frame, GUID_WICPixelFormat32bppRGBA, WICBitmapDitherTypeNone, nullptr, 0.0, WICBitmapPaletteTypeCustom)))
+            {
+                UINT imageWidth = 0, imageHeight = 0;
+                if (SUCCEEDED(converter->GetSize(&imageWidth, &imageHeight)) && imageWidth > 0 && imageHeight > 0 && imageWidth <= 32768 && imageHeight <= 32768 &&
+                    static_cast<std::uint64_t>(imageWidth) * imageHeight * 4 <= std::numeric_limits<UINT>::max())
+                {
+                    pixels.resize(static_cast<std::size_t>(imageWidth) * imageHeight * 4);
+                    success = SUCCEEDED(converter->CopyPixels(nullptr, imageWidth * 4, static_cast<UINT>(pixels.size()), pixels.data()));
+                    if (success) { width = static_cast<int>(imageWidth); height = static_cast<int>(imageHeight); }
+                }
+            }
+            if (converter) converter->Release(); if (frame) frame->Release(); if (decoder) decoder->Release(); if (stream) stream->Release(); if (factory) factory->Release();
+            if (SUCCEEDED(initialized)) CoUninitialize();
+            if (!success) pixels.clear(); return success;
+        }
+#endif
+
+        bool LoadRadianceHdr(const std::vector<std::uint8_t>& bytes, int& width, int& height, std::vector<std::uint8_t>& pixels)
+        {
+            if (bytes.size() < 16) return false;
+            std::size_t offset = 0; std::string line, resolution;
+            auto readLine = [&]()
+            {
+                line.clear(); while (offset < bytes.size() && bytes[offset] != '\n') line.push_back(static_cast<char>(bytes[offset++]));
+                if (offset < bytes.size()) ++offset; if (!line.empty() && line.back() == '\r') line.pop_back(); return !line.empty() || offset <= bytes.size();
+            };
+            if (!readLine() || line.rfind("#?", 0) != 0) return false;
+            while (offset < bytes.size()) { readLine(); if (line.empty()) break; }
+            if (!readLine()) return false; resolution = line;
+            char ySign = '-', xSign = '+'; char yAxis = 'Y', xAxis = 'X';
+            std::istringstream dimensions(resolution); if (!(dimensions >> ySign >> yAxis >> height >> xSign >> xAxis >> width) || yAxis != 'Y' || xAxis != 'X' || width <= 0 || height <= 0 || width > 32768 || height > 32768) return false;
+            std::vector<std::uint8_t> rgbe(static_cast<std::size_t>(width) * height * 4);
+            for (int y = 0; y < height; ++y)
+            {
+                std::uint8_t* scanline = rgbe.data() + static_cast<std::size_t>(y) * width * 4;
+                if (width >= 8 && width <= 32767 && offset + 4 <= bytes.size() && bytes[offset] == 2 && bytes[offset + 1] == 2 && (bytes[offset + 2] & 0x80) == 0)
+                {
+                    const int encodedWidth = (bytes[offset + 2] << 8) | bytes[offset + 3]; offset += 4; if (encodedWidth != width) return false;
+                    for (int channel = 0; channel < 4; ++channel)
+                    {
+                        int x = 0; while (x < width && offset < bytes.size())
+                        {
+                            const int count = bytes[offset++];
+                            if (count > 128) { const int run = count - 128; if (run == 0 || offset >= bytes.size() || x + run > width) return false; const std::uint8_t value = bytes[offset++]; for (int i = 0; i < run; ++i) scanline[(x++ * 4) + channel] = value; }
+                            else { if (count == 0 || offset + count > bytes.size() || x + count > width) return false; for (int i = 0; i < count; ++i) scanline[(x++ * 4) + channel] = bytes[offset++]; }
+                        }
+                        if (x != width) return false;
+                    }
+                }
+                else
+                {
+                    const std::size_t byteCount = static_cast<std::size_t>(width) * 4; if (offset + byteCount > bytes.size()) return false;
+                    std::copy_n(bytes.data() + offset, byteCount, scanline); offset += byteCount;
+                }
+            }
+            pixels.resize(static_cast<std::size_t>(width) * height * 4);
+            for (std::size_t index = 0; index < static_cast<std::size_t>(width) * height; ++index)
+            {
+                const std::uint8_t exponent = rgbe[index * 4 + 3];
+                for (int channel = 0; channel < 3; ++channel)
+                {
+                    const float linear = exponent ? std::ldexp(static_cast<float>(rgbe[index * 4 + channel]) + 0.5f, static_cast<int>(exponent) - 136) : 0.0f;
+                    const float mapped = std::pow(std::max(0.0f, linear) / (1.0f + std::max(0.0f, linear)), 1.0f / 2.2f);
+                    pixels[index * 4 + channel] = static_cast<std::uint8_t>(std::clamp(mapped * 255.0f, 0.0f, 255.0f));
+                }
+                pixels[index * 4 + 3] = 255;
+            }
+            return true;
+        }
+    }
+
     const std::string& Resource::GetPath() const { return m_path; }
     ResourceState Resource::GetState() const { return m_state.load(); }
     bool Resource::IsReady() const { return GetState() == ResourceState::Loaded; }
@@ -44,7 +142,21 @@ namespace MiniEngine
     bool TextureResource::Load(const std::string& path)
     {
         MarkLoading(path);
-        std::istringstream stream(PlatformFile::ReadAllText(path));
+        const auto bytes = PlatformFile::ReadAllBytes(path);
+        std::string extension = std::filesystem::path(path).extension().string(); std::transform(extension.begin(), extension.end(), extension.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+        if (extension == ".hdr")
+        {
+            if (!LoadRadianceHdr(bytes, m_width, m_height, m_data)) { SetState(ResourceState::Failed, "Invalid Radiance HDR texture: " + path); return false; }
+            SetState(ResourceState::Loaded); return true;
+        }
+#ifdef _WIN32
+        if (extension == ".png" || extension == ".jpg" || extension == ".jpeg" || extension == ".bmp" || extension == ".tif" || extension == ".tiff")
+        {
+            if (!LoadWicTexture(bytes, m_width, m_height, m_data)) { SetState(ResourceState::Failed, "WIC image decode failed: " + path); return false; }
+            SetState(ResourceState::Loaded); return true;
+        }
+#endif
+        std::istringstream stream(std::string(bytes.begin(), bytes.end()));
         std::string magic;
         stream >> magic;
         if (magic != "P3")
@@ -193,22 +305,31 @@ namespace MiniEngine
     bool MaterialResource::Load(const std::string& path)
     {
         MarkLoading(path);
+        m_baseColor = {0.3f, 0.7f, 1.0f, 1.0f}; m_metallic = 0.0f; m_roughness = 0.7f; m_emissive = {}; m_transparent = false;
+        m_shaderPath.clear(); m_texturePath.clear();
         std::istringstream stream(PlatformFile::ReadAllText(path));
         if (!stream) { SetState(ResourceState::Failed, "Material file not found: " + path); return false; }
         std::string key;
         while (stream >> key)
         {
             if (key == "color") stream >> m_baseColor.x >> m_baseColor.y >> m_baseColor.z >> m_baseColor.w;
+            else if (key == "metallic") stream >> m_metallic;
+            else if (key == "roughness") stream >> m_roughness;
+            else if (key == "emissive") stream >> m_emissive.x >> m_emissive.y >> m_emissive.z;
             else if (key == "shader") stream >> m_shaderPath;
             else if (key == "texture") stream >> m_texturePath;
             else if (key == "blend") { std::string value; stream >> value; m_transparent = value == "alpha" || value == "transparent"; }
             else { std::string ignored; std::getline(stream, ignored); }
         }
+        m_metallic = std::clamp(m_metallic, 0.0f, 1.0f); m_roughness = std::clamp(m_roughness, 0.04f, 1.0f);
         SetState(ResourceState::Loaded); return true;
     }
     void MaterialResource::Unload() { m_shaderPath.clear(); m_texturePath.clear(); SetState(ResourceState::Unloaded); }
     Vec4 MaterialResource::GetBaseColor() const { return m_baseColor; }
     const std::string& MaterialResource::GetShaderPath() const { return m_shaderPath; }
     const std::string& MaterialResource::GetTexturePath() const { return m_texturePath; }
+    float MaterialResource::GetMetallic() const { return m_metallic; }
+    float MaterialResource::GetRoughness() const { return m_roughness; }
+    Vec3 MaterialResource::GetEmissive() const { return m_emissive; }
     bool MaterialResource::IsTransparent() const { return m_transparent || m_baseColor.w < 0.999f; }
 }

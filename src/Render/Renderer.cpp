@@ -75,6 +75,12 @@ namespace MiniEngine
                 cameraForward = Normalize({std::cos(pitch) * std::sin(yaw), std::sin(pitch), -std::cos(pitch) * std::cos(yaw)});
             }
         });
+        if (m_cameraOverrideEnabled)
+        {
+            cameraPosition = m_cameraOverridePosition; camera.fov = m_cameraOverrideFov;
+            const float pitch = DegreesToRadians(m_cameraOverrideRotation.x), yaw = DegreesToRadians(m_cameraOverrideRotation.y);
+            cameraForward = Normalize({std::cos(pitch) * std::sin(yaw), std::sin(pitch), -std::cos(pitch) * std::cos(yaw)});
+        }
         m_frameView.cameraPosition = cameraPosition;
         m_frameView.view = LookAt(cameraPosition, cameraPosition + cameraForward, {0.0f, 1.0f, 0.0f});
         m_frameView.projection = Perspective(camera.fov, m_device ? m_device->GetAspectRatio() : 16.0f / 9.0f, camera.nearPlane, camera.farPlane);
@@ -127,4 +133,8 @@ namespace MiniEngine
     void Renderer::SetOverlayCallback(std::function<void()> callback) { m_overlayCallback = std::move(callback); }
     void Renderer::SetUISystem(UISystem* uiSystem) { m_uiSystem = uiSystem; }
     std::size_t Renderer::GetLastCulledCount() const { return m_lastCulled; }
+    void Renderer::SetCameraOverride(const bool enabled, const Vec3& position, const Vec3& rotation, const float fov)
+    {
+        m_cameraOverrideEnabled = enabled; m_cameraOverridePosition = position; m_cameraOverrideRotation = rotation; m_cameraOverrideFov = fov;
+    }
 }

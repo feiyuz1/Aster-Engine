@@ -15,14 +15,79 @@
 #include <algorithm>
 #include <cstring>
 #include <optional>
+#include <cmath>
+#include <limits>
 
 namespace MiniEngine
 {
+    namespace
+    {
+        Vec3 TransformPoint(const Mat4& matrix, const Vec3& point)
+        {
+            return {
+                matrix.At(0, 0) * point.x + matrix.At(0, 1) * point.y + matrix.At(0, 2) * point.z + matrix.At(0, 3),
+                matrix.At(1, 0) * point.x + matrix.At(1, 1) * point.y + matrix.At(1, 2) * point.z + matrix.At(1, 3),
+                matrix.At(2, 0) * point.x + matrix.At(2, 1) * point.y + matrix.At(2, 2) * point.z + matrix.At(2, 3)
+            };
+        }
+
+        bool ProjectToScreen(const FrameView& view, const Vec3& point, const float minimumX, const float minimumY, const float width, const float height, ImVec2& screen)
+        {
+            const Mat4 matrix = view.projection * view.view;
+            const float x = matrix.At(0, 0) * point.x + matrix.At(0, 1) * point.y + matrix.At(0, 2) * point.z + matrix.At(0, 3);
+            const float y = matrix.At(1, 0) * point.x + matrix.At(1, 1) * point.y + matrix.At(1, 2) * point.z + matrix.At(1, 3);
+            const float w = matrix.At(3, 0) * point.x + matrix.At(3, 1) * point.y + matrix.At(3, 2) * point.z + matrix.At(3, 3);
+            if (w <= 0.0001f) return false;
+            screen = {minimumX + (x / w * 0.5f + 0.5f) * width, minimumY + (1.0f - (y / w * 0.5f + 0.5f)) * height}; return true;
+        }
+
+        bool IntersectRayAabb(const Ray& ray, const Aabb& bounds, float& distance)
+        {
+            float minimumDistance = 0.0f, maximumDistance = std::numeric_limits<float>::max();
+            for (int axis = 0; axis < 3; ++axis)
+            {
+                const float origin = axis == 0 ? ray.origin.x : axis == 1 ? ray.origin.y : ray.origin.z;
+                const float direction = axis == 0 ? ray.direction.x : axis == 1 ? ray.direction.y : ray.direction.z;
+                const float minimum = axis == 0 ? bounds.minimum.x : axis == 1 ? bounds.minimum.y : bounds.minimum.z;
+                const float maximum = axis == 0 ? bounds.maximum.x : axis == 1 ? bounds.maximum.y : bounds.maximum.z;
+                if (std::abs(direction) < 1e-6f) { if (origin < minimum || origin > maximum) return false; continue; }
+                float nearValue = (minimum - origin) / direction, farValue = (maximum - origin) / direction;
+                if (nearValue > farValue) std::swap(nearValue, farValue);
+                minimumDistance = std::max(minimumDistance, nearValue); maximumDistance = std::min(maximumDistance, farValue);
+                if (minimumDistance > maximumDistance) return false;
+            }
+            distance = minimumDistance; return true;
+        }
+
+        Aabb TransformBounds(const Aabb& bounds, const Mat4& matrix)
+        {
+            const Vec3 center = (bounds.minimum + bounds.maximum) * 0.5f;
+            const Vec3 extent = (bounds.maximum - bounds.minimum) * 0.5f;
+            const Vec3 worldCenter = TransformPoint(matrix, center);
+            const Vec3 worldExtent{
+                std::abs(matrix.At(0, 0)) * extent.x + std::abs(matrix.At(0, 1)) * extent.y + std::abs(matrix.At(0, 2)) * extent.z,
+                std::abs(matrix.At(1, 0)) * extent.x + std::abs(matrix.At(1, 1)) * extent.y + std::abs(matrix.At(1, 2)) * extent.z,
+                std::abs(matrix.At(2, 0)) * extent.x + std::abs(matrix.At(2, 1)) * extent.y + std::abs(matrix.At(2, 2)) * extent.z
+            };
+            return {worldCenter - worldExtent, worldCenter + worldExtent};
+        }
+
+        float DistanceToSegment(const ImVec2 point, const ImVec2 start, const ImVec2 end)
+        {
+            const ImVec2 segment{end.x - start.x, end.y - start.y}, offset{point.x - start.x, point.y - start.y};
+            const float lengthSquared = segment.x * segment.x + segment.y * segment.y;
+            const float t = lengthSquared > 0.0f ? std::clamp((offset.x * segment.x + offset.y * segment.y) / lengthSquared, 0.0f, 1.0f) : 0.0f;
+            const float dx = point.x - (start.x + segment.x * t), dy = point.y - (start.y + segment.y * t); return std::sqrt(dx * dx + dy * dy);
+        }
+    }
+
     bool EditorApp::Initialize(const std::filesystem::path& projectFile)
     {
         if (!m_engine.Initialize(projectFile, false)) return false;
         m_device = dynamic_cast<SdlGlRenderDevice*>(m_engine.GetContext().renderer->GetDevice());
         if (!m_device) { m_engine.Shutdown(); return false; }
+        if (!m_device->EnableSceneRenderTarget(true, 960, 540)) { m_engine.Shutdown(); return false; }
+        m_engine.GetContext().renderer->SetCameraOverride(true, m_editorCameraPosition, m_editorCameraRotation, m_editorCameraFov);
         SDL_SetWindowTitle(static_cast<SDL_Window*>(m_device->GetNativeWindow()), "TinyEngine Editor");
         IMGUI_CHECKVERSION(); ImGui::CreateContext();
         ImGuiIO& io = ImGui::GetIO(); io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
@@ -40,7 +105,7 @@ namespace MiniEngine
     void EditorApp::Shutdown()
     {
         if (!m_initialized) return;
-        m_engine.GetContext().renderer->SetOverlayCallback({}); m_device->SetEventCallback({});
+        m_engine.GetContext().renderer->SetOverlayCallback({}); m_device->SetEventCallback({}); m_device->EnableSceneRenderTarget(false);
         ImGui_ImplOpenGL3_Shutdown(); ImGui_ImplSDL2_Shutdown(); ImGui::DestroyContext();
         m_engine.Shutdown(); m_initialized = false;
     }
@@ -48,7 +113,7 @@ namespace MiniEngine
     void EditorApp::Draw()
     {
         ImGui_ImplOpenGL3_NewFrame(); ImGui_ImplSDL2_NewFrame(); ImGui::NewFrame();
-        DrawMenuBar(); DrawHierarchy(); DrawInspector(); DrawAssets(); DrawConsole();
+        DrawMenuBar(); DrawHierarchy(); DrawInspector(); DrawSceneView(); DrawAssets(); DrawConsole();
         ImGuiIO& io = ImGui::GetIO();
         if (!io.WantTextInput && io.KeyCtrl)
         {
@@ -160,6 +225,109 @@ namespace MiniEngine
             ImGui::EndPopup();
         }
         ImGui::EndDisabled(); ImGui::End();
+    }
+
+    void EditorApp::DrawSceneView()
+    {
+        const ImGuiViewport* viewport = ImGui::GetMainViewport();
+        const float left = viewport->WorkPos.x + 260.0f, top = viewport->WorkPos.y;
+        const float width = std::max(160.0f, viewport->WorkSize.x - 610.0f), height = viewport->WorkSize.y * 0.67f;
+        ImGui::SetNextWindowPos({left, top}, ImGuiCond_Always); ImGui::SetNextWindowSize({width, height}, ImGuiCond_Always);
+        ImGui::Begin("Scene View", nullptr, ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse);
+        if (ImGui::Button("W Translate")) m_gizmoMode = GizmoMode::Translate; ImGui::SameLine();
+        if (ImGui::Button("E Rotate")) m_gizmoMode = GizmoMode::Rotate; ImGui::SameLine();
+        if (ImGui::Button("R Scale")) m_gizmoMode = GizmoMode::Scale;
+        const ImVec2 available = ImGui::GetContentRegionAvail();
+        const int targetWidth = std::max(1, static_cast<int>(available.x)), targetHeight = std::max(1, static_cast<int>(available.y));
+        m_device->ResizeSceneRenderTarget(targetWidth, targetHeight);
+        const ImVec2 imageMinimum = ImGui::GetCursorScreenPos();
+        ImGui::Image(ImTextureRef(static_cast<ImTextureID>(m_device->GetSceneColorTexture())), available, {0, 1}, {1, 0});
+        const bool hovered = ImGui::IsItemHovered();
+        ImGuiIO& io = ImGui::GetIO();
+        const float pitch = DegreesToRadians(m_editorCameraRotation.x), yaw = DegreesToRadians(m_editorCameraRotation.y);
+        const Vec3 forward = Normalize(Vec3{std::cos(pitch) * std::sin(yaw), std::sin(pitch), -std::cos(pitch) * std::cos(yaw)});
+        const Vec3 right = Normalize(Cross(forward, {0.0f, 1.0f, 0.0f})); const Vec3 up = Normalize(Cross(right, forward));
+        if (hovered && ImGui::IsMouseDown(ImGuiMouseButton_Right))
+        {
+            m_editorCameraRotation.y += io.MouseDelta.x * 0.18f; m_editorCameraRotation.x = std::clamp(m_editorCameraRotation.x - io.MouseDelta.y * 0.18f, -89.0f, 89.0f);
+            const float speed = (io.KeyShift ? 12.0f : 4.0f) * io.DeltaTime;
+            if (ImGui::IsKeyDown(ImGuiKey_W)) m_editorCameraPosition += forward * speed;
+            if (ImGui::IsKeyDown(ImGuiKey_S)) m_editorCameraPosition -= forward * speed;
+            if (ImGui::IsKeyDown(ImGuiKey_D)) m_editorCameraPosition += right * speed;
+            if (ImGui::IsKeyDown(ImGuiKey_A)) m_editorCameraPosition -= right * speed;
+            if (ImGui::IsKeyDown(ImGuiKey_E)) m_editorCameraPosition += up * speed;
+            if (ImGui::IsKeyDown(ImGuiKey_Q)) m_editorCameraPosition -= up * speed;
+        }
+        if (hovered && std::abs(io.MouseWheel) > 0.0f) m_editorCameraPosition += forward * (io.MouseWheel * 0.8f);
+        m_engine.GetContext().renderer->SetCameraOverride(!m_engine.IsPlaying(), m_editorCameraPosition, m_editorCameraRotation, m_editorCameraFov);
+        const bool gizmoConsumed = !m_engine.IsPlaying() && DrawGizmo(imageMinimum.x, imageMinimum.y, available.x, available.y);
+        if (!m_engine.IsPlaying() && hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left) && !gizmoConsumed)
+        {
+            const ImVec2 mouse = ImGui::GetMousePos();
+            const float normalizedX = (mouse.x - imageMinimum.x) / std::max(1.0f, available.x);
+            const float normalizedY = (mouse.y - imageMinimum.y) / std::max(1.0f, available.y);
+            m_selected = PickEntity(normalizedX, normalizedY);
+        }
+        ImGui::End();
+    }
+
+    Entity EditorApp::PickEntity(const float normalizedX, const float normalizedY) const
+    {
+        const float pitch = DegreesToRadians(m_editorCameraRotation.x), yaw = DegreesToRadians(m_editorCameraRotation.y);
+        const Vec3 forward = Normalize(Vec3{std::cos(pitch) * std::sin(yaw), std::sin(pitch), -std::cos(pitch) * std::cos(yaw)});
+        const Vec3 right = Normalize(Cross(forward, {0.0f, 1.0f, 0.0f})), up = Normalize(Cross(right, forward));
+        const float tangent = std::tan(DegreesToRadians(m_editorCameraFov) * 0.5f), aspect = std::max(0.01f, m_device->GetAspectRatio());
+        const float x = normalizedX * 2.0f - 1.0f, y = 1.0f - normalizedY * 2.0f;
+        const Ray ray{m_editorCameraPosition, Normalize(forward + right * (x * tangent * aspect) + up * (y * tangent))};
+        World& world = *m_engine.GetContext().world; Entity selected = InvalidEntity; float closest = std::numeric_limits<float>::max();
+        for (const Entity entity : world.GetEntityManager().GetAliveEntities())
+        {
+            if (const auto* active = world.GetComponent<ActiveComponent>(entity); active && !active->active) continue;
+            Aabb bounds{}; bool hasBounds = false;
+            if (const auto* meshComponent = world.GetComponent<MeshComponent>(entity))
+            {
+                if (const auto mesh = m_engine.GetContext().resourceManager->Load<MeshResource>(meshComponent->meshPath)) { bounds = TransformBounds(mesh->GetBounds(), world.GetWorldMatrix(entity)); hasBounds = true; }
+            }
+            else if (const auto* collider = world.GetComponent<ColliderComponent>(entity))
+            {
+                Vec3 extent = collider->shape == ColliderShape::Box ? collider->halfExtents : Vec3{collider->radius, collider->shape == ColliderShape::Capsule ? collider->height * 0.5f + collider->radius : collider->radius, collider->radius};
+                bounds = TransformBounds({extent * -1.0f, extent}, world.GetWorldMatrix(entity)); hasBounds = true;
+            }
+            float distance = 0.0f;
+            if (hasBounds && IntersectRayAabb(ray, bounds, distance) && distance < closest) { closest = distance; selected = entity; }
+        }
+        return selected;
+    }
+
+    bool EditorApp::DrawGizmo(const float minimumX, const float minimumY, const float width, const float height)
+    {
+        World& world = *m_engine.GetContext().world;
+        if (!world.IsAlive(m_selected) || !world.HasComponent<TransformComponent>(m_selected)) { m_activeGizmoAxis = -1; return false; }
+        const Mat4 worldMatrix = world.GetWorldMatrix(m_selected); const Vec3 origin{worldMatrix.At(0, 3), worldMatrix.At(1, 3), worldMatrix.At(2, 3)};
+        const float handleLength = std::max(0.5f, Length(origin - m_editorCameraPosition) * 0.13f);
+        const Vec3 axes[3] = {{1, 0, 0}, {0, 1, 0}, {0, 0, 1}}; const ImU32 colors[3] = {IM_COL32(235, 70, 70, 255), IM_COL32(70, 220, 100, 255), IM_COL32(75, 135, 245, 255)};
+        ImVec2 start; if (!ProjectToScreen(m_engine.GetContext().renderer->GetFrameView(), origin, minimumX, minimumY, width, height, start)) return false;
+        ImDrawList* drawList = ImGui::GetWindowDrawList(); const ImVec2 mouse = ImGui::GetMousePos(); bool hovered = false; int hoveredAxis = -1;
+        for (int axis = 0; axis < 3; ++axis)
+        {
+            ImVec2 end; if (!ProjectToScreen(m_engine.GetContext().renderer->GetFrameView(), origin + axes[axis] * handleLength, minimumX, minimumY, width, height, end)) continue;
+            const bool axisHovered = DistanceToSegment(mouse, start, end) <= 7.0f; if (axisHovered) { hovered = true; hoveredAxis = axis; }
+            drawList->AddLine(start, end, axisHovered || m_activeGizmoAxis == axis ? IM_COL32(255, 225, 80, 255) : colors[axis], axisHovered ? 4.0f : 2.5f);
+            drawList->AddCircleFilled(end, 5.0f, colors[axis]);
+        }
+        if (hoveredAxis >= 0 && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) { RecordUndo(); m_activeGizmoAxis = hoveredAxis; }
+        if (m_activeGizmoAxis >= 0)
+        {
+            if (!ImGui::IsMouseDown(ImGuiMouseButton_Left)) m_activeGizmoAxis = -1;
+            else if (auto* transform = world.GetComponent<TransformComponent>(m_selected))
+            {
+                const ImVec2 delta = ImGui::GetIO().MouseDelta; const float motion = (delta.x - delta.y) * 0.01f * handleLength;
+                if (m_gizmoMode == GizmoMode::Translate) { if (m_activeGizmoAxis == 0) transform->position.x += motion; else if (m_activeGizmoAxis == 1) transform->position.y += motion; else transform->position.z += motion; }
+                else if (m_gizmoMode == GizmoMode::Rotate) { const float degrees = (delta.x - delta.y) * 0.5f; if (m_activeGizmoAxis == 0) transform->rotation.x += degrees; else if (m_activeGizmoAxis == 1) transform->rotation.y += degrees; else transform->rotation.z += degrees; }
+                else { const float scale = (delta.x - delta.y) * 0.01f; if (m_activeGizmoAxis == 0) transform->scale.x = std::max(0.001f, transform->scale.x + scale); else if (m_activeGizmoAxis == 1) transform->scale.y = std::max(0.001f, transform->scale.y + scale); else transform->scale.z = std::max(0.001f, transform->scale.z + scale); }
+            }
+        }
+        return hovered || m_activeGizmoAxis >= 0;
     }
 
     void EditorApp::DrawAssets()
