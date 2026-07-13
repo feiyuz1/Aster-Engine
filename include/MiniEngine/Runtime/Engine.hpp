@@ -7,12 +7,15 @@
 #include "MiniEngine/Input/InputSystem.hpp"
 #include "MiniEngine/Physics/PhysicsWorld.hpp"
 #include "MiniEngine/Platform/Platform.hpp"
+#include "MiniEngine/Project/Project.hpp"
 #include "MiniEngine/Render/Renderer.hpp"
 #include "MiniEngine/Resource/ResourceManager.hpp"
 #include "MiniEngine/Script/ScriptEngine.hpp"
 #include "MiniEngine/Task/JobSystem.hpp"
 
 #include <cstdint>
+#include <filesystem>
+#include <memory>
 
 namespace MiniEngine
 {
@@ -28,21 +31,33 @@ namespace MiniEngine
         PhysicsWorld* physicsWorld = nullptr;
         AudioEngine* audioEngine = nullptr;
         ScriptEngine* scriptEngine = nullptr;
+        SceneManager* sceneManager = nullptr;
+        ProjectSettings* project = nullptr;
     };
 
-    class Engine
+    class Engine : private WorldListener
     {
     public:
-        bool Initialize();
+        bool Initialize(const std::filesystem::path& projectFile = {}, bool startInPlayMode = true);
         void Run(std::uint32_t maxFrames = 0);
         void Shutdown();
         const EngineContext& GetContext() const;
         void SetPaused(bool paused);
         bool IsPaused() const;
         void SetTimeScale(float scale);
+        bool LoadScene(const std::filesystem::path& path);
+        bool SaveScene(const std::filesystem::path& path = {});
+        bool EnterPlayMode();
+        bool ExitPlayMode();
+        bool IsPlaying() const;
+        SceneManager& GetSceneManager();
+        ProjectSettings& GetProjectSettings();
+        void SetGameInstance(std::unique_ptr<GameInstance> gameInstance);
     private:
         void Tick(float deltaTime);
         void SetupDemoScene();
+        void OnEntityDestroying(World&, Entity entity) override;
+        void OnWorldCleared(World&) override;
 
         Logger m_logger;
         MemoryManager m_memoryManager;
@@ -54,6 +69,9 @@ namespace MiniEngine
         PhysicsWorld m_physicsWorld;
         AudioEngine m_audioEngine;
         ScriptEngine m_scriptEngine;
+        ProjectSettings m_projectSettings;
+        SceneManager m_sceneManager{&m_world};
+        std::unique_ptr<GameInstance> m_gameInstance;
         EngineClock m_clock;
         EngineContext m_context;
         bool m_running = false;
@@ -63,5 +81,7 @@ namespace MiniEngine
         float m_fixedAccumulator = 0.0f;
         std::uint32_t m_frameIndex = 0;
         Entity m_playerEntity = InvalidEntity;
+        bool m_playing = false;
+        std::string m_editSnapshot;
     };
 }

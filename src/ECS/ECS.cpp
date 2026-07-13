@@ -2,6 +2,7 @@
 #include "MiniEngine/ECS/Components.hpp"
 
 #include <unordered_set>
+#include <algorithm>
 
 namespace MiniEngine
 {
@@ -76,6 +77,10 @@ namespace MiniEngine
         const Entity entity = m_entityManager.Create();
         m_componentManager.Add(entity, NameComponent{name});
         m_componentManager.Add(entity, TransformComponent{});
+        m_componentManager.Add(entity, ActiveComponent{});
+        m_componentManager.Add(entity, TagComponent{});
+        m_componentManager.Add(entity, LayerComponent{});
+        for (auto* listener : m_listeners) listener->OnEntityCreated(*this, entity);
         return entity;
     }
 
@@ -88,6 +93,7 @@ namespace MiniEngine
             if (relationship.parent == entity) children.push_back(child);
         });
         for (const Entity child : children) DestroyEntity(child);
+        for (auto* listener : m_listeners) listener->OnEntityDestroying(*this, entity);
         m_componentManager.RemoveAll(entity);
         m_entityManager.Destroy(entity);
     }
@@ -96,8 +102,20 @@ namespace MiniEngine
 
     void World::Clear()
     {
+        if (!m_entityManager.GetAliveEntities().empty())
+            for (auto* listener : m_listeners) listener->OnWorldCleared(*this);
         m_componentManager.Clear();
         m_entityManager.Reset();
+    }
+
+    void World::AddListener(WorldListener* listener)
+    {
+        if (listener && std::find(m_listeners.begin(), m_listeners.end(), listener) == m_listeners.end()) m_listeners.push_back(listener);
+    }
+
+    void World::RemoveListener(WorldListener* listener)
+    {
+        m_listeners.erase(std::remove(m_listeners.begin(), m_listeners.end(), listener), m_listeners.end());
     }
 
     bool World::SetParent(const Entity child, const Entity parent)

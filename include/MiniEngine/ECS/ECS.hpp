@@ -208,6 +208,15 @@ namespace MiniEngine
 
     class World;
 
+    class WorldListener
+    {
+    public:
+        virtual ~WorldListener() = default;
+        virtual void OnEntityCreated(World&, Entity) {}
+        virtual void OnEntityDestroying(World&, Entity) {}
+        virtual void OnWorldCleared(World&) {}
+    };
+
     class System
     {
     public:
@@ -254,6 +263,8 @@ namespace MiniEngine
         void Clear();
         bool SetParent(Entity child, Entity parent);
         Mat4 GetWorldMatrix(Entity entity) const;
+        void AddListener(WorldListener* listener);
+        void RemoveListener(WorldListener* listener);
 
         EntityManager& GetEntityManager();
         ComponentManager& GetComponentManager();
@@ -299,5 +310,6 @@ namespace MiniEngine
         ComponentManager m_componentManager;
         SystemManager m_systemManager;
         bool m_initialized = false;
+        std::vector<WorldListener*> m_listeners;
     };
 }

@@ -4,6 +4,7 @@
 #include "MiniEngine/ECS/SceneSerializer.hpp"
 #include "MiniEngine/Math/Math.hpp"
 #include "MiniEngine/Physics/PhysicsWorld.hpp"
+#include "MiniEngine/Project/Project.hpp"
 #include "MiniEngine/Resource/Resource.hpp"
 #include "MiniEngine/Resource/PakArchive.hpp"
 #include "MiniEngine/Task/JobSystem.hpp"
@@ -51,6 +52,21 @@ int main()
     World loaded;
     CHECK(SceneSerializer::Load(loaded, "Saved/Test.scene"));
     CHECK(loaded.GetEntityManager().GetAliveEntities().size() == 2);
+    const std::string snapshot = SceneSerializer::Serialize(loaded);
+    loaded.CreateEntity("Temporary");
+    CHECK(SceneSerializer::Deserialize(loaded, snapshot));
+    CHECK(loaded.GetEntityManager().GetAliveEntities().size() == 2);
+    CHECK(Prefab::Save(loaded, *loaded.GetEntityManager().GetAliveEntities().begin(), "Saved/Test.prefab"));
+    World prefabTarget;
+    CHECK(!Prefab::Instantiate(prefabTarget, "Saved/Test.prefab").empty());
+
+    ProjectSettings project;
+    project.name = "TestGame";
+    project.startupScene = "Saved/Test.scene";
+    CHECK(project.Save("Saved/Test.tinyproject"));
+    ProjectSettings loadedProject;
+    CHECK(loadedProject.Load("Saved/Test.tinyproject"));
+    CHECK(loadedProject.name == "TestGame");
 
     JobSystem jobs;
     jobs.Initialize(2);

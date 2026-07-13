@@ -47,6 +47,8 @@ namespace MiniEngine
         ScriptInstance* CreateInstance(const std::string& className, Entity entity = InvalidEntity, World* world = nullptr);
         void DestroyInstance(ScriptInstance* instance);
         void DestroyEntity(Entity entity);
+        void ClearInstances();
+        void RebuildWorldInstances(World& world);
         void UpdateAll(float deltaTime);
         bool ReloadScript(const std::string& className);
         void RegisterFactory(const std::string& className, Factory factory);

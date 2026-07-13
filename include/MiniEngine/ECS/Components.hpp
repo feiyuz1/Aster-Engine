@@ -8,6 +8,9 @@
 namespace MiniEngine
 {
     struct NameComponent { std::string name = "Entity"; };
+    struct ActiveComponent { bool active = true; };
+    struct TagComponent { std::string tag = "Untagged"; };
+    struct LayerComponent { std::uint32_t layer = 0; };
 
     struct TransformComponent
     {

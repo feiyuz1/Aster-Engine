@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(TinyEngine VERSION 0.2.0 LANGUAGES CXX)
+project(TinyEngine VERSION 0.3.0 LANGUAGES CXX)
 
 option(TINYENGINE_BUILD_TESTS "Build TinyEngine tests" ON)
 option(TINYENGINE_BUILD_DEMO "Build TinyEngine demo" ON)
@@ -39,6 +39,7 @@ add_library(tinyengine STATIC
     src/ECS/ECS.cpp
     src/ECS/SceneSerializer.cpp
     src/ECS/Systems.cpp
+    src/Project/Project.cpp
     src/Render/Renderer.cpp
     src/Render/SdlGlRenderDevice.cpp
     src/Physics/PhysicsWorld.cpp

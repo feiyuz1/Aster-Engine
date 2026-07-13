@@ -11,7 +11,7 @@
 
 namespace MiniEngine
 {
-    bool Engine::Initialize()
+    bool Engine::Initialize(const std::filesystem::path& projectFile, const bool startInPlayMode)
     {
         if (m_initialized) return true;
         m_logger.Info("Engine initialize begin.");
@@ -21,6 +21,7 @@ namespace MiniEngine
         m_resourceManager.Initialize(&m_jobSystem);
         m_world.GetSystemManager().RegisterSystem<MovementSystem>();
         m_world.GetSystemManager().RegisterSystem<AnimationSystem>();
+        m_world.AddListener(this);
         m_world.Initialize();
         m_renderer.SetLogger(&m_logger);
         m_renderer.SetResourceManager(&m_resourceManager);
@@ -32,9 +33,14 @@ namespace MiniEngine
         }
         m_audioEngine.Initialize(&m_logger);
         m_scriptEngine.Initialize(&m_logger);
-        m_context = {&m_logger, &m_memoryManager, &m_jobSystem, &m_resourceManager, &m_world, &m_renderer, &m_inputSystem, &m_physicsWorld, &m_audioEngine, &m_scriptEngine};
-        SetupDemoScene();
+        m_context = {&m_logger, &m_memoryManager, &m_jobSystem, &m_resourceManager, &m_world, &m_renderer, &m_inputSystem, &m_physicsWorld, &m_audioEngine, &m_scriptEngine, &m_sceneManager, &m_projectSettings};
+        bool sceneLoaded = false;
+        if (!projectFile.empty() && m_projectSettings.Load(projectFile))
+            sceneLoaded = m_sceneManager.LoadScene(m_projectSettings.Resolve(m_projectSettings.startupScene));
+        if (!sceneLoaded) SetupDemoScene();
+        if (m_gameInstance) m_gameInstance->OnInitialize();
         m_initialized = true;
+        if (startInPlayMode) EnterPlayMode(); else m_paused = true;
         m_logger.Info("Engine initialize complete. OpenGL 3.3 core renderer active.");
         return true;
     }
@@ -62,23 +68,61 @@ namespace MiniEngine
     void Engine::Shutdown()
     {
         m_running = false;
+        if (m_gameInstance) m_gameInstance->OnShutdown();
         m_scriptEngine.Shutdown();
         m_audioEngine.Shutdown();
         m_renderer.Shutdown();
         m_physicsWorld.Clear();
         m_world.Shutdown();
+        m_world.RemoveListener(this);
         m_resourceManager.Shutdown();
         m_jobSystem.Shutdown();
         m_memoryManager.Shutdown();
         m_context = {};
         if (m_initialized) m_logger.Info("Engine shutdown complete.");
         m_initialized = false;
+        m_playing = false;
     }
 
     const EngineContext& Engine::GetContext() const { return m_context; }
     void Engine::SetPaused(const bool paused) { m_paused = paused; }
     bool Engine::IsPaused() const { return m_paused; }
     void Engine::SetTimeScale(const float scale) { m_timeScale = std::max(0.0f, scale); }
+
+    bool Engine::LoadScene(const std::filesystem::path& path)
+    {
+        if (m_playing) return false;
+        m_scriptEngine.ClearInstances();
+        const bool loaded = m_sceneManager.LoadScene(path);
+        if (loaded && m_gameInstance) m_gameInstance->OnSceneLoaded(path);
+        return loaded;
+    }
+
+    bool Engine::SaveScene(const std::filesystem::path& path) { return !m_playing && m_sceneManager.SaveScene(path); }
+
+    bool Engine::EnterPlayMode()
+    {
+        if (!m_initialized || m_playing) return false;
+        m_editSnapshot = m_sceneManager.CreateSnapshot();
+        if (m_editSnapshot.empty()) return false;
+        m_scriptEngine.RebuildWorldInstances(m_world);
+        m_fixedAccumulator = 0.0f; m_paused = false; m_playing = true;
+        return true;
+    }
+
+    bool Engine::ExitPlayMode()
+    {
+        if (!m_initialized || !m_playing) return false;
+        m_scriptEngine.ClearInstances();
+        const bool restored = m_sceneManager.RestoreSnapshot(m_editSnapshot);
+        m_editSnapshot.clear(); m_fixedAccumulator = 0.0f; m_paused = true; m_playing = false;
+        return restored;
+    }
+
+    bool Engine::IsPlaying() const { return m_playing; }
+    SceneManager& Engine::GetSceneManager() { return m_sceneManager; }
+    ProjectSettings& Engine::GetProjectSettings() { return m_projectSettings; }
+    void Engine::SetGameInstance(std::unique_ptr<GameInstance> gameInstance) { m_gameInstance = std::move(gameInstance); }
 
     void Engine::Tick(const float rawDeltaTime)
     {
@@ -96,8 +140,9 @@ namespace MiniEngine
                 transform->scale = {uniformScale, uniformScale, uniformScale};
             }
             m_scriptEngine.UpdateAll(deltaTime);
+            if (m_gameInstance) m_gameInstance->OnUpdate(deltaTime);
             m_world.Update(deltaTime);
-            constexpr float fixedStep = 1.0f / 60.0f;
+            const float fixedStep = m_projectSettings.fixedStep;
             m_fixedAccumulator = std::min(m_fixedAccumulator + deltaTime, 0.25f);
             while (m_fixedAccumulator >= fixedStep)
             {
@@ -135,9 +180,11 @@ namespace MiniEngine
         m_world.AddComponent(animated, MeshComponent{"assets/player.mesh", "assets/default.mat"});
         m_world.AddComponent(animated, AnimationComponent{"assets/player.anim"});
 
-        m_scriptEngine.CreateInstance("OrbitScript", m_playerEntity, &m_world);
         m_resourceManager.LoadAsync<MeshResource>("assets/player.mesh");
         m_resourceManager.LoadAsync<MaterialResource>("assets/default.mat");
         SceneSerializer::Save(m_world, "Saved/Demo.scene");
     }
+
+    void Engine::OnEntityDestroying(World&, const Entity entity) { m_scriptEngine.DestroyEntity(entity); }
+    void Engine::OnWorldCleared(World&) { m_scriptEngine.ClearInstances(); m_playerEntity = InvalidEntity; }
 }

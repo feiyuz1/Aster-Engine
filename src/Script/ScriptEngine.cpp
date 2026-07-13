@@ -70,6 +70,21 @@ namespace MiniEngine
         }
     }
 
+    void ScriptEngine::ClearInstances()
+    {
+        for (auto& record : m_instances) record.instance->OnDestroy();
+        m_instances.clear();
+    }
+
+    void ScriptEngine::RebuildWorldInstances(World& world)
+    {
+        ClearInstances();
+        world.GetComponentManager().ForEach<ScriptComponent>([this, &world](const Entity entity, ScriptComponent& component)
+        {
+            if (!component.scriptClassName.empty()) CreateInstance(component.scriptClassName, entity, &world);
+        });
+    }
+
     void ScriptEngine::UpdateAll(const float deltaTime)
     {
         for (auto it = m_instances.begin(); it != m_instances.end();)

@@ -11,20 +11,23 @@
 
 namespace MiniEngine
 {
-    bool SceneSerializer::Save(const World& world, const std::filesystem::path& path)
+    std::string SceneSerializer::Serialize(const World& world)
     {
         std::vector<Entity> entities(world.GetEntityManager().GetAliveEntities().begin(), world.GetEntityManager().GetAliveEntities().end());
         std::sort(entities.begin(), entities.end());
         std::unordered_map<Entity, std::size_t> ids;
         for (std::size_t index = 0; index < entities.size(); ++index) ids[entities[index]] = index + 1;
         std::ostringstream out;
-        out << "TINYSCENE 1\n";
+        out << "TINYSCENE 2\n";
         for (const Entity entity : entities)
         {
             const auto* name = world.GetComponent<NameComponent>(entity);
             const auto* relationship = world.GetComponent<RelationshipComponent>(entity);
             const std::size_t parent = relationship && ids.count(relationship->parent) ? ids[relationship->parent] : 0;
             out << "entity " << ids[entity] << ' ' << parent << ' ' << std::quoted(name ? name->name : "Entity") << '\n';
+            if (const auto* v = world.GetComponent<ActiveComponent>(entity)) out << "active " << v->active << '\n';
+            if (const auto* v = world.GetComponent<TagComponent>(entity)) out << "tag " << std::quoted(v->tag) << '\n';
+            if (const auto* v = world.GetComponent<LayerComponent>(entity)) out << "layer " << v->layer << '\n';
             if (const auto* v = world.GetComponent<TransformComponent>(entity))
                 out << "transform " << v->position.x << ' ' << v->position.y << ' ' << v->position.z << ' ' << v->rotation.x << ' ' << v->rotation.y << ' ' << v->rotation.z << ' ' << v->scale.x << ' ' << v->scale.y << ' ' << v->scale.z << '\n';
             if (const auto* v = world.GetComponent<MeshComponent>(entity)) out << "mesh " << std::quoted(v->meshPath) << ' ' << std::quoted(v->materialPath) << '\n';
@@ -37,15 +40,20 @@ namespace MiniEngine
             if (const auto* v = world.GetComponent<AudioSourceComponent>(entity)) out << "audio " << std::quoted(v->clipPath) << ' ' << v->volume << ' ' << v->loop << ' ' << v->playOnStart << '\n';
             out << "end\n";
         }
-        return PlatformFile::WriteAllText(path, out.str());
+        return out.str();
     }
 
-    bool SceneSerializer::Load(World& world, const std::filesystem::path& path)
+    bool SceneSerializer::Save(const World& world, const std::filesystem::path& path)
     {
-        std::istringstream in(PlatformFile::ReadAllText(path));
+        return PlatformFile::WriteAllText(path, Serialize(world));
+    }
+
+    bool SceneSerializer::Deserialize(World& world, const std::string& text)
+    {
+        std::istringstream in(text);
         std::string token;
         int version = 0;
-        if (!(in >> token >> version) || token != "TINYSCENE" || version != 1) return false;
+        if (!(in >> token >> version) || token != "TINYSCENE" || (version != 1 && version != 2)) return false;
         world.Clear();
         std::unordered_map<std::size_t, Entity> ids;
         std::vector<std::pair<Entity, std::size_t>> parents;
@@ -59,6 +67,9 @@ namespace MiniEngine
                 current = world.CreateEntity(name); ids[id] = current; parents.emplace_back(current, parent);
             }
             else if (current == InvalidEntity) return false;
+            else if (token == "active") { auto* v = world.GetComponent<ActiveComponent>(current); if (!v || !(in >> v->active)) return false; }
+            else if (token == "tag") { auto* v = world.GetComponent<TagComponent>(current); if (!v || !(in >> std::quoted(v->tag))) return false; }
+            else if (token == "layer") { auto* v = world.GetComponent<LayerComponent>(current); if (!v || !(in >> v->layer)) return false; }
             else if (token == "transform")
             {
                 auto* v = world.GetComponent<TransformComponent>(current);
@@ -79,5 +90,11 @@ namespace MiniEngine
         for (const auto& pair : parents)
             if (pair.second != 0 && ids.count(pair.second)) world.SetParent(pair.first, ids[pair.second]);
         return true;
+    }
+
+    bool SceneSerializer::Load(World& world, const std::filesystem::path& path)
+    {
+        const std::string text = PlatformFile::ReadAllText(path);
+        return !text.empty() && Deserialize(world, text);
     }
 }
