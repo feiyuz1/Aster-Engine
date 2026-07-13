@@ -15,16 +15,18 @@ namespace MiniEngine
     {
         if (m_initialized) return true;
         m_logger.Info("Engine initialize begin.");
+        const bool projectLoaded = !projectFile.empty() && m_projectSettings.Load(projectFile);
         m_memoryManager.Initialize();
         const auto hardwareCount = std::thread::hardware_concurrency();
         m_jobSystem.Initialize(std::max(1u, hardwareCount > 1 ? hardwareCount - 1 : 1u));
-        m_resourceManager.Initialize(&m_jobSystem);
+        m_resourceManager.Initialize(&m_jobSystem, projectLoaded ? m_projectSettings.Resolve(m_projectSettings.assetDirectory) : std::filesystem::path{"assets"});
         m_world.GetSystemManager().RegisterSystem<MovementSystem>();
         m_world.GetSystemManager().RegisterSystem<AnimationSystem>();
         m_world.AddListener(this);
         m_world.Initialize();
         m_renderer.SetLogger(&m_logger);
         m_renderer.SetResourceManager(&m_resourceManager);
+        m_renderer.SetUISystem(&m_uiSystem);
         if (!m_renderer.Initialize(std::make_unique<SdlGlRenderDevice>()))
         {
             m_logger.Error("Renderer initialize failed.");
@@ -33,9 +35,9 @@ namespace MiniEngine
         }
         m_audioEngine.Initialize(&m_logger);
         m_scriptEngine.Initialize(&m_logger);
-        m_context = {&m_logger, &m_memoryManager, &m_jobSystem, &m_resourceManager, &m_world, &m_renderer, &m_inputSystem, &m_physicsWorld, &m_audioEngine, &m_scriptEngine, &m_sceneManager, &m_projectSettings};
+        m_context = {&m_logger, &m_memoryManager, &m_jobSystem, &m_resourceManager, &m_world, &m_renderer, &m_inputSystem, &m_physicsWorld, &m_audioEngine, &m_scriptEngine, &m_sceneManager, &m_projectSettings, &m_uiSystem};
         bool sceneLoaded = false;
-        if (!projectFile.empty() && m_projectSettings.Load(projectFile))
+        if (projectLoaded)
             sceneLoaded = m_sceneManager.LoadScene(m_projectSettings.Resolve(m_projectSettings.startupScene));
         if (!sceneLoaded) SetupDemoScene();
         if (m_gameInstance) m_gameInstance->OnInitialize();
@@ -128,6 +130,7 @@ namespace MiniEngine
     {
         const float deltaTime = m_paused ? 0.0f : rawDeltaTime * m_timeScale;
         const InputState& input = m_renderer.GetInputState();
+        m_uiSystem.Update(input.cursorX, input.cursorY, input.primaryAction);
         m_inputSystem.Update(input);
         if (deltaTime > 0.0f)
         {

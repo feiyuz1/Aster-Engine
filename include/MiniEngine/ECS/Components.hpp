@@ -61,12 +61,13 @@ namespace MiniEngine
         bool useGravity = true;
     };
 
-    enum class ColliderShape { Box, Sphere };
+    enum class ColliderShape { Box, Sphere, Capsule };
     struct ColliderComponent
     {
         ColliderShape shape = ColliderShape::Box;
         Vec3 halfExtents{0.5f, 0.5f, 0.5f};
         float radius = 0.5f;
+        float height = 1.0f;
         bool trigger = false;
         std::uint32_t layer = 1;
         std::uint32_t mask = 0xffffffffu;

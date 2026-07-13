@@ -12,6 +12,7 @@
 #include "MiniEngine/Resource/ResourceManager.hpp"
 #include "MiniEngine/Script/ScriptEngine.hpp"
 #include "MiniEngine/Task/JobSystem.hpp"
+#include "MiniEngine/UI/UISystem.hpp"
 
 #include <cstdint>
 #include <filesystem>
@@ -33,6 +34,7 @@ namespace MiniEngine
         ScriptEngine* scriptEngine = nullptr;
         SceneManager* sceneManager = nullptr;
         ProjectSettings* project = nullptr;
+        UISystem* uiSystem = nullptr;
     };
 
     class Engine : private WorldListener
@@ -69,6 +71,7 @@ namespace MiniEngine
         PhysicsWorld m_physicsWorld;
         AudioEngine m_audioEngine;
         ScriptEngine m_scriptEngine;
+        UISystem m_uiSystem;
         ProjectSettings m_projectSettings;
         SceneManager m_sceneManager{&m_world};
         std::unique_ptr<GameInstance> m_gameInstance;

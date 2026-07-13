@@ -18,7 +18,7 @@ namespace MiniEngine
         std::unordered_map<Entity, std::size_t> ids;
         for (std::size_t index = 0; index < entities.size(); ++index) ids[entities[index]] = index + 1;
         std::ostringstream out;
-        out << "TINYSCENE 2\n";
+        out << "TINYSCENE 3\n";
         for (const Entity entity : entities)
         {
             const auto* name = world.GetComponent<NameComponent>(entity);
@@ -34,7 +34,7 @@ namespace MiniEngine
             if (const auto* v = world.GetComponent<CameraComponent>(entity)) out << "camera " << v->fov << ' ' << v->nearPlane << ' ' << v->farPlane << ' ' << v->primary << '\n';
             if (const auto* v = world.GetComponent<LightComponent>(entity)) out << "light " << v->color.x << ' ' << v->color.y << ' ' << v->color.z << ' ' << v->intensity << ' ' << v->direction.x << ' ' << v->direction.y << ' ' << v->direction.z << '\n';
             if (const auto* v = world.GetComponent<RigidBodyComponent>(entity)) out << "rigidbody " << static_cast<int>(v->type) << ' ' << v->mass << ' ' << v->velocity.x << ' ' << v->velocity.y << ' ' << v->velocity.z << ' ' << v->useGravity << '\n';
-            if (const auto* v = world.GetComponent<ColliderComponent>(entity)) out << "collider " << static_cast<int>(v->shape) << ' ' << v->halfExtents.x << ' ' << v->halfExtents.y << ' ' << v->halfExtents.z << ' ' << v->radius << ' ' << v->trigger << ' ' << v->layer << ' ' << v->mask << '\n';
+            if (const auto* v = world.GetComponent<ColliderComponent>(entity)) out << "collider " << static_cast<int>(v->shape) << ' ' << v->halfExtents.x << ' ' << v->halfExtents.y << ' ' << v->halfExtents.z << ' ' << v->radius << ' ' << v->trigger << ' ' << v->layer << ' ' << v->mask << ' ' << v->height << '\n';
             if (const auto* v = world.GetComponent<ScriptComponent>(entity)) out << "script " << std::quoted(v->scriptClassName) << '\n';
             if (const auto* v = world.GetComponent<AnimationComponent>(entity)) out << "animation " << std::quoted(v->clipPath) << ' ' << v->time << ' ' << v->speed << ' ' << v->loop << ' ' << v->playing << '\n';
             if (const auto* v = world.GetComponent<AudioSourceComponent>(entity)) out << "audio " << std::quoted(v->clipPath) << ' ' << v->volume << ' ' << v->loop << ' ' << v->playOnStart << '\n';
@@ -53,7 +53,7 @@ namespace MiniEngine
         std::istringstream in(text);
         std::string token;
         int version = 0;
-        if (!(in >> token >> version) || token != "TINYSCENE" || (version != 1 && version != 2)) return false;
+        if (!(in >> token >> version) || token != "TINYSCENE" || version < 1 || version > 3) return false;
         world.Clear();
         std::unordered_map<std::size_t, Entity> ids;
         std::vector<std::pair<Entity, std::size_t>> parents;
@@ -79,7 +79,7 @@ namespace MiniEngine
             else if (token == "camera") { CameraComponent v; in >> v.fov >> v.nearPlane >> v.farPlane >> v.primary; world.AddComponent(current, v); }
             else if (token == "light") { LightComponent v; in >> v.color.x >> v.color.y >> v.color.z >> v.intensity >> v.direction.x >> v.direction.y >> v.direction.z; world.AddComponent(current, v); }
             else if (token == "rigidbody") { RigidBodyComponent v; int type; in >> type >> v.mass >> v.velocity.x >> v.velocity.y >> v.velocity.z >> v.useGravity; v.type = static_cast<BodyType>(type); world.AddComponent(current, v); }
-            else if (token == "collider") { ColliderComponent v; int shape; in >> shape >> v.halfExtents.x >> v.halfExtents.y >> v.halfExtents.z >> v.radius >> v.trigger >> v.layer >> v.mask; v.shape = static_cast<ColliderShape>(shape); world.AddComponent(current, v); }
+            else if (token == "collider") { ColliderComponent v; int shape; in >> shape >> v.halfExtents.x >> v.halfExtents.y >> v.halfExtents.z >> v.radius >> v.trigger >> v.layer >> v.mask; if (version >= 3) in >> v.height; v.shape = static_cast<ColliderShape>(shape); world.AddComponent(current, v); }
             else if (token == "script") { ScriptComponent v; in >> std::quoted(v.scriptClassName); world.AddComponent(current, v); }
             else if (token == "animation") { AnimationComponent v; in >> std::quoted(v.clipPath) >> v.time >> v.speed >> v.loop >> v.playing; world.AddComponent(current, v); }
             else if (token == "audio") { AudioSourceComponent v; in >> std::quoted(v.clipPath) >> v.volume >> v.loop >> v.playOnStart; world.AddComponent(current, v); }

@@ -19,6 +19,7 @@ namespace MiniEngine
     void NullRenderDevice::BeginFrame(const FrameView&) {}
     void NullRenderDevice::Draw(const RenderItem&) {}
     void NullRenderDevice::EndFrame() {}
+    void NullRenderDevice::DrawUi(const std::vector<UIDrawCommand>&) {}
     void NullRenderDevice::Present() {}
 
     void RenderQueue::AddItem(const RenderItem& item) { m_items.push_back(item); }
@@ -26,7 +27,8 @@ namespace MiniEngine
     {
         std::sort(m_items.begin(), m_items.end(), [](const RenderItem& lhs, const RenderItem& rhs)
         {
-            return lhs.distanceToCamera < rhs.distanceToCamera;
+            if (lhs.transparent != rhs.transparent) return !lhs.transparent;
+            return lhs.transparent ? lhs.distanceToCamera > rhs.distanceToCamera : lhs.distanceToCamera < rhs.distanceToCamera;
         });
     }
     void RenderQueue::Clear() { m_items.clear(); }
@@ -44,6 +46,7 @@ namespace MiniEngine
     void Renderer::Shutdown()
     {
         m_renderQueue.Clear();
+        m_lastCulled = 0;
         if (m_device) { m_device->Shutdown(); m_device.reset(); }
     }
 
@@ -85,6 +88,7 @@ namespace MiniEngine
         world.GetComponentManager().ForEach<MeshComponent>([&](const Entity entity, MeshComponent& meshComponent)
         {
             if (!m_resources) return;
+            if (const auto* active = world.GetComponent<ActiveComponent>(entity); active && !active->active) return;
             auto mesh = m_resources->Load<MeshResource>(meshComponent.meshPath);
             if (!mesh) return;
             auto material = m_resources->Load<MaterialResource>(meshComponent.materialPath);
@@ -92,7 +96,13 @@ namespace MiniEngine
             if (material && !material->GetTexturePath().empty()) texture = m_resources->Load<TextureResource>(material->GetTexturePath());
             const auto* transform = world.GetComponent<TransformComponent>(entity);
             const Vec3 position = transform ? transform->position : Vec3{};
-            m_renderQueue.AddItem({entity, Length(position - cameraPosition), world.GetWorldMatrix(entity), std::move(mesh), std::move(material), std::move(texture)});
+            const Vec3 offset = position - cameraPosition;
+            const float distance = Length(offset);
+            const float facing = distance > 0.001f ? Dot(offset / distance, cameraForward) : 1.0f;
+            const float halfFov = DegreesToRadians(camera.fov * 0.65f);
+            if (distance > camera.farPlane || (distance > camera.nearPlane && facing < std::cos(halfFov))) { ++m_lastCulled; return; }
+            const bool transparent = material && material->IsTransparent();
+            m_renderQueue.AddItem({entity, distance, world.GetWorldMatrix(entity), std::move(mesh), std::move(material), std::move(texture), transparent});
         });
         m_renderQueue.Sort();
     }
@@ -103,7 +113,9 @@ namespace MiniEngine
         BuildRenderQueue(world);
         m_device->BeginFrame(m_frameView);
         for (const auto& item : m_renderQueue.GetItems()) m_device->Draw(item);
+        if (m_uiSystem) m_device->DrawUi(m_uiSystem->BuildDrawList());
         m_device->EndFrame();
+        if (m_overlayCallback) m_overlayCallback();
         m_device->Present();
         m_lastDrawCalls = m_renderQueue.GetItems().size();
         if (m_logger) m_logger->Debug("RenderFrame draw calls: " + std::to_string(m_lastDrawCalls));
@@ -111,4 +123,8 @@ namespace MiniEngine
 
     std::size_t Renderer::GetLastDrawCallCount() const { return m_lastDrawCalls; }
     const FrameView& Renderer::GetFrameView() const { return m_frameView; }
+    RenderDevice* Renderer::GetDevice() { return m_device.get(); }
+    void Renderer::SetOverlayCallback(std::function<void()> callback) { m_overlayCallback = std::move(callback); }
+    void Renderer::SetUISystem(UISystem* uiSystem) { m_uiSystem = uiSystem; }
+    std::size_t Renderer::GetLastCulledCount() const { return m_lastCulled; }
 }

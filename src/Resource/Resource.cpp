@@ -167,6 +167,7 @@ namespace MiniEngine
             if (key == "color") stream >> m_baseColor.x >> m_baseColor.y >> m_baseColor.z >> m_baseColor.w;
             else if (key == "shader") stream >> m_shaderPath;
             else if (key == "texture") stream >> m_texturePath;
+            else if (key == "blend") { std::string value; stream >> value; m_transparent = value == "alpha" || value == "transparent"; }
             else { std::string ignored; std::getline(stream, ignored); }
         }
         SetState(ResourceState::Loaded); return true;
@@ -175,4 +176,5 @@ namespace MiniEngine
     Vec4 MaterialResource::GetBaseColor() const { return m_baseColor; }
     const std::string& MaterialResource::GetShaderPath() const { return m_shaderPath; }
     const std::string& MaterialResource::GetTexturePath() const { return m_texturePath; }
+    bool MaterialResource::IsTransparent() const { return m_transparent || m_baseColor.w < 0.999f; }
 }

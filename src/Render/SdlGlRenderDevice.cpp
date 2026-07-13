@@ -271,6 +271,7 @@ namespace MiniEngine
         SDL_Event event{};
         while (SDL_PollEvent(&event))
         {
+            if (m_eventCallback) m_eventCallback(&event);
             if (event.type == SDL_QUIT) return false;
             if (event.type == SDL_WINDOWEVENT && event.window.event == SDL_WINDOWEVENT_SIZE_CHANGED)
             {
@@ -285,6 +286,7 @@ namespace MiniEngine
         m_impl->input.rotateX = axis(SDL_SCANCODE_UP, SDL_SCANCODE_DOWN); m_impl->input.rotateY = axis(SDL_SCANCODE_LEFT, SDL_SCANCODE_RIGHT); m_impl->input.rotateZ = axis(SDL_SCANCODE_Q, SDL_SCANCODE_E);
         m_impl->input.scale = axis(SDL_SCANCODE_X, SDL_SCANCODE_Z); m_impl->input.sprint = keys[SDL_SCANCODE_LSHIFT] || keys[SDL_SCANCODE_RSHIFT];
         m_impl->input.primaryAction = (SDL_GetMouseState(nullptr, nullptr) & SDL_BUTTON(SDL_BUTTON_LEFT)) != 0;
+        int cursorX = 0, cursorY = 0; SDL_GetMouseState(&cursorX, &cursorY); m_impl->input.cursorX = static_cast<float>(cursorX); m_impl->input.cursorY = static_cast<float>(cursorY);
         m_impl->input.quitRequested = keys[SDL_SCANCODE_ESCAPE] != 0;
         return !m_impl->input.quitRequested;
     }
@@ -304,6 +306,8 @@ namespace MiniEngine
 
     void SdlGlRenderDevice::Draw(const RenderItem& item)
     {
+        if (item.transparent) { glEnable(GL_BLEND); glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA); glDepthMask(GL_FALSE); }
+        else { glDisable(GL_BLEND); glDepthMask(GL_TRUE); }
         const auto* mesh = m_impl->GetOrCreateMesh(item.mesh); if (!mesh) return;
         const Mat4 mvp = m_impl->view.projection * m_impl->view.view * item.model;
         const Vec4 color = item.material ? item.material->GetBaseColor() : Vec4{0.3f, 0.7f, 1.0f, 1.0f};
@@ -317,5 +321,21 @@ namespace MiniEngine
     }
 
     void SdlGlRenderDevice::EndFrame() {}
+    void SdlGlRenderDevice::DrawUi(const std::vector<UIDrawCommand>& commands)
+    {
+        if (!m_impl || !m_impl->window) return;
+        int width = 0, height = 0; SDL_GL_GetDrawableSize(m_impl->window, &width, &height);
+        glDisable(GL_DEPTH_TEST); glEnable(GL_BLEND); glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA); glEnable(GL_SCISSOR_TEST);
+        for (const auto& command : commands)
+        {
+            if (command.type == UIWidgetType::Label || command.rect.width <= 0.0f || command.rect.height <= 0.0f) continue;
+            glScissor(static_cast<GLint>(command.rect.x), height - static_cast<GLint>(command.rect.y + command.rect.height), static_cast<GLsizei>(command.rect.width), static_cast<GLsizei>(command.rect.height));
+            glClearColor(command.color.x, command.color.y, command.color.z, command.color.w); glClear(GL_COLOR_BUFFER_BIT);
+        }
+        glDisable(GL_SCISSOR_TEST); glDisable(GL_BLEND); glEnable(GL_DEPTH_TEST);
+    }
     void SdlGlRenderDevice::Present() { if (m_impl && m_impl->window) SDL_GL_SwapWindow(m_impl->window); }
+    void* SdlGlRenderDevice::GetNativeWindow() const { return m_impl ? m_impl->window : nullptr; }
+    void* SdlGlRenderDevice::GetGlContext() const { return m_impl ? m_impl->context : nullptr; }
+    void SdlGlRenderDevice::SetEventCallback(std::function<void(const void*)> callback) { m_eventCallback = std::move(callback); }
 }

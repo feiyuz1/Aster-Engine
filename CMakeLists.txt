@@ -3,6 +3,9 @@ project(TinyEngine VERSION 0.3.0 LANGUAGES CXX)
 
 option(TINYENGINE_BUILD_TESTS "Build TinyEngine tests" ON)
 option(TINYENGINE_BUILD_DEMO "Build TinyEngine demo" ON)
+option(TINYENGINE_BUILD_EDITOR "Build TinyEngine editor (downloads Dear ImGui)" OFF)
+
+include(FetchContent)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -10,7 +13,6 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 find_package(SDL2 CONFIG QUIET)
 if (NOT SDL2_FOUND)
-    include(FetchContent)
     set(SDL_SHARED OFF CACHE BOOL "" FORCE)
     set(SDL_STATIC ON CACHE BOOL "" FORCE)
     set(SDL_TEST OFF CACHE BOOL "" FORCE)
@@ -21,6 +23,15 @@ if (NOT SDL2_FOUND)
         DOWNLOAD_EXTRACT_TIMESTAMP TRUE
     )
     FetchContent_MakeAvailable(SDL2)
+endif()
+
+if(TINYENGINE_BUILD_EDITOR)
+    FetchContent_Declare(
+        imgui
+        URL https://github.com/ocornut/imgui/archive/refs/tags/v1.92.8.zip
+        DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+    )
+    FetchContent_MakeAvailable(imgui)
 endif()
 
 find_package(OpenGL REQUIRED)
@@ -47,6 +58,7 @@ add_library(tinyengine STATIC
     src/Audio/AudioEngine.cpp
     src/Input/InputSystem.cpp
     src/Script/ScriptEngine.cpp
+    src/UI/UISystem.cpp
     src/Runtime/Engine.cpp
 )
 
@@ -72,6 +84,22 @@ if(TINYENGINE_BUILD_DEMO)
     target_link_libraries(tinyengine_demo PRIVATE tinyengine)
 endif()
 
+if(TINYENGINE_BUILD_EDITOR)
+    add_library(tinyengine_imgui STATIC
+        ${imgui_SOURCE_DIR}/imgui.cpp
+        ${imgui_SOURCE_DIR}/imgui_draw.cpp
+        ${imgui_SOURCE_DIR}/imgui_tables.cpp
+        ${imgui_SOURCE_DIR}/imgui_widgets.cpp
+        ${imgui_SOURCE_DIR}/backends/imgui_impl_sdl2.cpp
+        ${imgui_SOURCE_DIR}/backends/imgui_impl_opengl3.cpp
+    )
+    target_include_directories(tinyengine_imgui PUBLIC ${imgui_SOURCE_DIR} ${imgui_SOURCE_DIR}/backends)
+    target_link_libraries(tinyengine_imgui PUBLIC tinyengine)
+    add_executable(tinyengine_editor editor/EditorMain.cpp editor/EditorApp.cpp)
+    target_include_directories(tinyengine_editor PRIVATE editor)
+    target_link_libraries(tinyengine_editor PRIVATE tinyengine tinyengine_imgui)
+endif()
+
 add_executable(tinyengine_asset_tool tools/AssetTool.cpp)
 target_link_libraries(tinyengine_asset_tool PRIVATE tinyengine)
 add_executable(tinyengine_scene_tool tools/SceneTool.cpp)
@@ -90,10 +118,14 @@ install(TARGETS tinyengine ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR})
 if(TINYENGINE_BUILD_DEMO)
     install(TARGETS tinyengine_demo RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 endif()
+if(TINYENGINE_BUILD_EDITOR)
+    install(TARGETS tinyengine_editor RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+endif()
 install(TARGETS tinyengine_asset_tool RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 install(TARGETS tinyengine_scene_tool RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 install(DIRECTORY include/ DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
 install(DIRECTORY assets/ DESTINATION ${CMAKE_INSTALL_DATADIR}/tinyengine/assets)
+install(FILES TinyEngine.tinyproject DESTINATION .)
 
 set(CPACK_PACKAGE_NAME "TinyEngine")
 set(CPACK_PACKAGE_VERSION ${PROJECT_VERSION})

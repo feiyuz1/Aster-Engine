@@ -123,4 +123,12 @@ namespace MiniEngine
         }
         return roots;
     }
+
+    void SaveGame::Set(std::string key, std::string value) { m_data.Set(std::move(key), std::move(value)); }
+    std::string SaveGame::GetString(const std::string& key, const std::string& fallback) const { return m_data.GetString(key, fallback); }
+    int SaveGame::GetInt(const std::string& key, const int fallback) const { return m_data.GetInt(key, fallback); }
+    float SaveGame::GetFloat(const std::string& key, const float fallback) const { return m_data.GetFloat(key, fallback); }
+    bool SaveGame::GetBool(const std::string& key, const bool fallback) const { return m_data.GetBool(key, fallback); }
+    bool SaveGame::Save(const std::filesystem::path& path) const { return m_data.Save(path.string()); }
+    bool SaveGame::Load(const std::filesystem::path& path) { return m_data.Load(path.string()); }
 }

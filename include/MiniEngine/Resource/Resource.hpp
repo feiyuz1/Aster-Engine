@@ -95,9 +95,11 @@ namespace MiniEngine
         Vec4 GetBaseColor() const;
         const std::string& GetShaderPath() const;
         const std::string& GetTexturePath() const;
+        bool IsTransparent() const;
     private:
         Vec4 m_baseColor{0.3f, 0.7f, 1.0f, 1.0f};
         std::string m_shaderPath;
         std::string m_texturePath;
+        bool m_transparent = false;
     };
 }

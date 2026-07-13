@@ -1,0 +1,5 @@
+project.name=TinyEngineDemo
+project.assets=assets
+project.startupScene=Saved/Demo.scene
+project.cooked=Saved/Cooked
+physics.fixedStep=0.016666667

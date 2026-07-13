@@ -1,6 +1,7 @@
 #pragma once
 
 #include "MiniEngine/Types.hpp"
+#include "MiniEngine/Core/Config.hpp"
 
 #include <filesystem>
 #include <string>
@@ -55,5 +56,19 @@ namespace MiniEngine
     public:
         static bool Save(const World& world, Entity root, const std::filesystem::path& path);
         static std::vector<Entity> Instantiate(World& world, const std::filesystem::path& path, Entity parent = InvalidEntity);
+    };
+
+    class SaveGame
+    {
+    public:
+        void Set(std::string key, std::string value);
+        std::string GetString(const std::string& key, const std::string& fallback = {}) const;
+        int GetInt(const std::string& key, int fallback = 0) const;
+        float GetFloat(const std::string& key, float fallback = 0.0f) const;
+        bool GetBool(const std::string& key, bool fallback = false) const;
+        bool Save(const std::filesystem::path& path) const;
+        bool Load(const std::filesystem::path& path);
+    private:
+        Config m_data;
     };
 }

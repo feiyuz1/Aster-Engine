@@ -1,63 +1,77 @@
-# TinyEngine 架构
+# TinyEngine 架构说明
 
-本页是架构速查；模块接口、数据格式、线程模型和验证基线以 [主技术设计文档](../设计.md) 为准。
+本文对应 TinyEngine 0.3.0，最后同步于 2026-07-13。
 
 ## 依赖方向
 
 ```text
-Runtime / Tools
-  -> Script | Audio | Animation | Physics | Render
-  -> Scene / ECS
-  -> Resource / AssetRegistry / Pak
-  -> Task | Memory | Core | Math
-  -> Platform
+Editor / Demo / Tools
+        |
+Runtime / Project / UI
+        |
+Script | Audio | Physics | Render | Input
+        |
+Scene / ECS
+        |
+Resource / AssetRegistry / Cooker / TPAK / VFS
+        |
+Task | Memory | Core | Math | Platform
 ```
 
-上层可以依赖下层，下层不访问 Runtime。SDL 仅作为窗口、输入、音频和 OpenGL Context 后端；World、Resource 和 Task 不依赖 SDL。
+上层可以依赖下层，下层不得访问 Runtime 或 Editor。编辑器是单独可执行目标；`tinyengine` 核心库不依赖 Dear ImGui。
 
-## 与 UE 模块的对应
+## UE 5.3.2 职责映射
 
-| TinyEngine | UE 参考边界 | 删减策略 |
+| TinyEngine | UE 参考职责 | 删减策略 |
 |---|---|---|
-| Core/Platform/Math | Core、ApplicationCore | 使用 STL 和 SDL，不复制 UE 容器/HAL 规模 |
-| ECS/Scene | CoreUObject、Engine World/Actor | generation Entity + 组件，不做 UObject GC/UHT |
-| Resource/AssetRegistry/Pak | AssetRegistry、PakFile、Engine Asset | 单进程注册表和 TPAK，不做 DDC/IoStore/Cook 集群 |
-| RenderDevice/Renderer | RHI、RenderCore、Renderer | 单 OpenGL 3.3 后端，不做多 RHI、RenderGraph 和高级 GI |
-| PhysicsWorld | PhysicsCore、Chaos | 基础刚体/碰撞接口，不做破坏、布料和流体 |
-| AudioEngine | AudioMixer | 单设备队列混音基础，不做 MetaSounds |
-| AnimationSystem | AnimationCore、AnimGraphRuntime | Transform Clip，不做完整骨骼图编辑器 |
-| ScriptEngine | BlueprintRuntime | 原生工厂和实例热重建，不引入 Blueprint VM |
+| Project/SceneManager/GameInstance | Projects、UGameInstance、World | 小型配置与显式生命周期，无 UObject |
+| ECS/Scene/Prefab | Actor、Component、Level | generation Entity + 稀疏组件存储 |
+| AssetRegistry/Cooker/TPAK/VFS | AssetRegistry、Cook、PakFile | 单机 GUID/meta 和简单归档，无 DDC/IoStore |
+| Renderer/RenderDevice | Renderer、RenderCore、RHI | 单 OpenGL 3.3 后端 |
+| PhysicsWorld | Chaos/PhysicsCore | 自研基础后端，API 可替换 Jolt |
+| UISystem | UMG/Slate Runtime | 小型 Widget、命中和焦点模型 |
+| Editor | UnrealEd/LevelEditor | Dear ImGui 独立目标，只覆盖常用场景工作流 |
 
-## 帧流程
+## 关键流程
 
-```text
-PumpEvents
--> InputSystem
--> Script/Gameplay/Animation variable update
--> Physics fixed update (1/60 accumulator)
--> RenderQueue build
--> OpenGL submit/present
--> frame allocator reset / periodic resource GC
-```
-
-## 资产流程
+编辑态与运行态：
 
 ```text
-source file
--> AssetRegistry scan
--> ResourceManager cache/async task
--> Mesh/Material/Texture parser
--> Renderer lazy GPU upload
--> reference-count GC
-
-assets directory -> tinyengine_asset_tool -> TPAK
+Edit World -> Serialize snapshot -> EnterPlay
+          -> rebuild script instances -> runtime update
+Stop      -> destroy runtime instances -> restore snapshot -> Edit World
 ```
 
-## 扩展点
+资产：
 
-- 新组件：结构体 + SceneSerializer 字段处理。
-- 新系统：继承 `System`，在 World 初始化前注册。
-- 新资源：继承 `Resource`，实现 `Load/Unload`。
-- 新脚本：向 `ScriptEngine` 注册 Factory。
-- 新模块：实现 `IModule` 并交给 `ModuleManager` 管理。
-- 新渲染后端：实现 `RenderDevice`，Renderer 不需要修改。
+```text
+source asset -> scan -> .meta GUID/import settings/dependencies
+             -> importer/reimport -> cooked directory
+             -> TPAK -> PlatformFile mount -> ResourceManager -> GPU upload
+```
+
+每帧：
+
+```text
+SDL events -> semantic input + UI hit test
+-> GameInstance/Script/Systems
+-> fixed physics (SAP broadphase)
+-> render collection/culling/sort
+-> opaque + transparent + runtime UI + editor overlay
+-> present / frame-memory reset / resource GC
+```
+
+## 数据格式
+
+- `TINYSCENE 3`：文本场景和 Prefab，保存层级及可持久组件。
+- `.tinyproject`：项目名、资产目录、启动场景、Cook 目录、固定步长。
+- `<asset>.meta`：32 位十六进制 GUID、类型、导入时间、设置和依赖。
+- `TPAK 1`：路径与 payload 的简单二进制归档。
+
+## 扩展约束
+
+- 新持久组件必须同步 SceneSerializer 与测试。
+- 新资源格式通过导入/资源层进入，不允许渲染器直接解析源文件。
+- 新图形后端实现 `RenderDevice`；游戏世界不接触 SDL/OpenGL。
+- 成熟物理后端应复用 Collider、PhysicsQuery 与事件 API。
+- Editor 代码不得链接回核心静态库。

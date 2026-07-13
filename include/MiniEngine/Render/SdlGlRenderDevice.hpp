@@ -3,6 +3,7 @@
 #include "MiniEngine/Render/Renderer.hpp"
 
 #include <memory>
+#include <functional>
 #include <string>
 
 namespace MiniEngine
@@ -21,7 +22,11 @@ namespace MiniEngine
         void BeginFrame(const FrameView& view) override;
         void Draw(const RenderItem& item) override;
         void EndFrame() override;
+        void DrawUi(const std::vector<UIDrawCommand>& commands) override;
         void Present() override;
+        void* GetNativeWindow() const;
+        void* GetGlContext() const;
+        void SetEventCallback(std::function<void(const void*)> callback);
 
     private:
         struct Impl;
@@ -33,5 +38,6 @@ namespace MiniEngine
         std::string m_title;
         float m_aspect = 16.0f / 9.0f;
         InputState m_inputState;
+        std::function<void(const void*)> m_eventCallback;
     };
 }

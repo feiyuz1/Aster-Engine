@@ -3,8 +3,10 @@
 #include "MiniEngine/Math/Math.hpp"
 #include "MiniEngine/Resource/Resource.hpp"
 #include "MiniEngine/Types.hpp"
+#include "MiniEngine/UI/UISystem.hpp"
 
 #include <cstddef>
+#include <functional>
 #include <memory>
 #include <string>
 #include <vector>
@@ -24,6 +26,7 @@ namespace MiniEngine
         bool primaryAction = false;
         bool sprint = false;
         bool quitRequested = false;
+        float cursorX = 0.0f, cursorY = 0.0f;
     };
 
     struct FrameView
@@ -44,6 +47,7 @@ namespace MiniEngine
         std::shared_ptr<MeshResource> mesh;
         std::shared_ptr<MaterialResource> material;
         std::shared_ptr<TextureResource> texture;
+        bool transparent = false;
     };
 
     class RenderDevice
@@ -58,6 +62,7 @@ namespace MiniEngine
         virtual void BeginFrame(const FrameView& view) = 0;
         virtual void Draw(const RenderItem& item) = 0;
         virtual void EndFrame() = 0;
+        virtual void DrawUi(const std::vector<UIDrawCommand>& commands) = 0;
         virtual void Present() = 0;
     };
 
@@ -72,6 +77,7 @@ namespace MiniEngine
         void BeginFrame(const FrameView& view) override;
         void Draw(const RenderItem& item) override;
         void EndFrame() override;
+        void DrawUi(const std::vector<UIDrawCommand>& commands) override;
         void Present() override;
     private:
         InputState m_inputState;
@@ -101,6 +107,10 @@ namespace MiniEngine
         void RenderFrame(World& world);
         std::size_t GetLastDrawCallCount() const;
         const FrameView& GetFrameView() const;
+        RenderDevice* GetDevice();
+        void SetOverlayCallback(std::function<void()> callback);
+        void SetUISystem(UISystem* uiSystem);
+        std::size_t GetLastCulledCount() const;
     private:
         Logger* m_logger = nullptr;
         ResourceManager* m_resources = nullptr;
@@ -108,5 +118,8 @@ namespace MiniEngine
         RenderQueue m_renderQueue;
         FrameView m_frameView;
         std::size_t m_lastDrawCalls = 0;
+        std::size_t m_lastCulled = 0;
+        std::function<void()> m_overlayCallback;
+        UISystem* m_uiSystem = nullptr;
     };
 }

@@ -11,6 +11,7 @@
 #include "MiniEngine/Resource/AssetRegistry.hpp"
 #include "MiniEngine/Resource/PakArchive.hpp"
 #include "MiniEngine/Task/JobSystem.hpp"
+#include "MiniEngine/UI/UISystem.hpp"
 
 #include <atomic>
 #include <cmath>
@@ -70,6 +71,11 @@ int main()
     ProjectSettings loadedProject;
     CHECK(loadedProject.Load("Saved/Test.tinyproject"));
     CHECK(loadedProject.name == "TestGame");
+    SaveGame saveGame;
+    saveGame.Set("player.level", "7"); saveGame.Set("player.name", "Tiny");
+    CHECK(saveGame.Save("Saved/Test.save"));
+    SaveGame loadedSave;
+    CHECK(loadedSave.Load("Saved/Test.save") && loadedSave.GetInt("player.level") == 7 && loadedSave.GetString("player.name") == "Tiny");
 
     JobSystem jobs;
     jobs.Initialize(2);
@@ -126,6 +132,9 @@ int main()
     PhysicsWorld physics;
     for (int index = 0; index < 180; ++index) physics.Step(physicsScene, 1.0f / 60.0f);
     CHECK(physicsScene.GetComponent<TransformComponent>(body)->position.y >= 0.49f);
+    RaycastHit queryHit;
+    CHECK(physics.SphereCast(physicsScene, {{0.0f, 3.0f, 0.0f}, {0.0f, -1.0f, 0.0f}}, 0.25f, 10.0f, queryHit));
+    CHECK(!physics.Overlap(physicsScene, {{-1.0f, -1.0f, -1.0f}, {1.0f, 1.0f, 1.0f}}).empty());
 
     Config config;
     config.Set("render.vsync", "true");
@@ -135,6 +144,13 @@ int main()
     CHECK(loadedConfig.Load("Saved/Test.ini"));
     CHECK(loadedConfig.GetBool("render.vsync"));
     CHECK(loadedConfig.GetInt("physics.fixedRate") == 60);
+
+    UISystem ui;
+    bool clicked = false;
+    ui.AddPanel("hud", {0, 0, 300, 100});
+    ui.AddButton("start", "Start", {10, 10, 120, 40}, [&clicked]() { clicked = true; });
+    ui.Update(20, 20, true); ui.Update(20, 20, false);
+    CHECK(clicked && ui.GetFocusedId() == "start" && ui.BuildDrawList().size() == 2);
 
     if (failures == 0) std::cout << "All TinyEngine tests passed\n";
     return failures == 0 ? 0 : 1;
