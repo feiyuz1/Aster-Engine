@@ -44,19 +44,45 @@ namespace MiniEngine
     bool TextureResource::Load(const std::string& path)
     {
         MarkLoading(path);
-        m_data = PlatformFile::ReadAllBytes(path);
-        if (m_data.empty() && !PlatformFile::Exists(path))
+        std::istringstream stream(PlatformFile::ReadAllText(path));
+        std::string magic;
+        stream >> magic;
+        if (magic != "P3")
         {
-            SetState(ResourceState::Failed, "Texture file not found: " + path);
+            SetState(ResourceState::Failed, "Only ASCII PPM (P3) textures are supported: " + path);
             return false;
+        }
+        auto readValue = [&stream]()
+        {
+            std::string token;
+            while (stream >> token)
+            {
+                if (!token.empty() && token.front() == '#') { std::string ignored; std::getline(stream, ignored); continue; }
+                return std::stoi(token);
+            }
+            return -1;
+        };
+        m_width = readValue(); m_height = readValue(); const int maximum = readValue();
+        if (m_width <= 0 || m_height <= 0 || maximum <= 0) { SetState(ResourceState::Failed, "Invalid PPM header: " + path); return false; }
+        m_data.resize(static_cast<std::size_t>(m_width) * static_cast<std::size_t>(m_height) * 4);
+        for (std::size_t pixel = 0; pixel < static_cast<std::size_t>(m_width) * static_cast<std::size_t>(m_height); ++pixel)
+        {
+            const int red = readValue(), green = readValue(), blue = readValue();
+            if (red < 0 || green < 0 || blue < 0) { m_data.clear(); SetState(ResourceState::Failed, "Incomplete PPM pixels: " + path); return false; }
+            m_data[pixel * 4] = static_cast<std::uint8_t>(std::clamp(red * 255 / maximum, 0, 255));
+            m_data[pixel * 4 + 1] = static_cast<std::uint8_t>(std::clamp(green * 255 / maximum, 0, 255));
+            m_data[pixel * 4 + 2] = static_cast<std::uint8_t>(std::clamp(blue * 255 / maximum, 0, 255));
+            m_data[pixel * 4 + 3] = 255;
         }
         SetState(ResourceState::Loaded);
         return true;
     }
 
-    void TextureResource::Unload() { m_data.clear(); SetState(ResourceState::Unloaded); }
+    void TextureResource::Unload() { m_data.clear(); m_width = m_height = 0; SetState(ResourceState::Unloaded); }
     std::size_t TextureResource::GetByteSize() const { return m_data.size(); }
     const std::vector<std::uint8_t>& TextureResource::GetData() const { return m_data; }
+    int TextureResource::GetWidth() const { return m_width; }
+    int TextureResource::GetHeight() const { return m_height; }
 
     bool MeshResource::Load(const std::string& path)
     {
@@ -140,11 +166,13 @@ namespace MiniEngine
         {
             if (key == "color") stream >> m_baseColor.x >> m_baseColor.y >> m_baseColor.z >> m_baseColor.w;
             else if (key == "shader") stream >> m_shaderPath;
+            else if (key == "texture") stream >> m_texturePath;
             else { std::string ignored; std::getline(stream, ignored); }
         }
         SetState(ResourceState::Loaded); return true;
     }
-    void MaterialResource::Unload() { m_shaderPath.clear(); SetState(ResourceState::Unloaded); }
+    void MaterialResource::Unload() { m_shaderPath.clear(); m_texturePath.clear(); SetState(ResourceState::Unloaded); }
     Vec4 MaterialResource::GetBaseColor() const { return m_baseColor; }
     const std::string& MaterialResource::GetShaderPath() const { return m_shaderPath; }
+    const std::string& MaterialResource::GetTexturePath() const { return m_texturePath; }
 }

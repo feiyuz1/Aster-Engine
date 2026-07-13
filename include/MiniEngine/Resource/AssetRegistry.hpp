@@ -2,6 +2,7 @@
 
 #include <filesystem>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -20,7 +21,7 @@ namespace MiniEngine
     {
     public:
         void Scan(const std::filesystem::path& root);
-        const AssetInfo* Find(const std::string& path) const;
+        std::optional<AssetInfo> Find(const std::string& path) const;
         std::vector<AssetInfo> GetAssets() const;
     private:
         mutable std::mutex m_mutex;

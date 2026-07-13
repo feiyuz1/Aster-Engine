@@ -25,29 +25,36 @@ namespace MiniEngine
             #version 330 core
             layout(location = 0) in vec3 aPosition;
             layout(location = 1) in vec3 aNormal;
+            layout(location = 2) in vec2 aUv;
             uniform mat4 uMvp;
             uniform mat4 uModel;
             out vec3 vNormal;
+            out vec2 vUv;
             void main()
             {
                 gl_Position = uMvp * vec4(aPosition, 1.0);
                 vNormal = normalize(mat3(uModel) * aNormal);
+                vUv = aUv;
             }
         )GLSL";
 
         constexpr const char* FragmentShaderSource = R"GLSL(
             #version 330 core
             in vec3 vNormal;
+            in vec2 vUv;
             uniform vec4 uBaseColor;
             uniform vec3 uLightDirection;
             uniform vec3 uLightColor;
             uniform float uLightIntensity;
+            uniform sampler2D uTexture;
+            uniform int uHasTexture;
             out vec4 outColor;
             void main()
             {
                 float diffuse = max(dot(normalize(vNormal), normalize(-uLightDirection)), 0.0);
                 vec3 lighting = vec3(0.16) + uLightColor * diffuse * uLightIntensity;
-                outColor = vec4(uBaseColor.rgb * lighting, uBaseColor.a);
+                vec4 surface = uHasTexture != 0 ? texture(uTexture, vUv) : vec4(1.0);
+                outColor = vec4(uBaseColor.rgb * surface.rgb * lighting, uBaseColor.a * surface.a);
             }
         )GLSL";
     }
@@ -81,6 +88,8 @@ namespace MiniEngine
         using Uniform4fProc = void (APIENTRY*)(GLint, GLfloat, GLfloat, GLfloat, GLfloat);
         using Uniform3fProc = void (APIENTRY*)(GLint, GLfloat, GLfloat, GLfloat);
         using Uniform1fProc = void (APIENTRY*)(GLint, GLfloat);
+        using Uniform1iProc = void (APIENTRY*)(GLint, GLint);
+        using ActiveTextureProc = void (APIENTRY*)(GLenum);
 
         SDL_Window* window = nullptr;
         SDL_GLContext context = nullptr;
@@ -89,6 +98,7 @@ namespace MiniEngine
         GLuint program = 0;
         GLint mvpLocation = -1, modelLocation = -1, baseColorLocation = -1;
         GLint lightDirectionLocation = -1, lightColorLocation = -1, lightIntensityLocation = -1;
+        GLint textureLocation = -1, hasTextureLocation = -1;
 
         GenVertexArraysProc GenVertexArrays = nullptr;
         BindVertexArrayProc BindVertexArray = nullptr;
@@ -117,9 +127,12 @@ namespace MiniEngine
         Uniform4fProc Uniform4f = nullptr;
         Uniform3fProc Uniform3f = nullptr;
         Uniform1fProc Uniform1f = nullptr;
+        Uniform1iProc Uniform1i = nullptr;
+        ActiveTextureProc ActiveTexture = nullptr;
 
         struct GpuMesh { GLuint vao = 0, vertexBuffer = 0, indexBuffer = 0; GLsizei indexCount = 0; };
         std::unordered_map<std::string, GpuMesh> meshes;
+        std::unordered_map<std::string, GLuint> textures;
 
         bool LoadFunctions()
         {
@@ -135,7 +148,8 @@ namespace MiniEngine
                 LoadGl(GetProgramiv, "glGetProgramiv") && LoadGl(GetProgramInfoLog, "glGetProgramInfoLog") &&
                 LoadGl(DeleteProgram, "glDeleteProgram") && LoadGl(UseProgram, "glUseProgram") &&
                 LoadGl(GetUniformLocation, "glGetUniformLocation") && LoadGl(UniformMatrix4fv, "glUniformMatrix4fv") &&
-                LoadGl(Uniform4f, "glUniform4f") && LoadGl(Uniform3f, "glUniform3f") && LoadGl(Uniform1f, "glUniform1f");
+                LoadGl(Uniform4f, "glUniform4f") && LoadGl(Uniform3f, "glUniform3f") && LoadGl(Uniform1f, "glUniform1f") &&
+                LoadGl(Uniform1i, "glUniform1i") && LoadGl(ActiveTexture, "glActiveTexture");
         }
 
         GLuint Compile(const GLenum type, const char* source)
@@ -169,6 +183,7 @@ namespace MiniEngine
             mvpLocation = GetUniformLocation(program, "uMvp"); modelLocation = GetUniformLocation(program, "uModel");
             baseColorLocation = GetUniformLocation(program, "uBaseColor"); lightDirectionLocation = GetUniformLocation(program, "uLightDirection");
             lightColorLocation = GetUniformLocation(program, "uLightColor"); lightIntensityLocation = GetUniformLocation(program, "uLightIntensity");
+            textureLocation = GetUniformLocation(program, "uTexture"); hasTextureLocation = GetUniformLocation(program, "uHasTexture");
             return true;
         }
 
@@ -189,8 +204,24 @@ namespace MiniEngine
             EnableVertexAttribArray(0);
             VertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, sizeof(MeshVertex), reinterpret_cast<void*>(offsetof(MeshVertex, normal)));
             EnableVertexAttribArray(1); BindVertexArray(0);
+            BindVertexArray(mesh.vao);
+            VertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, sizeof(MeshVertex), reinterpret_cast<void*>(offsetof(MeshVertex, uv)));
+            EnableVertexAttribArray(2); BindVertexArray(0);
             mesh.indexCount = static_cast<GLsizei>(indices.size());
             return &meshes.emplace(resource->GetPath(), mesh).first->second;
+        }
+
+        GLuint GetOrCreateTexture(const std::shared_ptr<TextureResource>& resource)
+        {
+            if (!resource || !resource->IsReady()) return 0;
+            const auto found = textures.find(resource->GetPath());
+            if (found != textures.end()) return found->second;
+            GLuint texture = 0; glGenTextures(1, &texture); glBindTexture(GL_TEXTURE_2D, texture);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR); glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT); glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+            glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, resource->GetWidth(), resource->GetHeight(), 0, GL_RGBA, GL_UNSIGNED_BYTE, resource->GetData().data());
+            glBindTexture(GL_TEXTURE_2D, 0); textures[resource->GetPath()] = texture; return texture;
         }
     };
 
@@ -209,6 +240,8 @@ namespace MiniEngine
         m_impl->context = SDL_GL_CreateContext(m_impl->window);
         if (!m_impl->context || !m_impl->LoadFunctions() || !m_impl->CreateDefaultProgram()) { Shutdown(); return false; }
         SDL_GL_SetSwapInterval(1); glEnable(GL_DEPTH_TEST); glEnable(GL_CULL_FACE); glCullFace(GL_BACK);
+        int drawableWidth = 0, drawableHeight = 0; SDL_GL_GetDrawableSize(m_impl->window, &drawableWidth, &drawableHeight);
+        if (drawableHeight > 0) m_aspect = static_cast<float>(drawableWidth) / static_cast<float>(drawableHeight);
         return true;
     }
 
@@ -223,6 +256,8 @@ namespace MiniEngine
                 m_impl->DeleteVertexArrays(1, &pair.second.vao);
             }
             m_impl->meshes.clear();
+            for (const auto& pair : m_impl->textures) glDeleteTextures(1, &pair.second);
+            m_impl->textures.clear();
             if (m_impl->program) { m_impl->DeleteProgram(m_impl->program); m_impl->program = 0; }
             SDL_GL_DeleteContext(m_impl->context); m_impl->context = nullptr;
         }
@@ -237,7 +272,11 @@ namespace MiniEngine
         while (SDL_PollEvent(&event))
         {
             if (event.type == SDL_QUIT) return false;
-            if (event.type == SDL_WINDOWEVENT && event.window.event == SDL_WINDOWEVENT_SIZE_CHANGED) glViewport(0, 0, event.window.data1, event.window.data2);
+            if (event.type == SDL_WINDOWEVENT && event.window.event == SDL_WINDOWEVENT_SIZE_CHANGED)
+            {
+                glViewport(0, 0, event.window.data1, event.window.data2);
+                if (event.window.data2 > 0) m_aspect = static_cast<float>(event.window.data1) / static_cast<float>(event.window.data2);
+            }
             if (event.type == SDL_MOUSEMOTION) { m_impl->input.mouseX += static_cast<float>(event.motion.xrel); m_impl->input.mouseY += static_cast<float>(event.motion.yrel); }
         }
         const Uint8* keys = SDL_GetKeyboardState(nullptr);
@@ -251,6 +290,7 @@ namespace MiniEngine
     }
 
     const InputState& SdlGlRenderDevice::GetInputState() const { return m_impl->input; }
+    float SdlGlRenderDevice::GetAspectRatio() const { return m_aspect; }
 
     void SdlGlRenderDevice::BeginFrame(const FrameView& view)
     {
@@ -259,6 +299,7 @@ namespace MiniEngine
         m_impl->Uniform3f(m_impl->lightDirectionLocation, view.lightDirection.x, view.lightDirection.y, view.lightDirection.z);
         m_impl->Uniform3f(m_impl->lightColorLocation, view.lightColor.x, view.lightColor.y, view.lightColor.z);
         m_impl->Uniform1f(m_impl->lightIntensityLocation, view.lightIntensity);
+        m_impl->Uniform1i(m_impl->textureLocation, 0);
     }
 
     void SdlGlRenderDevice::Draw(const RenderItem& item)
@@ -269,6 +310,9 @@ namespace MiniEngine
         m_impl->UniformMatrix4fv(m_impl->mvpLocation, 1, GL_FALSE, mvp.Data());
         m_impl->UniformMatrix4fv(m_impl->modelLocation, 1, GL_FALSE, item.model.Data());
         m_impl->Uniform4f(m_impl->baseColorLocation, color.x, color.y, color.z, color.w);
+        const GLuint texture = m_impl->GetOrCreateTexture(item.texture);
+        m_impl->ActiveTexture(GL_TEXTURE0); glBindTexture(GL_TEXTURE_2D, texture);
+        m_impl->Uniform1i(m_impl->hasTextureLocation, texture != 0 ? 1 : 0);
         m_impl->BindVertexArray(mesh->vao); glDrawElements(GL_TRIANGLES, mesh->indexCount, GL_UNSIGNED_INT, nullptr); m_impl->BindVertexArray(0);
     }
 

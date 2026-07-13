@@ -15,6 +15,7 @@ namespace MiniEngine
     void NullRenderDevice::Shutdown() {}
     bool NullRenderDevice::PumpEvents() { return true; }
     const InputState& NullRenderDevice::GetInputState() const { return m_inputState; }
+    float NullRenderDevice::GetAspectRatio() const { return 16.0f / 9.0f; }
     void NullRenderDevice::BeginFrame(const FrameView&) {}
     void NullRenderDevice::Draw(const RenderItem&) {}
     void NullRenderDevice::EndFrame() {}
@@ -73,7 +74,7 @@ namespace MiniEngine
         });
         m_frameView.cameraPosition = cameraPosition;
         m_frameView.view = LookAt(cameraPosition, cameraPosition + cameraForward, {0.0f, 1.0f, 0.0f});
-        m_frameView.projection = Perspective(camera.fov, 16.0f / 9.0f, camera.nearPlane, camera.farPlane);
+        m_frameView.projection = Perspective(camera.fov, m_device ? m_device->GetAspectRatio() : 16.0f / 9.0f, camera.nearPlane, camera.farPlane);
         world.GetComponentManager().ForEach<LightComponent>([&](Entity, LightComponent& light)
         {
             m_frameView.lightDirection = Normalize(light.direction);
@@ -87,9 +88,11 @@ namespace MiniEngine
             auto mesh = m_resources->Load<MeshResource>(meshComponent.meshPath);
             if (!mesh) return;
             auto material = m_resources->Load<MaterialResource>(meshComponent.materialPath);
+            std::shared_ptr<TextureResource> texture;
+            if (material && !material->GetTexturePath().empty()) texture = m_resources->Load<TextureResource>(material->GetTexturePath());
             const auto* transform = world.GetComponent<TransformComponent>(entity);
             const Vec3 position = transform ? transform->position : Vec3{};
-            m_renderQueue.AddItem({entity, Length(position - cameraPosition), world.GetWorldMatrix(entity), std::move(mesh), std::move(material)});
+            m_renderQueue.AddItem({entity, Length(position - cameraPosition), world.GetWorldMatrix(entity), std::move(mesh), std::move(material), std::move(texture)});
         });
         m_renderQueue.Sort();
     }

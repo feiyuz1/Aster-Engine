@@ -5,6 +5,7 @@
 #include "MiniEngine/Math/Math.hpp"
 #include "MiniEngine/Physics/PhysicsWorld.hpp"
 #include "MiniEngine/Resource/Resource.hpp"
+#include "MiniEngine/Resource/PakArchive.hpp"
 #include "MiniEngine/Task/JobSystem.hpp"
 
 #include <atomic>
@@ -72,6 +73,13 @@ int main()
     CHECK(mesh.Load("assets/player.mesh"));
     CHECK(mesh.GetVertices().size() == 3);
     CHECK(mesh.GetIndices().size() == 3);
+    TextureResource texture;
+    CHECK(texture.Load("assets/default.ppm"));
+    CHECK(texture.GetWidth() == 2 && texture.GetHeight() == 2 && texture.GetData().size() == 16);
+    CHECK(PakArchive::PackDirectory("assets", "Saved/Test.tpak"));
+    CHECK(PakArchive::List("Saved/Test.tpak").size() >= 4);
+    const auto packedMesh = PakArchive::ReadFile("Saved/Test.tpak", "player.mesh");
+    CHECK(packedMesh.has_value() && !packedMesh->empty());
 
     World physicsScene;
     const Entity body = physicsScene.CreateEntity("Body");

@@ -19,11 +19,11 @@ namespace MiniEngine
         }
     }
 
-    const AssetInfo* AssetRegistry::Find(const std::string& path) const
+    std::optional<AssetInfo> AssetRegistry::Find(const std::string& path) const
     {
         std::lock_guard<std::mutex> lock(m_mutex);
         const auto found = m_assets.find(std::filesystem::path(path).lexically_normal().generic_string());
-        return found == m_assets.end() ? nullptr : &found->second;
+        return found == m_assets.end() ? std::nullopt : std::optional<AssetInfo>(found->second);
     }
 
     std::vector<AssetInfo> AssetRegistry::GetAssets() const

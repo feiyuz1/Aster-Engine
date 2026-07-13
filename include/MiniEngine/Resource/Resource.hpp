@@ -46,8 +46,12 @@ namespace MiniEngine
         void Unload() override;
         std::size_t GetByteSize() const;
         const std::vector<std::uint8_t>& GetData() const;
+        int GetWidth() const;
+        int GetHeight() const;
     private:
         std::vector<std::uint8_t> m_data;
+        int m_width = 0;
+        int m_height = 0;
     };
 
     struct MeshVertex
@@ -90,8 +94,10 @@ namespace MiniEngine
         void Unload() override;
         Vec4 GetBaseColor() const;
         const std::string& GetShaderPath() const;
+        const std::string& GetTexturePath() const;
     private:
         Vec4 m_baseColor{0.3f, 0.7f, 1.0f, 1.0f};
         std::string m_shaderPath;
+        std::string m_texturePath;
     };
 }

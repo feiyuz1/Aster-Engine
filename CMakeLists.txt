@@ -34,6 +34,7 @@ add_library(tinyengine STATIC
     src/Task/JobSystem.cpp
     src/Resource/Resource.cpp
     src/Resource/AssetRegistry.cpp
+    src/Resource/PakArchive.cpp
     src/Resource/ResourceManager.cpp
     src/ECS/ECS.cpp
     src/ECS/SceneSerializer.cpp
@@ -69,6 +70,11 @@ if(TINYENGINE_BUILD_DEMO)
     target_link_libraries(tinyengine_demo PRIVATE tinyengine)
 endif()
 
+add_executable(tinyengine_asset_tool tools/AssetTool.cpp)
+target_link_libraries(tinyengine_asset_tool PRIVATE tinyengine)
+add_executable(tinyengine_scene_tool tools/SceneTool.cpp)
+target_link_libraries(tinyengine_scene_tool PRIVATE tinyengine)
+
 if(TINYENGINE_BUILD_TESTS)
     enable_testing()
     add_executable(tinyengine_tests tests/EngineTests.cpp)
@@ -82,6 +88,8 @@ install(TARGETS tinyengine ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR})
 if(TINYENGINE_BUILD_DEMO)
     install(TARGETS tinyengine_demo RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 endif()
+install(TARGETS tinyengine_asset_tool RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+install(TARGETS tinyengine_scene_tool RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 install(DIRECTORY include/ DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
 install(DIRECTORY assets/ DESTINATION ${CMAKE_INSTALL_DATADIR}/tinyengine/assets)
 

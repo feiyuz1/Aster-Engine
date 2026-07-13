@@ -180,9 +180,13 @@ namespace MiniEngine
     {
         if (!job) return;
         if (!m_accepting.load()) throw std::logic_error("JobSystem is not accepting jobs");
-        if (job->m_submitted.exchange(true)) return;
-        m_outstanding.fetch_add(1);
-        job->m_onCompleted = [this]() { OnJobCompleted(); };
+        {
+            std::lock_guard<std::mutex> lock(job->m_submissionMutex);
+            if (job->m_submitted.load()) return;
+            job->m_onCompleted = [this]() { OnJobCompleted(); };
+            m_outstanding.fetch_add(1);
+            job->m_submitted.store(true);
+        }
         if (job->m_dependencyCount.load() == 0) QueueWhenReady(job);
     }
 

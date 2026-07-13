@@ -41,6 +41,7 @@ namespace MiniEngine
         JobPriority m_priority = JobPriority::Normal;
         std::atomic<int> m_dependencyCount{0};
         std::atomic<bool> m_submitted{false};
+        std::mutex m_submissionMutex;
         mutable std::mutex m_mutex;
         mutable std::condition_variable m_cv;
         bool m_finished = false;

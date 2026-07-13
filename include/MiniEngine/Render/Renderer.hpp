@@ -43,6 +43,7 @@ namespace MiniEngine
         Mat4 model = Mat4::Identity();
         std::shared_ptr<MeshResource> mesh;
         std::shared_ptr<MaterialResource> material;
+        std::shared_ptr<TextureResource> texture;
     };
 
     class RenderDevice
@@ -53,6 +54,7 @@ namespace MiniEngine
         virtual void Shutdown() = 0;
         virtual bool PumpEvents() = 0;
         virtual const InputState& GetInputState() const = 0;
+        virtual float GetAspectRatio() const = 0;
         virtual void BeginFrame(const FrameView& view) = 0;
         virtual void Draw(const RenderItem& item) = 0;
         virtual void EndFrame() = 0;
@@ -66,6 +68,7 @@ namespace MiniEngine
         void Shutdown() override;
         bool PumpEvents() override;
         const InputState& GetInputState() const override;
+        float GetAspectRatio() const override;
         void BeginFrame(const FrameView& view) override;
         void Draw(const RenderItem& item) override;
         void EndFrame() override;

@@ -32,6 +32,7 @@ namespace MiniEngine
         {
             const std::string key = NormalizePath(path);
             std::shared_ptr<T> resource;
+            bool created = false;
             {
                 std::lock_guard<std::mutex> lock(m_mutex);
                 const auto found = m_cache.find(key);
@@ -39,10 +40,12 @@ namespace MiniEngine
                 if (!resource)
                 {
                     resource = std::make_shared<T>();
+                    resource->MarkLoading(key);
                     m_cache[key] = resource;
+                    created = true;
                 }
             }
-            if (resource->GetState() == ResourceState::Loading)
+            if (!created && resource->GetState() == ResourceState::Loading)
                 return resource->Wait() ? resource : nullptr;
             if (resource->IsReady()) return resource;
             if (!resource->Load(key))
