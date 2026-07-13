@@ -1,5 +1,7 @@
 # TinyEngine 架构
 
+本页是架构速查；模块接口、数据格式、线程模型和验证基线以 [主技术设计文档](../设计.md) 为准。
+
 ## 依赖方向
 
 ```text
@@ -44,7 +46,7 @@ PumpEvents
 source file
 -> AssetRegistry scan
 -> ResourceManager cache/async task
--> Mesh/Material parser
+-> Mesh/Material/Texture parser
 -> Renderer lazy GPU upload
 -> reference-count GC
 

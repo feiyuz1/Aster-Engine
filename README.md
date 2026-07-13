@@ -52,4 +52,4 @@ ctest --test-dir build -C Release --output-on-failure
 
 ## 设计边界
 
-当前实现的是轻量引擎核心，不包含 UE 的 Nanite、Lumen、Niagara、World Partition、Blueprint、网络服务、VR/AR、电影系统和完整可视化编辑器。这些属于游戏或产品方向扩展，不进入核心依赖。详细分层见 [架构说明](docs/ARCHITECTURE.md)。
+当前实现的是轻量引擎核心，不包含 UE 的 Nanite、Lumen、Niagara、World Partition、Blueprint、网络服务、VR/AR、电影系统和完整可视化编辑器。这些属于游戏或产品方向扩展，不进入核心依赖。完整实现约束见 [技术设计文档](设计.md)，精简分层见 [架构说明](docs/ARCHITECTURE.md)。
