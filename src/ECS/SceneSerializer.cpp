@@ -19,7 +19,7 @@ namespace MiniEngine
         std::unordered_map<Entity, std::size_t> ids;
         for (std::size_t index = 0; index < entities.size(); ++index) ids[entities[index]] = index + 1;
         std::ostringstream out;
-        out << "TINYSCENE 5\n";
+        out << "TINYSCENE 6\n";
         for (const Entity entity : entities)
         {
             const auto* name = world.GetComponent<NameComponent>(entity);
@@ -32,6 +32,7 @@ namespace MiniEngine
             if (const auto* v = world.GetComponent<TransformComponent>(entity))
                 out << "transform " << v->position.x << ' ' << v->position.y << ' ' << v->position.z << ' ' << v->rotation.x << ' ' << v->rotation.y << ' ' << v->rotation.z << ' ' << v->scale.x << ' ' << v->scale.y << ' ' << v->scale.z << '\n';
             if (const auto* v = world.GetComponent<MeshComponent>(entity)) out << "mesh " << std::quoted(v->meshPath) << ' ' << std::quoted(v->materialPath) << '\n';
+            if (const auto* v = world.GetComponent<LodComponent>(entity)) out << "lod " << std::quoted(v->level1MeshPath) << ' ' << std::quoted(v->level2MeshPath) << ' ' << v->level1Distance << ' ' << v->level2Distance << '\n';
             if (const auto* v = world.GetComponent<CameraComponent>(entity)) out << "camera " << v->fov << ' ' << v->nearPlane << ' ' << v->farPlane << ' ' << v->primary << '\n';
             if (const auto* v = world.GetComponent<LightComponent>(entity)) out << "light " << v->color.x << ' ' << v->color.y << ' ' << v->color.z << ' ' << v->intensity << ' ' << v->direction.x << ' ' << v->direction.y << ' ' << v->direction.z << '\n';
             if (const auto* v = world.GetComponent<RigidBodyComponent>(entity)) out << "rigidbody " << static_cast<int>(v->type) << ' ' << v->mass << ' ' << v->velocity.x << ' ' << v->velocity.y << ' ' << v->velocity.z << ' ' << v->useGravity << ' ' << v->linearDamping << ' ' << v->restitution << ' ' << v->continuous << '\n';
@@ -55,7 +56,7 @@ namespace MiniEngine
         std::istringstream in(text);
         std::string token;
         int version = 0;
-        if (!(in >> token >> version) || token != "TINYSCENE" || version < 1 || version > 5) return false;
+        if (!(in >> token >> version) || token != "TINYSCENE" || version < 1 || version > 6) return false;
         world.Clear();
         std::unordered_map<std::size_t, Entity> ids;
         std::vector<std::pair<Entity, std::size_t>> parents;
@@ -79,6 +80,7 @@ namespace MiniEngine
                 if (!v || !(in >> v->position.x >> v->position.y >> v->position.z >> v->rotation.x >> v->rotation.y >> v->rotation.z >> v->scale.x >> v->scale.y >> v->scale.z)) return false;
             }
             else if (token == "mesh") { MeshComponent v; in >> std::quoted(v.meshPath) >> std::quoted(v.materialPath); world.AddComponent(current, v); }
+            else if (token == "lod") { LodComponent v; in >> std::quoted(v.level1MeshPath) >> std::quoted(v.level2MeshPath) >> v.level1Distance >> v.level2Distance; world.AddComponent(current, v); }
             else if (token == "camera") { CameraComponent v; in >> v.fov >> v.nearPlane >> v.farPlane >> v.primary; world.AddComponent(current, v); }
             else if (token == "light") { LightComponent v; in >> v.color.x >> v.color.y >> v.color.z >> v.intensity >> v.direction.x >> v.direction.y >> v.direction.z; world.AddComponent(current, v); }
             else if (token == "rigidbody") { RigidBodyComponent v; int type; in >> type >> v.mass >> v.velocity.x >> v.velocity.y >> v.velocity.z >> v.useGravity; if (version >= 5) in >> v.linearDamping >> v.restitution >> v.continuous; v.type = static_cast<BodyType>(type); world.AddComponent(current, v); }

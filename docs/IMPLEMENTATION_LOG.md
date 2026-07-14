@@ -2,7 +2,7 @@
 
 本文记录本轮开发对 TinyEngine 做过的主要更新，以及各功能采用的简要实现方式。内容按 Git 提交顺序整理，方便以后定位代码、回溯设计和继续开发。
 
-当前引擎版本：0.10.0
+当前引擎版本：0.11.0
 
 参考源码：Unreal Engine 5.3.2
 
@@ -191,7 +191,24 @@
 - 音频回调以 44.1 kHz 双声道 S16 混合所有 Voice，并在锁保护下实时更新实体声源增益、Bus、循环和声像。
 - 轻量物理仍保持无第三方运行时依赖；Mesh Collider 当前使用资源包围体，精确三角形窄相位保留为后续可选后端。
 
-## 12. 验证与文档维护
+## 12. Shader 管线、IBL、FXAA、LOD 与帧分析
+
+更新内容：
+
+- 增加递归 `#include`、循环检测、`#pragma variant` 宏组合、依赖列表和 FNV 内容哈希缓存。
+- OpenGL 热重载跟踪主 Shader 与全部 include；编译/链接失败保留旧 Program，并在编辑器显示完整错误。
+- PBR Shader 可采样 Radiance HDR equirect 环境，按法线和反射方向提供漫反射/粗糙度镜面 IBL。
+- Tonemap Pass 增加可切换 FXAA；Mesh Entity 增加两级距离 LOD。
+- 增加 CPU 阶段耗时和双缓冲 OpenGL Timer Query GPU 帧耗时。
+- 场景格式升级为 `TINYSCENE 6`，新增 LOD 序列化。
+
+实现方式：
+
+- Shader 预处理器在 `#version` 后注入有序宏，展开相对路径 include，并给展开内容插入 `#line`。
+- HDR 环境继续复用 TextureResource 的 RGBA16F 与 Mipmap，不增加运行时 Cubemap 资产格式。
+- GPU Timer Query 延后一帧读取可用结果，避免同步等待 GPU。
+
+## 13. 验证与文档维护
 
 持续更新内容：
 
@@ -203,7 +220,7 @@
 
 ## 当前仍未完成
 
-- Skybox、IBL、sRGB Texture、多灯、级联阴影和 GPU profiler。
+- Cubemap 离线预过滤/BRDF LUT、级联阴影、实例化和遮挡裁剪；HDR IBL、FXAA、LOD 和 GPU profiler 已完成。
 - Shader include/variant、磁盘缓存和完整错误面板。
 - 精确 Mesh 窄相位/可选 Jolt、完整 Sweep/Slide CharacterController。
 - 骨骼蒙皮与状态机、OGG 流式音频、Unicode 字体和高级 UI 排版。

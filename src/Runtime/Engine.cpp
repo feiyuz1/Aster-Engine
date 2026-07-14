@@ -43,6 +43,7 @@ namespace MiniEngine
         m_renderer.SetLogger(&m_logger);
         m_renderer.SetResourceManager(&m_resourceManager);
         m_renderer.SetUISystem(&m_uiSystem);
+        if (projectLoaded && !m_projectSettings.environmentTexture.empty()) m_renderer.SetEnvironmentPath(m_projectPakMounted ? m_projectSettings.environmentTexture.generic_string() : m_projectSettings.Resolve(m_projectSettings.environmentTexture).generic_string());
         if (!m_renderer.Initialize(std::make_unique<SdlGlRenderDevice>(1280, 720, projectLoaded ? m_projectSettings.name : "TinyEngine SDL2 + OpenGL")))
         {
             m_logger.Error("Renderer initialize failed.");

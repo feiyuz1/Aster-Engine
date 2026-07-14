@@ -26,7 +26,15 @@ uniform int uHasAoTexture;
 uniform sampler2D uEmissiveTexture;
 uniform int uHasEmissiveTexture;
 uniform sampler2D uShadowMap;
+uniform sampler2D uEnvironmentMap;
+uniform int uHasEnvironment;
 out vec4 outColor;
+
+vec2 DirectionToEquirect(vec3 direction)
+{
+    direction = normalize(direction);
+    return vec2(atan(direction.z, direction.x) / 6.2831853 + 0.5, asin(clamp(direction.y, -1.0, 1.0)) / 3.14159265 + 0.5);
+}
 
 float DistributionGGX(vec3 normal, vec3 halfway, float roughness)
 {
@@ -93,6 +101,15 @@ void main()
         direct += (diffuse + specular) * uLightColors[index] * uLightIntensities[index] * nl * visibility;
     }
     vec3 skyAmbient = mix(vec3(0.025, 0.035, 0.055), vec3(0.12, 0.18, 0.28), clamp(normal.y * 0.5 + 0.5, 0.0, 1.0));
-    vec3 color = albedo * skyAmbient * ao + direct + emissive;
+    vec3 ambient = albedo * skyAmbient;
+    if (uHasEnvironment != 0)
+    {
+        vec3 irradiance = textureLod(uEnvironmentMap, DirectionToEquirect(normal), 4.0).rgb;
+        vec3 reflected = reflect(-view, normal);
+        vec3 prefiltered = textureLod(uEnvironmentMap, DirectionToEquirect(reflected), roughness * 5.0).rgb;
+        vec3 fresnel = FresnelSchlick(max(dot(normal, view), 0.0), f0);
+        ambient = irradiance * albedo * (1.0 - metallic) + prefiltered * fresnel * (1.0 - roughness * 0.45);
+    }
+    vec3 color = ambient * ao + direct + emissive;
     outColor = vec4(color, uBaseColor.a * surface.a);
 }

@@ -12,6 +12,7 @@
 #include "MiniEngine/Project/Project.hpp"
 #include "MiniEngine/Project/ProjectPackager.hpp"
 #include "MiniEngine/Render/Renderer.hpp"
+#include "MiniEngine/Render/ShaderPipeline.hpp"
 #include "MiniEngine/Resource/Resource.hpp"
 #include "MiniEngine/Resource/AssetCooker.hpp"
 #include "MiniEngine/Resource/AssetRegistry.hpp"
@@ -78,6 +79,7 @@ int main()
     CHECK(world.SetParent(child, replacement));
     CHECK(!world.SetParent(replacement, child));
     world.AddComponent(replacement, JointComponent{JointType::Distance, child, 2.0f, 0.75f});
+    world.AddComponent(replacement, LodComponent{"assets/player.mesh", "assets/player.mesh", 10.0f, 30.0f});
     CHECK(SceneSerializer::Save(world, "Saved/Test.scene"));
     World loaded;
     CHECK(SceneSerializer::Load(loaded, "Saved/Test.scene"));
@@ -85,6 +87,8 @@ int main()
     bool loadedJointValid = false;
     for (const Entity entity : loaded.GetEntityManager().GetAliveEntities()) if (const auto* joint = loaded.GetComponent<JointComponent>(entity)) loadedJointValid = loaded.IsAlive(joint->connectedEntity) && std::abs(joint->restLength - 2.0f) < 0.001f;
     CHECK(loadedJointValid);
+    bool loadedLod = false; for (const Entity entity : loaded.GetEntityManager().GetAliveEntities()) if (const auto* lod = loaded.GetComponent<LodComponent>(entity)) loadedLod = std::abs(lod->level2Distance - 30.0f) < 0.001f;
+    CHECK(loadedLod);
     const std::string snapshot = SceneSerializer::Serialize(loaded);
     loaded.CreateEntity("Temporary");
     CHECK(SceneSerializer::Deserialize(loaded, snapshot));
@@ -100,10 +104,12 @@ int main()
     ProjectSettings project;
     project.name = "TestGame";
     project.startupScene = "Saved/Test.scene";
+    project.inputBindings = "assets/default.input"; project.environmentTexture = "assets/studio.hdr";
     CHECK(project.Save("Saved/Test.tinyproject"));
     ProjectSettings loadedProject;
     CHECK(loadedProject.Load("Saved/Test.tinyproject"));
     CHECK(loadedProject.name == "TestGame");
+    CHECK(loadedProject.inputBindings == "assets/default.input" && loadedProject.environmentTexture == "assets/studio.hdr");
     SaveGame saveGame;
     saveGame.Set("player.level", "7"); saveGame.Set("player.name", "Tiny");
     CHECK(saveGame.Save("Saved/Test.save"));
@@ -177,6 +183,11 @@ int main()
     ShaderResource shader;
     CHECK(shader.Load("assets/shaders/default.vert"));
     CHECK(shader.GetSource().find("uLightViewProjection") != std::string::npos);
+    CHECK(PlatformFile::WriteAllText("Saved/Common.glsl", "vec3 IncludedColor() { return vec3(1.0); }\n"));
+    CHECK(PlatformFile::WriteAllText("Saved/Variant.frag", "#version 330 core\n#pragma variant USE_FOG 0 1\n#include \"Common.glsl\"\nvoid main(){}\n"));
+    const auto shaderVariants = ShaderPipeline::BuildVariants("Saved/Variant.frag");
+    CHECK(shaderVariants.size() == 2 && shaderVariants[0].success && shaderVariants[0].source.find("IncludedColor") != std::string::npos);
+    CHECK(shaderVariants[0].dependencies.size() == 2 && ShaderPipeline::WriteCache(shaderVariants[0], "Saved/ShaderCacheTest"));
     CHECK(PakArchive::PackDirectory("assets", "Saved/Test.tpak"));
     CHECK(PakArchive::List("Saved/Test.tpak").size() >= 4);
     const auto packedMesh = PakArchive::ReadFile("Saved/Test.tpak", "player.mesh");

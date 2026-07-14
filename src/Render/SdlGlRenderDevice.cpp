@@ -1,6 +1,7 @@
 #include "MiniEngine/Render/SdlGlRenderDevice.hpp"
 
 #include "MiniEngine/Platform/Platform.hpp"
+#include "MiniEngine/Render/ShaderPipeline.hpp"
 
 #define SDL_MAIN_HANDLED
 #ifdef _WIN32
@@ -147,16 +148,34 @@ namespace MiniEngine
             in vec2 vUv;
             uniform sampler2D uHdrTexture;
             uniform float uExposure;
+            uniform vec2 uInverseResolution;
+            uniform int uFxaaEnabled;
             out vec4 outColor;
             vec3 AcesFilm(vec3 color)
             {
                 return clamp((color * (2.51 * color + 0.03)) / (color * (2.43 * color + 0.59) + 0.14), 0.0, 1.0);
             }
+            vec3 SceneColor(vec2 uv)
+            {
+                vec4 scene = texture(uHdrTexture, uv);
+                vec3 sky = mix(vec3(0.035, 0.055, 0.09), vec3(0.22, 0.42, 0.72), clamp(uv.y, 0.0, 1.0));
+                return mix(sky, scene.rgb, scene.a);
+            }
             void main()
             {
-                vec4 scene = texture(uHdrTexture, vUv);
-                vec3 sky = mix(vec3(0.035, 0.055, 0.09), vec3(0.22, 0.42, 0.72), clamp(vUv.y, 0.0, 1.0));
-                vec3 hdr = mix(sky, scene.rgb, scene.a) * uExposure;
+                vec3 hdr = SceneColor(vUv);
+                if (uFxaaEnabled != 0)
+                {
+                    vec3 northWest = SceneColor(vUv + vec2(-1.0, -1.0) * uInverseResolution);
+                    vec3 northEast = SceneColor(vUv + vec2(1.0, -1.0) * uInverseResolution);
+                    vec3 southWest = SceneColor(vUv + vec2(-1.0, 1.0) * uInverseResolution);
+                    vec3 southEast = SceneColor(vUv + vec2(1.0, 1.0) * uInverseResolution);
+                    vec3 lumaWeights = vec3(0.299, 0.587, 0.114);
+                    float centerLuma = dot(hdr, lumaWeights), minimumLuma = min(centerLuma, min(min(dot(northWest, lumaWeights), dot(northEast, lumaWeights)), min(dot(southWest, lumaWeights), dot(southEast, lumaWeights))));
+                    float maximumLuma = max(centerLuma, max(max(dot(northWest, lumaWeights), dot(northEast, lumaWeights)), max(dot(southWest, lumaWeights), dot(southEast, lumaWeights))));
+                    if (maximumLuma - minimumLuma > max(0.0312, maximumLuma * 0.125)) hdr = (northWest + northEast + southWest + southEast + hdr * 2.0) / 6.0;
+                }
+                hdr *= uExposure;
                 outColor = vec4(pow(AcesFilm(hdr), vec3(1.0 / 2.2)), 1.0);
             }
         )GLSL";
@@ -223,6 +242,12 @@ namespace MiniEngine
         using DeleteFramebuffersProc = void (APIENTRY*)(GLsizei, const GLuint*);
         using FramebufferTexture2DProc = void (APIENTRY*)(GLenum, GLenum, GLenum, GLuint, GLint);
         using CheckFramebufferStatusProc = GLenum (APIENTRY*)(GLenum);
+        using GenQueriesProc = void (APIENTRY*)(GLsizei, GLuint*);
+        using DeleteQueriesProc = void (APIENTRY*)(GLsizei, const GLuint*);
+        using BeginQueryProc = void (APIENTRY*)(GLenum, GLuint);
+        using EndQueryProc = void (APIENTRY*)(GLenum);
+        using GetQueryObjectivProc = void (APIENTRY*)(GLuint, GLenum, GLint*);
+        using GetQueryObjectui64vProc = void (APIENTRY*)(GLuint, GLenum, GLuint64*);
 
         SDL_Window* window = nullptr;
         SDL_GLContext context = nullptr;
@@ -234,6 +259,8 @@ namespace MiniEngine
         GLuint shadowFramebuffer = 0, shadowDepth = 0;
         int shadowResolution = 2048;
         float exposure = 1.0f;
+        bool fxaaEnabled = true;
+        GLuint timerQueries[2]{}; bool timerIssued[2]{}; int timerIndex = 0; bool timerActive = false; float lastGpuFrameMilliseconds = 0.0f;
         int sceneWidth = 0, sceneHeight = 0;
         bool sceneTargetEnabled = false;
         bool previousUiNext = false, previousUiAccept = false;
@@ -247,10 +274,13 @@ namespace MiniEngine
         GLint normalTextureLocation = -1, hasNormalTextureLocation = -1, metallicTextureLocation = -1, hasMetallicTextureLocation = -1;
         GLint roughnessTextureLocation = -1, hasRoughnessTextureLocation = -1, aoTextureLocation = -1, hasAoTextureLocation = -1;
         GLint emissiveTextureLocation = -1, hasEmissiveTextureLocation = -1;
-        GLint shadowMvpLocation = -1, toneTextureLocation = -1, exposureLocation = -1;
+        GLint environmentTextureLocation = -1, hasEnvironmentLocation = -1;
+        GLint shadowMvpLocation = -1, toneTextureLocation = -1, exposureLocation = -1, inverseResolutionLocation = -1, fxaaEnabledLocation = -1;
         GLint uiViewportLocation = -1, uiColorLocation = -1, uiTextureLocation = -1, uiHasTextureLocation = -1;
         FileWatcher vertexShaderWatcher, fragmentShaderWatcher;
+        std::unordered_map<std::string, FileWatcher> shaderDependencyWatchers;
         std::filesystem::path vertexShaderPath{"assets/shaders/default.vert"}, fragmentShaderPath{"assets/shaders/default.frag"};
+        std::string lastShaderError;
 
         GenVertexArraysProc GenVertexArrays = nullptr;
         BindVertexArrayProc BindVertexArray = nullptr;
@@ -288,6 +318,8 @@ namespace MiniEngine
         DeleteFramebuffersProc DeleteFramebuffers = nullptr;
         FramebufferTexture2DProc FramebufferTexture2D = nullptr;
         CheckFramebufferStatusProc CheckFramebufferStatus = nullptr;
+        GenQueriesProc GenQueries = nullptr; DeleteQueriesProc DeleteQueries = nullptr; BeginQueryProc BeginQuery = nullptr; EndQueryProc EndQuery = nullptr;
+        GetQueryObjectivProc GetQueryObjectiv = nullptr; GetQueryObjectui64vProc GetQueryObjectui64v = nullptr;
 
         struct GpuMesh { GLuint vao = 0, vertexBuffer = 0, indexBuffer = 0; GLsizei indexCount = 0; };
         struct UiVertex { Vec2 position; Vec2 uv; };
@@ -313,7 +345,8 @@ namespace MiniEngine
                 LoadGl(Uniform1i, "glUniform1i") && LoadGl(ActiveTexture, "glActiveTexture") && LoadGl(GenerateMipmap, "glGenerateMipmap") &&
                 LoadGl(GenFramebuffers, "glGenFramebuffers") && LoadGl(BindFramebuffer, "glBindFramebuffer") &&
                 LoadGl(DeleteFramebuffers, "glDeleteFramebuffers") && LoadGl(FramebufferTexture2D, "glFramebufferTexture2D") &&
-                LoadGl(CheckFramebufferStatus, "glCheckFramebufferStatus");
+                LoadGl(CheckFramebufferStatus, "glCheckFramebufferStatus") && LoadGl(GenQueries, "glGenQueries") && LoadGl(DeleteQueries, "glDeleteQueries") &&
+                LoadGl(BeginQuery, "glBeginQuery") && LoadGl(EndQuery, "glEndQuery") && LoadGl(GetQueryObjectiv, "glGetQueryObjectiv") && LoadGl(GetQueryObjectui64v, "glGetQueryObjectui64v");
         }
 
         void DestroySceneTarget()
@@ -383,7 +416,7 @@ namespace MiniEngine
             GLint success = GL_FALSE;
             GetShaderiv(shader, GL_COMPILE_STATUS, &success);
             if (success == GL_TRUE) return shader;
-            GLchar log[1024]{}; GetShaderInfoLog(shader, sizeof(log), nullptr, log);
+            GLchar log[4096]{}; GetShaderInfoLog(shader, sizeof(log), nullptr, log); lastShaderError = log;
             SDL_LogError(SDL_LOG_CATEGORY_RENDER, "Shader compilation failed: %s", log);
             DeleteShader(shader);
             return 0;
@@ -399,7 +432,7 @@ namespace MiniEngine
             GLint success = GL_FALSE; GetProgramiv(candidate, GL_LINK_STATUS, &success);
             if (success != GL_TRUE)
             {
-                GLchar log[1024]{}; GetProgramInfoLog(candidate, sizeof(log), nullptr, log);
+                GLchar log[4096]{}; GetProgramInfoLog(candidate, sizeof(log), nullptr, log); lastShaderError = log;
                 SDL_LogError(SDL_LOG_CATEGORY_RENDER, "Program link failed: %s", log);
                 DeleteProgram(candidate); return 0;
             }
@@ -410,6 +443,7 @@ namespace MiniEngine
         {
             const GLuint candidate = CreateLinkedProgram(vertexSource, fragmentSource); if (!candidate) return false;
             if (program) DeleteProgram(program); program = candidate;
+            lastShaderError.clear();
             mvpLocation = GetUniformLocation(program, "uMvp"); modelLocation = GetUniformLocation(program, "uModel");
             lightViewProjectionLocation = GetUniformLocation(program, "uLightViewProjection");
             baseColorLocation = GetUniformLocation(program, "uBaseColor"); lightDirectionLocation = GetUniformLocation(program, "uLightDirection");
@@ -431,6 +465,7 @@ namespace MiniEngine
             aoTextureLocation = GetUniformLocation(program, "uAoTexture"); hasAoTextureLocation = GetUniformLocation(program, "uHasAoTexture");
             emissiveTextureLocation = GetUniformLocation(program, "uEmissiveTexture"); hasEmissiveTextureLocation = GetUniformLocation(program, "uHasEmissiveTexture");
             shadowMapLocation = GetUniformLocation(program, "uShadowMap");
+            environmentTextureLocation = GetUniformLocation(program, "uEnvironmentMap"); hasEnvironmentLocation = GetUniformLocation(program, "uHasEnvironment");
             return true;
         }
 
@@ -484,6 +519,7 @@ namespace MiniEngine
             if (!shadowProgram || !toneProgram || !uiProgram) return false;
             shadowMvpLocation = GetUniformLocation(shadowProgram, "uLightMvp");
             toneTextureLocation = GetUniformLocation(toneProgram, "uHdrTexture"); exposureLocation = GetUniformLocation(toneProgram, "uExposure");
+            inverseResolutionLocation = GetUniformLocation(toneProgram, "uInverseResolution"); fxaaEnabledLocation = GetUniformLocation(toneProgram, "uFxaaEnabled");
             GenVertexArrays(1, &fullScreenVao);
             uiViewportLocation = GetUniformLocation(uiProgram, "uViewport"); uiColorLocation = GetUniformLocation(uiProgram, "uColor");
             uiTextureLocation = GetUniformLocation(uiProgram, "uUiTexture"); uiHasTextureLocation = GetUniformLocation(uiProgram, "uHasUiTexture");
@@ -497,9 +533,16 @@ namespace MiniEngine
 
         bool ReloadDefaultShadersFromFiles()
         {
-            const std::string vertex = PlatformFile::ReadAllText(vertexShaderPath), fragment = PlatformFile::ReadAllText(fragmentShaderPath);
-            if (vertex.empty() || fragment.empty()) return false;
-            const bool reloaded = CreateDefaultProgram(vertex.c_str(), fragment.c_str());
+            const auto vertex = ShaderPipeline::Preprocess(vertexShaderPath), fragment = ShaderPipeline::Preprocess(fragmentShaderPath);
+            if (!vertex.success || !fragment.success)
+            {
+                lastShaderError = !vertex.success ? vertex.error : fragment.error; SDL_LogError(SDL_LOG_CATEGORY_RENDER, "%s", lastShaderError.c_str()); return false;
+            }
+            ShaderPipeline::WriteCache(vertex, "Saved/ShaderCache"); ShaderPipeline::WriteCache(fragment, "Saved/ShaderCache");
+            shaderDependencyWatchers.clear();
+            for (const auto& dependency : vertex.dependencies) shaderDependencyWatchers[dependency.generic_string()].HasChanged(dependency);
+            for (const auto& dependency : fragment.dependencies) shaderDependencyWatchers[dependency.generic_string()].HasChanged(dependency);
+            const bool reloaded = CreateDefaultProgram(vertex.source.c_str(), fragment.source.c_str());
             SDL_Log(reloaded ? "Reloaded render shaders" : "Render shader reload failed; keeping the previous program");
             return reloaded;
         }
@@ -508,7 +551,9 @@ namespace MiniEngine
         {
             const bool vertexChanged = vertexShaderWatcher.HasChanged(vertexShaderPath);
             const bool fragmentChanged = fragmentShaderWatcher.HasChanged(fragmentShaderPath);
-            if (vertexChanged || fragmentChanged) ReloadDefaultShadersFromFiles();
+            bool dependencyChanged = false;
+            for (auto& watcher : shaderDependencyWatchers) dependencyChanged = watcher.second.HasChanged(watcher.first) || dependencyChanged;
+            if (vertexChanged || fragmentChanged || dependencyChanged) ReloadDefaultShadersFromFiles();
         }
 
         const GpuMesh* GetOrCreateMesh(const std::shared_ptr<MeshResource>& resource)
@@ -592,9 +637,10 @@ namespace MiniEngine
         if (!m_impl->window) { SDL_Quit(); return false; }
         m_impl->context = SDL_GL_CreateContext(m_impl->window);
         if (!m_impl->context || !m_impl->LoadFunctions()) { Shutdown(); return false; }
-        const std::string vertexSource = PlatformFile::ReadAllText(m_impl->vertexShaderPath), fragmentSource = PlatformFile::ReadAllText(m_impl->fragmentShaderPath);
-        const bool programCreated = !vertexSource.empty() && !fragmentSource.empty() ? m_impl->CreateDefaultProgram(vertexSource.c_str(), fragmentSource.c_str()) : m_impl->CreateDefaultProgram();
+        const auto vertexSource = ShaderPipeline::Preprocess(m_impl->vertexShaderPath), fragmentSource = ShaderPipeline::Preprocess(m_impl->fragmentShaderPath);
+        const bool programCreated = vertexSource.success && fragmentSource.success ? m_impl->CreateDefaultProgram(vertexSource.source.c_str(), fragmentSource.source.c_str()) : m_impl->CreateDefaultProgram();
         if (!programCreated || !m_impl->CreateAuxiliaryPrograms() || !m_impl->CreateShadowTarget()) { Shutdown(); return false; }
+        m_impl->GenQueries(2, m_impl->timerQueries);
         m_impl->vertexShaderWatcher.HasChanged(m_impl->vertexShaderPath); m_impl->fragmentShaderWatcher.HasChanged(m_impl->fragmentShaderPath);
         SDL_GL_SetSwapInterval(1); glEnable(GL_DEPTH_TEST); glEnable(GL_CULL_FACE); glCullFace(GL_BACK);
         int drawableWidth = 0, drawableHeight = 0; SDL_GL_GetDrawableSize(m_impl->window, &drawableWidth, &drawableHeight);
@@ -609,6 +655,7 @@ namespace MiniEngine
         {
             m_impl->DestroySceneTarget();
             m_impl->DestroyShadowTarget();
+            if (m_impl->timerQueries[0]) { m_impl->DeleteQueries(2, m_impl->timerQueries); m_impl->timerQueries[0] = m_impl->timerQueries[1] = 0; }
             for (const auto& pair : m_impl->meshes)
             {
                 m_impl->DeleteBuffers(1, &pair.second.vertexBuffer); m_impl->DeleteBuffers(1, &pair.second.indexBuffer);
@@ -704,6 +751,13 @@ namespace MiniEngine
     void SdlGlRenderDevice::BeginShadowPass(const FrameView& view)
     {
         m_impl->view = view;
+        const int previous = (m_impl->timerIndex + 1) % 2;
+        if (m_impl->timerIssued[previous])
+        {
+            GLint available = GL_FALSE; m_impl->GetQueryObjectiv(m_impl->timerQueries[previous], GL_QUERY_RESULT_AVAILABLE, &available);
+            if (available == GL_TRUE) { GLuint64 nanoseconds = 0; m_impl->GetQueryObjectui64v(m_impl->timerQueries[previous], GL_QUERY_RESULT, &nanoseconds); m_impl->lastGpuFrameMilliseconds = static_cast<float>(nanoseconds) / 1000000.0f; }
+        }
+        m_impl->BeginQuery(GL_TIME_ELAPSED, m_impl->timerQueries[m_impl->timerIndex]); m_impl->timerActive = true;
         m_impl->BindFramebuffer(GL_FRAMEBUFFER, m_impl->shadowFramebuffer); glViewport(0, 0, m_impl->shadowResolution, m_impl->shadowResolution);
         glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE); glDepthMask(GL_TRUE); glEnable(GL_DEPTH_TEST); glEnable(GL_CULL_FACE); glCullFace(GL_FRONT);
         glEnable(GL_POLYGON_OFFSET_FILL); glPolygonOffset(2.0f, 4.0f); glClear(GL_DEPTH_BUFFER_BIT); m_impl->UseProgram(m_impl->shadowProgram);
@@ -779,17 +833,20 @@ namespace MiniEngine
         bindTexture(item.roughnessTexture, 4, false, m_impl->roughnessTextureLocation, m_impl->hasRoughnessTextureLocation);
         bindTexture(item.aoTexture, 5, false, m_impl->aoTextureLocation, m_impl->hasAoTextureLocation);
         bindTexture(item.emissiveTexture, 6, true, m_impl->emissiveTextureLocation, m_impl->hasEmissiveTextureLocation);
+        bindTexture(m_impl->view.environmentTexture, 7, false, m_impl->environmentTextureLocation, m_impl->hasEnvironmentLocation);
         m_impl->ActiveTexture(GL_TEXTURE0);
         m_impl->BindVertexArray(mesh->vao); glDrawElements(GL_TRIANGLES, mesh->indexCount, GL_UNSIGNED_INT, nullptr); m_impl->BindVertexArray(0);
     }
 
     void SdlGlRenderDevice::EndFrame()
     {
+        if (m_impl->timerActive) { m_impl->EndQuery(GL_TIME_ELAPSED); m_impl->timerIssued[m_impl->timerIndex] = true; m_impl->timerIndex = (m_impl->timerIndex + 1) % 2; m_impl->timerActive = false; }
         if (!m_impl->sceneTargetEnabled) return;
         m_impl->BindFramebuffer(GL_FRAMEBUFFER, m_impl->toneFramebuffer); glViewport(0, 0, m_impl->sceneWidth, m_impl->sceneHeight);
         glDisable(GL_DEPTH_TEST); glDisable(GL_CULL_FACE); glDisable(GL_BLEND); m_impl->UseProgram(m_impl->toneProgram);
         m_impl->ActiveTexture(GL_TEXTURE2); glBindTexture(GL_TEXTURE_2D, m_impl->sceneHdrColor);
         m_impl->Uniform1i(m_impl->toneTextureLocation, 2); m_impl->Uniform1f(m_impl->exposureLocation, m_impl->exposure);
+        m_impl->Uniform2f(m_impl->inverseResolutionLocation, 1.0f / std::max(1, m_impl->sceneWidth), 1.0f / std::max(1, m_impl->sceneHeight)); m_impl->Uniform1i(m_impl->fxaaEnabledLocation, m_impl->fxaaEnabled ? 1 : 0);
         m_impl->BindVertexArray(m_impl->fullScreenVao); glDrawArrays(GL_TRIANGLES, 0, 3); m_impl->BindVertexArray(0);
         m_impl->ActiveTexture(GL_TEXTURE0); glEnable(GL_CULL_FACE); glEnable(GL_DEPTH_TEST);
         m_impl->BindFramebuffer(GL_FRAMEBUFFER, 0);
@@ -869,4 +926,8 @@ namespace MiniEngine
     bool SdlGlRenderDevice::ReloadShaders() { return m_impl && m_impl->ReloadDefaultShadersFromFiles(); }
     void SdlGlRenderDevice::SetExposure(const float exposure) { if (m_impl) m_impl->exposure = std::clamp(exposure, 0.05f, 16.0f); }
     float SdlGlRenderDevice::GetExposure() const { return m_impl ? m_impl->exposure : 1.0f; }
+    const std::string& SdlGlRenderDevice::GetLastShaderError() const { static const std::string empty; return m_impl ? m_impl->lastShaderError : empty; }
+    void SdlGlRenderDevice::SetFxaaEnabled(const bool enabled) { if (m_impl) m_impl->fxaaEnabled = enabled; }
+    bool SdlGlRenderDevice::IsFxaaEnabled() const { return m_impl && m_impl->fxaaEnabled; }
+    float SdlGlRenderDevice::GetLastGpuFrameMilliseconds() const { return m_impl ? m_impl->lastGpuFrameMilliseconds : 0.0f; }
 }

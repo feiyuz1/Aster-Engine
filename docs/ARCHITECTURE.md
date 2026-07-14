@@ -1,6 +1,6 @@
 # TinyEngine 架构说明
 
-本文对应 TinyEngine 0.10.0，最后同步于 2026-07-14。
+本文对应 TinyEngine 0.11.0，最后同步于 2026-07-14。
 
 ## 依赖方向
 
@@ -76,7 +76,7 @@ Runtime UI 在提交前根据 Viewport 解析锚点和父子容器布局，生�
 
 ## 数据格式与约束
 
-- `TINYSCENE 5`：场景和 Prefab 文本格式，增加 Joint、物理材质参数、动画过渡和空间音频字段，并继续读取 1–4 版。
+- `TINYSCENE 6`：场景和 Prefab 文本格式，增加 Joint、物理材质参数、动画过渡、空间音频与 LOD 字段，并继续读取 1–5 版。
 - `TINYINPUT 1`：逻辑 Axis/Action 到物理输入通道的多重映射。
 - `.mat`：`color`、`metallic`、`roughness`、`emissive`、`texture`、`blend`。
 - `<asset>.meta`：32 位十六进制 GUID、类型、导入时间、设置和依赖。

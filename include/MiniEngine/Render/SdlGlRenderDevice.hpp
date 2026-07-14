@@ -39,6 +39,10 @@ namespace MiniEngine
         bool ReloadShaders();
         void SetExposure(float exposure);
         float GetExposure() const;
+        const std::string& GetLastShaderError() const;
+        void SetFxaaEnabled(bool enabled);
+        bool IsFxaaEnabled() const;
+        float GetLastGpuFrameMilliseconds() const;
 
     private:
         struct Impl;

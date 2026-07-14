@@ -346,7 +346,12 @@ namespace MiniEngine
         ImGui::SetNextItemWidth(70.0f); ImGui::DragFloat("##SnapValue", snapValue, 0.05f, 0.001f, 100.0f, "%.2f");
         float exposure = m_device->GetExposure(); ImGui::SameLine(); ImGui::SetNextItemWidth(70.0f);
         if (ImGui::DragFloat("Exposure", &exposure, 0.02f, 0.05f, 16.0f, "%.2f")) m_device->SetExposure(exposure);
-        ImGui::SameLine(); if (ImGui::SmallButton("Reload Shaders")) m_messages.emplace_back(m_device->ReloadShaders() ? "Shaders reloaded" : "Shader reload failed; previous program retained");
+        bool fxaa = m_device->IsFxaaEnabled(); ImGui::SameLine(); if (ImGui::Checkbox("FXAA", &fxaa)) m_device->SetFxaaEnabled(fxaa);
+        ImGui::SameLine(); if (ImGui::SmallButton("Reload Shaders"))
+        {
+            if (m_device->ReloadShaders()) m_messages.emplace_back("Shaders reloaded");
+            else m_messages.emplace_back("Shader reload failed; previous program retained: " + m_device->GetLastShaderError());
+        }
         const ImVec2 available = ImGui::GetContentRegionAvail();
         const int targetWidth = std::max(1, static_cast<int>(available.x)), targetHeight = std::max(1, static_cast<int>(available.y));
         m_device->ResizeSceneRenderTarget(targetWidth, targetHeight);
@@ -569,7 +574,9 @@ namespace MiniEngine
         ImGui::SetNextWindowSize({viewport->WorkPos.x + viewport->WorkSize.x - left, viewport->WorkPos.y + viewport->WorkSize.y - top}, ImGuiCond_Always);
         ImGui::Begin("Console / Stats");
         const Renderer* renderer = m_engine.GetContext().renderer;
-        ImGui::Text("Draw calls: %zu | Culled: %zu", renderer->GetLastDrawCallCount(), renderer->GetLastCulledCount());
+        ImGui::Text("Draw calls: %zu | Culled: %zu | LOD: %zu | GPU: %.2f ms", renderer->GetLastDrawCallCount(), renderer->GetLastCulledCount(), renderer->GetLastLodSwitchCount(), m_device->GetLastGpuFrameMilliseconds());
+        const auto& profile = renderer->GetLastFrameProfile();
+        ImGui::Text("CPU: %.2f ms (queue %.2f | shadow %.2f | scene/UI %.2f)", profile.totalMilliseconds, profile.queueMilliseconds, profile.shadowMilliseconds, profile.sceneMilliseconds);
         for (const auto& message : m_messages) ImGui::TextUnformatted(message.c_str());
         ImGui::End();
     }

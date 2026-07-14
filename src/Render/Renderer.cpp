@@ -6,6 +6,7 @@
 #include "MiniEngine/Resource/ResourceManager.hpp"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <utility>
 
@@ -50,6 +51,7 @@ namespace MiniEngine
     void Renderer::Shutdown()
     {
         m_renderQueue.Clear();
+        m_lastLodSwitches = 0;
         m_lastCulled = 0;
         if (m_device) { m_device->Shutdown(); m_device.reset(); }
     }
@@ -86,6 +88,7 @@ namespace MiniEngine
             cameraForward = Normalize({std::cos(pitch) * std::sin(yaw), std::sin(pitch), -std::cos(pitch) * std::cos(yaw)});
         }
         m_frameView.cameraPosition = cameraPosition;
+        m_frameView.environmentTexture = m_resources && !m_environmentPath.empty() ? m_resources->Load<TextureResource>(m_environmentPath) : nullptr;
         m_frameView.view = LookAt(cameraPosition, cameraPosition + cameraForward, {0.0f, 1.0f, 0.0f});
         m_frameView.projection = Perspective(camera.fov, m_device ? m_device->GetAspectRatio() : 16.0f / 9.0f, camera.nearPlane, camera.farPlane);
         m_frameView.lightCount = 0;
@@ -113,8 +116,6 @@ namespace MiniEngine
         {
             if (!m_resources) return;
             if (const auto* active = world.GetComponent<ActiveComponent>(entity); active && !active->active) return;
-            auto mesh = m_resources->Load<MeshResource>(meshComponent.meshPath);
-            if (!mesh) return;
             auto material = m_resources->Load<MaterialResource>(meshComponent.materialPath);
             auto loadTexture = [&](const std::string& path) { return path.empty() ? std::shared_ptr<TextureResource>{} : m_resources->Load<TextureResource>(path); };
             const auto* transform = world.GetComponent<TransformComponent>(entity);
@@ -124,6 +125,13 @@ namespace MiniEngine
             const float facing = distance > 0.001f ? Dot(offset / distance, cameraForward) : 1.0f;
             const float halfFov = DegreesToRadians(camera.fov * 0.65f);
             if (distance > camera.farPlane || (distance > camera.nearPlane && facing < std::cos(halfFov))) { ++m_lastCulled; return; }
+            std::string meshPath = meshComponent.meshPath;
+            if (const auto* lod = world.GetComponent<LodComponent>(entity))
+            {
+                if (distance >= lod->level2Distance && !lod->level2MeshPath.empty()) { meshPath = lod->level2MeshPath; ++m_lastLodSwitches; }
+                else if (distance >= lod->level1Distance && !lod->level1MeshPath.empty()) { meshPath = lod->level1MeshPath; ++m_lastLodSwitches; }
+            }
+            auto mesh = m_resources->Load<MeshResource>(meshPath); if (!mesh) return;
             const bool transparent = material && material->IsTransparent();
             RenderItem item; item.entity = entity; item.distanceToCamera = distance; item.model = world.GetWorldMatrix(entity); item.mesh = std::move(mesh); item.transparent = transparent;
             if (material)
@@ -140,17 +148,23 @@ namespace MiniEngine
     void Renderer::RenderFrame(World& world)
     {
         if (!m_device) return;
+        const auto totalStart = std::chrono::steady_clock::now();
         BuildRenderQueue(world);
+        const auto queueEnd = std::chrono::steady_clock::now();
         m_device->BeginShadowPass(m_frameView);
         for (const auto& item : m_renderQueue.GetItems()) if (!item.transparent) m_device->DrawShadow(item);
         m_device->EndShadowPass();
+        const auto shadowEnd = std::chrono::steady_clock::now();
         m_device->BeginFrame(m_frameView);
         for (const auto& item : m_renderQueue.GetItems()) m_device->Draw(item);
         if (m_uiSystem) { const Vec2 viewport = m_device->GetViewportSize(); m_uiSystem->SetViewportSize(viewport.x, viewport.y); m_device->DrawUi(m_uiSystem->BuildDrawList()); }
         m_device->EndFrame();
         if (m_overlayCallback) m_overlayCallback();
         m_device->Present();
+        const auto sceneEnd = std::chrono::steady_clock::now();
         m_lastDrawCalls = m_renderQueue.GetItems().size();
+        const auto milliseconds = [](const auto start, const auto end) { return std::chrono::duration<float, std::milli>(end - start).count(); };
+        m_lastFrameProfile = {milliseconds(totalStart, queueEnd), milliseconds(queueEnd, shadowEnd), milliseconds(shadowEnd, sceneEnd), milliseconds(totalStart, sceneEnd)};
         if (m_logger) m_logger->Debug("RenderFrame draw calls: " + std::to_string(m_lastDrawCalls));
     }
 
@@ -160,8 +174,11 @@ namespace MiniEngine
     void Renderer::SetOverlayCallback(std::function<void()> callback) { m_overlayCallback = std::move(callback); }
     void Renderer::SetUISystem(UISystem* uiSystem) { m_uiSystem = uiSystem; }
     std::size_t Renderer::GetLastCulledCount() const { return m_lastCulled; }
+    std::size_t Renderer::GetLastLodSwitchCount() const { return m_lastLodSwitches; }
+    const FrameProfile& Renderer::GetLastFrameProfile() const { return m_lastFrameProfile; }
     void Renderer::SetCameraOverride(const bool enabled, const Vec3& position, const Vec3& rotation, const float fov)
     {
         m_cameraOverrideEnabled = enabled; m_cameraOverridePosition = position; m_cameraOverrideRotation = rotation; m_cameraOverrideFov = fov;
     }
+    void Renderer::SetEnvironmentPath(std::string path) { m_environmentPath = std::move(path); }
 }

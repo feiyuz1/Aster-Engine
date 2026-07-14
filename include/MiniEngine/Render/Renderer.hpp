@@ -46,6 +46,7 @@ namespace MiniEngine
         std::array<Vec3, MaxLights> lightColors{};
         std::array<float, MaxLights> lightIntensities{};
         int lightCount = 0;
+        std::shared_ptr<TextureResource> environmentTexture;
     };
 
     struct RenderItem
@@ -62,6 +63,14 @@ namespace MiniEngine
         std::shared_ptr<TextureResource> aoTexture;
         std::shared_ptr<TextureResource> emissiveTexture;
         bool transparent = false;
+    };
+
+    struct FrameProfile
+    {
+        float queueMilliseconds = 0.0f;
+        float shadowMilliseconds = 0.0f;
+        float sceneMilliseconds = 0.0f;
+        float totalMilliseconds = 0.0f;
     };
 
     class RenderDevice
@@ -133,7 +142,10 @@ namespace MiniEngine
         void SetOverlayCallback(std::function<void()> callback);
         void SetUISystem(UISystem* uiSystem);
         std::size_t GetLastCulledCount() const;
+        std::size_t GetLastLodSwitchCount() const;
+        const FrameProfile& GetLastFrameProfile() const;
         void SetCameraOverride(bool enabled, const Vec3& position = {}, const Vec3& rotation = {}, float fov = 60.0f);
+        void SetEnvironmentPath(std::string path);
     private:
         Logger* m_logger = nullptr;
         ResourceManager* m_resources = nullptr;
@@ -142,11 +154,14 @@ namespace MiniEngine
         FrameView m_frameView;
         std::size_t m_lastDrawCalls = 0;
         std::size_t m_lastCulled = 0;
+        std::size_t m_lastLodSwitches = 0;
         std::function<void()> m_overlayCallback;
         UISystem* m_uiSystem = nullptr;
         bool m_cameraOverrideEnabled = false;
         Vec3 m_cameraOverridePosition{0.0f, 2.5f, 7.0f};
         Vec3 m_cameraOverrideRotation{-10.0f, 0.0f, 0.0f};
         float m_cameraOverrideFov = 60.0f;
+        std::string m_environmentPath;
+        FrameProfile m_lastFrameProfile;
     };
 }

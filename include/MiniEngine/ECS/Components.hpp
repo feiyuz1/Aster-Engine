@@ -32,6 +32,14 @@ namespace MiniEngine
         std::string materialPath;
     };
 
+    struct LodComponent
+    {
+        std::string level1MeshPath;
+        std::string level2MeshPath;
+        float level1Distance = 20.0f;
+        float level2Distance = 50.0f;
+    };
+
     struct CameraComponent
     {
         float fov = 60.0f;

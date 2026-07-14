@@ -100,6 +100,13 @@ namespace MiniEngine
         mesh.properties.back().assetType = "Material";
         m_components.push_back(std::move(mesh));
 
+        auto lod = MakeComponent<LodComponent>("Level Of Detail");
+        lod.properties.push_back(MakeProperty("Level 1 Mesh", ReflectedPropertyType::String, &LodComponent::level1MeshPath)); lod.properties.back().assetType = "Mesh";
+        lod.properties.push_back(MakeProperty("Level 2 Mesh", ReflectedPropertyType::String, &LodComponent::level2MeshPath)); lod.properties.back().assetType = "Mesh";
+        lod.properties.push_back(MakeProperty("Level 1 Distance", ReflectedPropertyType::Float, &LodComponent::level1Distance)); Range(lod.properties.back(), 0.0f, 100000.0f, 0.5f);
+        lod.properties.push_back(MakeProperty("Level 2 Distance", ReflectedPropertyType::Float, &LodComponent::level2Distance)); Range(lod.properties.back(), 0.0f, 100000.0f, 0.5f);
+        m_components.push_back(std::move(lod));
+
         auto camera = MakeComponent<CameraComponent>("Camera");
         camera.properties.push_back(MakeProperty("FOV", ReflectedPropertyType::Float, &CameraComponent::fov));
         Range(camera.properties.back(), 1.0f, 179.0f, 0.25f);
