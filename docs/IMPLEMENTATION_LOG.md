@@ -2,7 +2,7 @@
 
 本文记录本轮开发对 TinyEngine 做过的主要更新，以及各功能采用的简要实现方式。内容按 Git 提交顺序整理，方便以后定位代码、回溯设计和继续开发。
 
-当前引擎版本：0.11.0
+当前引擎版本：0.12.0
 
 参考源码：Unreal Engine 5.3.2
 
@@ -208,7 +208,21 @@
 - HDR 环境继续复用 TextureResource 的 RGBA16F 与 Mipmap，不增加运行时 Cubemap 资产格式。
 - GPU Timer Query 延后一帧读取可用结果，避免同步等待 GPU。
 
-## 13. 验证与文档维护
+## 13. 后台导入、增量 Cook 与 DPI/滚动 UI
+
+更新内容：
+
+- 增加 `AssetImportQueue`，Assimp 导入/重导入可在 JobSystem 后台执行，编辑器显示进度、失败信息并可取消。
+- AssetCooker 增加 `TINYCOOK 1` 清单，统计 changed/skipped/removed，支持进度回调和协作式取消。
+- Runtime UI 增加 DPI 缩放、滚动容器、滚动偏移和父级裁剪矩形传递。
+
+实现方式：
+
+- 导入任务用原子状态/进度和互斥结果分离高频轮询与大对象写入；任务完成后统一重扫 AssetRegistry。
+- 增量 Cook 比较源文件时间戳与大小，删除只限清单记录的 Cook 相对路径，避免越界清理。
+- UI 先在逻辑坐标完成布局和滚动，再整体乘 DPI，最终沿父链求裁剪交集交给 OpenGL scissor。
+
+## 14. 验证与文档维护
 
 持续更新内容：
 

@@ -151,6 +151,9 @@ int main()
     AssetRegistry importedRegistry; importedRegistry.Scan("Saved/ImportedTest", false);
     const auto importedPrefab = importedRegistry.Find(imported.prefabPath.generic_string());
     CHECK(importedPrefab.has_value() && importedPrefab->dependencies.size() >= 2 && importedPrefab->importSettings.count("source") == 1);
+    AssetImportQueue importQueue; importQueue.Initialize(nullptr);
+    const auto queuedImport = importQueue.Submit("Saved/ImportTriangle.obj", "Saved/QueuedImport", importOptions);
+    const auto queuedSnapshot = importQueue.Get(queuedImport); CHECK(queuedSnapshot.status == AssetImportStatus::Completed && queuedSnapshot.result.success); importQueue.ClearFinished();
 #endif
     TextureResource texture;
     CHECK(texture.Load("assets/default.ppm"));
@@ -206,7 +209,9 @@ int main()
     CHECK(registry.MarkImported("assets/player.mesh"));
     CHECK(!registry.NeedsReimport("assets/player.mesh"));
     const auto cook = AssetCooker::Cook("assets", "Saved/CookedTest", "Saved/CookedTest.tpak");
-    CHECK(cook.success && cook.cookedFiles >= 4);
+    CHECK(cook.success && cook.cookedFiles + cook.skippedFiles >= 4);
+    const auto incrementalCook = AssetCooker::Cook("assets", "Saved/CookedTest", "Saved/CookedTest.tpak");
+    CHECK(incrementalCook.success && incrementalCook.skippedFiles >= 4 && incrementalCook.cookedFiles == 0);
     PlatformFile::ClearMounts();
     CHECK(PlatformFile::MountPak("Saved/CookedTest.tpak"));
     CHECK(!PlatformFile::ReadAllBytes("player.mesh").empty());
@@ -274,6 +279,8 @@ int main()
     CHECK(layoutCommands.size() == 3 && std::abs(layoutCommands[0].rect.x - 250.0f) < 0.001f);
     CHECK(layoutCommands[1].rect.x == 260.0f && layoutCommands[2].rect.y == layoutCommands[1].rect.y + layoutCommands[1].rect.height + 8.0f);
     layoutUi.FocusNext(); layoutUi.ActivateFocused(); CHECK(activated == 1 && layoutUi.GetFocusedId() == "play");
+    CHECK(layoutUi.SetScrollable("menu", true) && layoutUi.SetScrollOffset("menu", {0.0f, 12.0f})); layoutUi.SetDpiScale(2.0f);
+    const auto& scaledCommands = layoutUi.BuildDrawList(); CHECK(scaledCommands[0].rect.width == 600.0f && scaledCommands[1].fontSize == 36.0f && scaledCommands[1].clipRect.width > 0.0f);
 
     if (failures == 0) std::cout << "All TinyEngine tests passed\n";
     return failures == 0 ? 0 : 1;

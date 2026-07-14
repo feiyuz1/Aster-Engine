@@ -13,7 +13,7 @@ namespace MiniEngine
     enum class UIWidgetType { Panel, Label, Button, Image };
     enum class UIAnchor { TopLeft, TopRight, BottomLeft, BottomRight, Center, Stretch };
     enum class UILayout { Absolute, Horizontal, Vertical };
-    struct UIDrawCommand { UIWidgetType type = UIWidgetType::Panel; UIRect rect; Vec4 color{1, 1, 1, 1}; std::string text; std::string imagePath; float fontSize = 18.0f; };
+    struct UIDrawCommand { UIWidgetType type = UIWidgetType::Panel; UIRect rect; Vec4 color{1, 1, 1, 1}; std::string text; std::string imagePath; float fontSize = 18.0f; UIRect clipRect; };
 
     struct UIWidget
     {
@@ -33,6 +33,8 @@ namespace MiniEngine
         float spacing = 4.0f;
         float padding = 4.0f;
         float fontSize = 18.0f;
+        bool scrollable = false;
+        Vec2 scrollOffset{};
     };
 
     class UISystem
@@ -52,6 +54,11 @@ namespace MiniEngine
         bool SetLayout(const std::string& id, UILayout layout, float spacing = 4.0f, float padding = 4.0f);
         bool SetAnchor(const std::string& id, UIAnchor anchor);
         void SetViewportSize(float width, float height);
+        void SetDpiScale(float scale);
+        float GetDpiScale() const;
+        bool SetScrollable(const std::string& id, bool scrollable);
+        bool SetScrollOffset(const std::string& id, const Vec2& offset);
+        bool Scroll(const std::string& id, const Vec2& delta);
         const std::vector<UIDrawCommand>& BuildDrawList();
         const std::string& GetFocusedId() const;
     private:
@@ -62,6 +69,7 @@ namespace MiniEngine
         float m_viewportWidth = 1280.0f;
         float m_viewportHeight = 720.0f;
         bool m_wasPrimaryDown = false;
+        float m_dpiScale = 1.0f;
 
         void ResolveLayout();
     };

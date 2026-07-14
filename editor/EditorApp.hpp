@@ -1,6 +1,9 @@
 #pragma once
 
 #include "MiniEngine/Runtime/Engine.hpp"
+#ifdef TINYENGINE_HAS_ASSIMP
+#include "MiniEngine/Import/AssimpImporter.hpp"
+#endif
 
 #include <filesystem>
 #include <string>
@@ -60,5 +63,9 @@ namespace MiniEngine
         double m_lastAutosaveTime = 0.0;
         bool m_lastTitleDirty = false;
         bool m_titleInitialized = false;
+#ifdef TINYENGINE_HAS_ASSIMP
+        AssetImportQueue m_importQueue;
+        std::uint64_t m_activeImportTask = 0;
+#endif
     };
 }

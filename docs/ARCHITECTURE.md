@@ -1,6 +1,6 @@
 # TinyEngine 架构说明
 
-本文对应 TinyEngine 0.11.0，最后同步于 2026-07-14。
+本文对应 TinyEngine 0.12.0，最后同步于 2026-07-14。
 
 ## 依赖方向
 
@@ -71,6 +71,8 @@ SDL events -> semantic input / ImGui
 默认 PBR Shader 是独立 `.vert/.frag` 资产。RenderDevice 监测修改时间并尝试原子替换 OpenGL program；编译或链接失败时继续使用上一份有效 program。每帧最多收集四盏方向光，第一盏灯使用固定 2048² 深度图和 3×3 PCF；其余灯只计算直接 PBR 光照。Tonemap Pass 在无几何覆盖的像素绘制程序化天空渐变，并为物体提供半球环境近似。
 
 Runtime UI 在提交前根据 Viewport 解析锚点和父子容器布局，生成裁剪后的矩形、图片与文本命令。OpenGL UI Program 使用动态 VBO 批量提交四边形；Windows 运行时用 GDI 构建固定 ASCII Atlas，Label/Button 采样 Atlas，Image 复用 TextureResource。Tab/Enter/Space 使用按下沿驱动焦点和激活。
+
+Assimp 的 CPU/文件转换通过 `AssetImportQueue` 提交到 JobSystem，编辑器只轮询原子状态与受锁保护的结果，不阻塞 UI 帧。取消是协作式的：排队阶段立即终止，Assimp 已进入解析后在产物提交点转为 Cancelled。AssetCooker 用 `TINYCOOK 1` 清单比较相对路径、时间戳和大小，仅复制变化文件、删除清单中的陈旧产物，再重建 TPAK。
 
 编辑器属性面板不直接依赖具体组件类型。`ReflectionRegistry` 登记组件存在性、增删回调、字段访问器、枚举项、数值范围和资产类型，Inspector 据此生成通用控件。资产浏览器拖放路径时先经 `AssetRegistry` 校验类型。编辑操作进入序列化快照 Undo 栈并设置脏标记；未保存场景每 30 秒写入项目 `Saved/EditorAutosave.scene`，启动后可显式恢复，正常保存会删除恢复文件。
 

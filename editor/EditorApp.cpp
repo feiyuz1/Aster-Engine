@@ -100,6 +100,9 @@ namespace MiniEngine
         m_device->SetEventCallback([](const void* event) { ImGui_ImplSDL2_ProcessEvent(static_cast<const SDL_Event*>(event)); });
         m_engine.GetContext().renderer->SetOverlayCallback([this]() { Draw(); });
         m_messages.emplace_back("Editor initialized. Scene changes are isolated from Play mode.");
+#ifdef TINYENGINE_HAS_ASSIMP
+        m_importQueue.Initialize(m_engine.GetContext().jobSystem);
+#endif
         if (std::filesystem::is_regular_file(GetAutosavePath())) m_messages.emplace_back("Recovery autosave available from File > Restore Autosave.");
         UpdateWindowTitle();
         m_initialized = true; return true;
@@ -497,10 +500,30 @@ namespace MiniEngine
         ImGui::SetNextWindowSize({halfWidth, viewport->WorkPos.y + viewport->WorkSize.y - top}, ImGuiCond_Always);
         ImGui::Begin("Assets");
 #ifdef TINYENGINE_HAS_ASSIMP
+        if (m_activeImportTask != 0)
+        {
+            const auto task = m_importQueue.Get(m_activeImportTask);
+            ImGui::ProgressBar(task.progress, ImVec2(220.0f, 0.0f), task.status == AssetImportStatus::Queued ? "Queued" : task.status == AssetImportStatus::Running ? "Importing" : "Finishing");
+            if ((task.status == AssetImportStatus::Queued || task.status == AssetImportStatus::Running) && ImGui::Button("Cancel Import")) m_importQueue.Cancel(m_activeImportTask);
+            if (task.status == AssetImportStatus::Completed || task.status == AssetImportStatus::Failed || task.status == AssetImportStatus::Cancelled)
+            {
+                if (task.status == AssetImportStatus::Completed)
+                {
+                    m_engine.GetContext().resourceManager->GetAssetRegistry().Scan(m_engine.GetProjectSettings().Resolve(m_engine.GetProjectSettings().assetDirectory));
+                    m_messages.emplace_back("Background model import completed");
+                }
+                else if (task.status == AssetImportStatus::Cancelled) m_messages.emplace_back("Background model import cancelled");
+                else m_messages.emplace_back("Background model import failed: " + task.result.error);
+                for (const auto& warning : task.result.warnings) m_messages.emplace_back("Import warning: " + warning);
+                m_importQueue.ClearFinished(); m_activeImportTask = 0;
+            }
+            ImGui::Separator();
+        }
+        ImGui::BeginDisabled(m_activeImportTask != 0);
         if (ImGui::Button("Import Model...")) ImGui::OpenPopup("ImportModelPopup");
         ImGui::SameLine();
         const auto selectedInfo = m_selectedAsset.empty() ? std::optional<AssetInfo>{} : m_engine.GetContext().resourceManager->GetAssetRegistry().Find(m_selectedAsset);
-        ImGui::BeginDisabled(!selectedInfo || selectedInfo->type != "Prefab" || selectedInfo->importSettings.count("source") == 0);
+        ImGui::BeginDisabled(!selectedInfo || selectedInfo->type != "Prefab" || selectedInfo->importSettings.count("source") == 0 || m_activeImportTask != 0);
         if (ImGui::Button("Reimport"))
         {
             const std::filesystem::path source = selectedInfo->importSettings.at("source");
@@ -510,10 +533,10 @@ namespace MiniEngine
             const std::filesystem::path output = std::filesystem::path(selectedInfo->path).parent_path();
             const auto projectRoot = m_engine.GetProjectSettings().projectFile.empty() ? std::filesystem::current_path() : m_engine.GetProjectSettings().projectFile.parent_path();
             options.resourcePrefix = std::filesystem::relative(output, projectRoot);
-            const auto result = AssimpImporter::ImportModel(source, output, options);
-            m_engine.GetContext().resourceManager->GetAssetRegistry().Scan(m_engine.GetProjectSettings().Resolve(m_engine.GetProjectSettings().assetDirectory));
-            m_messages.emplace_back(result.success ? "Reimported model: " + source.generic_string() : "Reimport failed: " + result.error);
+            m_activeImportTask = m_importQueue.Submit(source, output, options);
+            m_messages.emplace_back("Queued model reimport: " + source.generic_string());
         }
+        ImGui::EndDisabled();
         ImGui::EndDisabled();
         if (ImGui::BeginPopupModal("ImportModelPopup", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
         {
@@ -530,14 +553,8 @@ namespace MiniEngine
                 const auto relativeOutput = m_engine.GetProjectSettings().assetDirectory / "Imported" / folderName;
                 const auto output = m_engine.GetProjectSettings().Resolve(relativeOutput);
                 ModelImportOptions options; options.scale = scale; options.flipUvs = flipUvs; options.resourcePrefix = relativeOutput;
-                const auto result = AssimpImporter::ImportModel(source, output, options);
-                if (result.success)
-                {
-                    m_engine.GetContext().resourceManager->GetAssetRegistry().Scan(m_engine.GetProjectSettings().Resolve(m_engine.GetProjectSettings().assetDirectory));
-                    m_messages.emplace_back("Imported model: " + source.generic_string()); ImGui::CloseCurrentPopup();
-                }
-                else m_messages.emplace_back("Import failed: " + result.error);
-                for (const auto& warning : result.warnings) m_messages.emplace_back("Import warning: " + warning);
+                m_activeImportTask = m_importQueue.Submit(source, output, options);
+                m_messages.emplace_back("Queued model import: " + source.generic_string()); ImGui::CloseCurrentPopup();
             }
             ImGui::SameLine(); if (ImGui::Button("Cancel")) ImGui::CloseCurrentPopup();
             ImGui::EndPopup();

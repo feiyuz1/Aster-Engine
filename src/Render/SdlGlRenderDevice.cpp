@@ -870,7 +870,8 @@ namespace MiniEngine
         for (const auto& command : commands)
         {
             if (command.rect.width <= 0.0f || command.rect.height <= 0.0f) continue;
-            glScissor(static_cast<GLint>(command.rect.x), height - static_cast<GLint>(command.rect.y + command.rect.height), static_cast<GLsizei>(command.rect.width), static_cast<GLsizei>(command.rect.height));
+            const UIRect clip = command.clipRect.width > 0.0f && command.clipRect.height > 0.0f ? command.clipRect : command.rect;
+            glScissor(static_cast<GLint>(clip.x), height - static_cast<GLint>(clip.y + clip.height), static_cast<GLsizei>(clip.width), static_cast<GLsizei>(clip.height));
             if (command.type == UIWidgetType::Panel || command.type == UIWidgetType::Button || command.type == UIWidgetType::Image)
             {
                 std::vector<Impl::UiVertex> vertices; std::vector<std::uint32_t> indices; appendQuad(vertices, indices, command.rect, 0.0f, 0.0f, 1.0f, 1.0f);

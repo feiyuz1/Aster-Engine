@@ -5,6 +5,7 @@
 #include "MiniEngine/ECS/SceneSerializer.hpp"
 #include "MiniEngine/Platform/Platform.hpp"
 #include "MiniEngine/Resource/AssetRegistry.hpp"
+#include "MiniEngine/Task/JobSystem.hpp"
 
 #include <assimp/Importer.hpp>
 #include <assimp/material.h>
@@ -19,6 +20,7 @@
 #include <functional>
 #include <sstream>
 #include <unordered_map>
+#include <atomic>
 
 namespace MiniEngine
 {
@@ -215,5 +217,60 @@ namespace MiniEngine
         registry.SetImportSetting(result.prefabPath.generic_string(), "optimizeMeshes", options.optimizeMeshes ? "true" : "false");
         for (const auto& asset : result.assets) registry.MarkImported(asset.path.generic_string());
         result.success = true; return result;
+    }
+
+    struct AssetImportQueue::TaskState
+    {
+        std::uint64_t id = 0;
+        std::atomic<AssetImportStatus> status{AssetImportStatus::Queued};
+        std::atomic<float> progress{0.0f};
+        std::atomic<bool> cancel{false};
+        mutable std::mutex mutex;
+        ModelImportResult result;
+    };
+
+    void AssetImportQueue::Initialize(JobSystem* jobs) { m_jobs = jobs; }
+
+    std::uint64_t AssetImportQueue::Submit(std::filesystem::path source, std::filesystem::path outputDirectory, ModelImportOptions options)
+    {
+        auto task = std::make_shared<TaskState>();
+        { std::lock_guard<std::mutex> lock(m_mutex); task->id = m_nextId++; m_tasks[task->id] = task; }
+        auto work = [task, source = std::move(source), outputDirectory = std::move(outputDirectory), options = std::move(options)]()
+        {
+            if (task->cancel.load()) { task->status = AssetImportStatus::Cancelled; return; }
+            task->status = AssetImportStatus::Running; task->progress = 0.1f;
+            ModelImportResult result = AssimpImporter::ImportModel(source, outputDirectory, options); task->progress = 0.9f;
+            const bool success = result.success;
+            { std::lock_guard<std::mutex> lock(task->mutex); task->result = std::move(result); }
+            if (task->cancel.load()) task->status = AssetImportStatus::Cancelled;
+            else task->status = success ? AssetImportStatus::Completed : AssetImportStatus::Failed;
+            task->progress = 1.0f;
+        };
+        if (m_jobs) { auto job = m_jobs->CreateJob(std::move(work), JobPriority::Normal); m_jobs->Submit(job); } else work();
+        return task->id;
+    }
+
+    bool AssetImportQueue::Cancel(const std::uint64_t id)
+    {
+        std::lock_guard<std::mutex> lock(m_mutex); const auto found = m_tasks.find(id); if (found == m_tasks.end()) return false;
+        const auto status = found->second->status.load(); if (status == AssetImportStatus::Completed || status == AssetImportStatus::Failed || status == AssetImportStatus::Cancelled) return false;
+        found->second->cancel = true; return true;
+    }
+
+    AssetImportSnapshot AssetImportQueue::Get(const std::uint64_t id) const
+    {
+        std::shared_ptr<TaskState> task; { std::lock_guard<std::mutex> lock(m_mutex); const auto found = m_tasks.find(id); if (found == m_tasks.end()) return {}; task = found->second; }
+        AssetImportSnapshot snapshot; snapshot.id = id; snapshot.status = task->status.load(); snapshot.progress = task->progress.load();
+        std::lock_guard<std::mutex> lock(task->mutex); snapshot.result = task->result; return snapshot;
+    }
+
+    void AssetImportQueue::ClearFinished()
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        for (auto iterator = m_tasks.begin(); iterator != m_tasks.end();)
+        {
+            const auto status = iterator->second->status.load();
+            if (status == AssetImportStatus::Completed || status == AssetImportStatus::Failed || status == AssetImportStatus::Cancelled) iterator = m_tasks.erase(iterator); else ++iterator;
+        }
     }
 }
