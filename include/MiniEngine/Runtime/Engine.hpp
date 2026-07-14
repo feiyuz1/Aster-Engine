@@ -2,13 +2,16 @@
 
 #include "MiniEngine/Audio/AudioEngine.hpp"
 #include "MiniEngine/Core/Logger.hpp"
+#include "MiniEngine/Diagnostics/Diagnostics.hpp"
 #include "MiniEngine/ECS/ECS.hpp"
+#include "MiniEngine/Gameplay/Gameplay.hpp"
 #include "MiniEngine/Input/InputSystem.hpp"
 #include "MiniEngine/Memory/Allocators.hpp"
 #include "MiniEngine/Physics/PhysicsWorld.hpp"
 #include "MiniEngine/Platform/Platform.hpp"
 #include "MiniEngine/Project/Project.hpp"
 #include "MiniEngine/Render/Renderer.hpp"
+#include "MiniEngine/Resource/AssetStreaming.hpp"
 #include "MiniEngine/Resource/ResourceManager.hpp"
 #include "MiniEngine/Script/ScriptEngine.hpp"
 #include "MiniEngine/Task/JobSystem.hpp"
@@ -35,6 +38,9 @@ struct EngineContext
     SceneManager *sceneManager = nullptr;
     ProjectSettings *project = nullptr;
     UISystem *uiSystem = nullptr;
+    AssetStreamingManager *assetStreaming = nullptr;
+    GameplayFramework *gameplay = nullptr;
+    DiagnosticsService *diagnostics = nullptr;
 };
 
 class Engine : private WorldListener
@@ -66,6 +72,7 @@ class Engine : private WorldListener
     MemoryManager m_memoryManager;
     JobSystem m_jobSystem;
     ResourceManager m_resourceManager;
+    AssetStreamingManager m_assetStreaming;
     World m_world;
     Renderer m_renderer;
     InputSystem m_inputSystem;
@@ -73,6 +80,8 @@ class Engine : private WorldListener
     AudioEngine m_audioEngine;
     ScriptEngine m_scriptEngine;
     UISystem m_uiSystem;
+    GameplayFramework m_gameplay;
+    DiagnosticsService m_diagnostics;
     ProjectSettings m_projectSettings;
     SceneManager m_sceneManager{&m_world};
     std::unique_ptr<GameInstance> m_gameInstance;

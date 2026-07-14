@@ -47,6 +47,20 @@ void ResourceManager::GarbageCollect()
     }
 }
 
+bool ResourceManager::UnloadUnused(const std::string &path)
+{
+    const std::string key = NormalizePath(path);
+    std::lock_guard<std::mutex> lock(m_mutex);
+    const auto found = m_cache.find(key);
+    if (found == m_cache.end())
+        return true;
+    if (found->second.use_count() > 1 || found->second->GetState() == ResourceState::Loading)
+        return false;
+    found->second->Unload();
+    m_cache.erase(found);
+    return true;
+}
+
 bool ResourceManager::Reload(const std::string &path)
 {
     const std::string key = NormalizePath(path);
@@ -66,6 +80,16 @@ std::size_t ResourceManager::GetCachedResourceCount() const
 {
     std::lock_guard<std::mutex> lock(m_mutex);
     return m_cache.size();
+}
+
+std::size_t ResourceManager::GetCachedByteSize() const
+{
+    std::lock_guard<std::mutex> lock(m_mutex);
+    std::size_t total = 0;
+    for (const auto &pair : m_cache)
+        if (pair.second && pair.second->IsReady())
+            total += pair.second->GetByteSize();
+    return total;
 }
 
 AssetRegistry &ResourceManager::GetAssetRegistry()

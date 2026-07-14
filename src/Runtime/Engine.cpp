@@ -15,6 +15,7 @@ bool Engine::Initialize(const std::filesystem::path &projectFile, const bool sta
 {
     if (m_initialized)
         return true;
+    m_diagnostics.Initialize();
     m_logger.Info("Engine initialize begin.");
     const bool projectLoaded = !projectFile.empty() && m_projectSettings.Load(projectFile);
     m_logger.SetStructuredOutput(projectLoaded ? m_projectSettings.Resolve("Logs/TinyEngine.jsonl")
@@ -34,6 +35,7 @@ bool Engine::Initialize(const std::filesystem::path &projectFile, const bool sta
     m_jobSystem.Initialize(std::max(1u, hardwareCount > 1 ? hardwareCount - 1 : 1u));
     m_resourceManager.Initialize(&m_jobSystem, projectLoaded ? m_projectSettings.Resolve(m_projectSettings.assetDirectory)
                                                              : std::filesystem::path{"assets"});
+    m_assetStreaming.Initialize(&m_resourceManager);
     if (projectLoaded && !m_projectSettings.inputBindings.empty())
     {
         const auto inputPath =
@@ -47,6 +49,7 @@ bool Engine::Initialize(const std::filesystem::path &projectFile, const bool sta
     m_world.GetSystemManager().RegisterSystem<AnimationSystem>();
     m_world.AddListener(this);
     m_world.Initialize();
+    m_gameplay.Initialize(&m_world, &m_inputSystem, &m_physicsWorld);
     m_renderer.SetLogger(&m_logger);
     m_renderer.SetResourceManager(&m_resourceManager);
     m_renderer.SetUISystem(&m_uiSystem);
@@ -63,8 +66,24 @@ bool Engine::Initialize(const std::filesystem::path &projectFile, const bool sta
     }
     m_audioEngine.Initialize(&m_logger);
     m_scriptEngine.Initialize(&m_logger);
-    m_context = {&m_logger,       &m_memoryManager, &m_jobSystem,    &m_resourceManager, &m_world,           &m_renderer, &m_inputSystem,
-                 &m_physicsWorld, &m_audioEngine,   &m_scriptEngine, &m_sceneManager,    &m_projectSettings, &m_uiSystem};
+    auto &console = m_diagnostics.GetConsole();
+    console.RegisterVariable("t.TimeScale", 1.0f, "Global gameplay time scale", false,
+                             [this](const ConsoleValue &value) { SetTimeScale(std::get<float>(value)); });
+    console.RegisterVariable("r.FXAA", true, "Enable post-process FXAA", false, [this](const ConsoleValue &value) {
+        if (auto *device = dynamic_cast<SdlGlRenderDevice *>(m_renderer.GetDevice()))
+            device->SetFxaaEnabled(std::get<bool>(value));
+    });
+    console.RegisterVariable(
+        "asset.StreamingBudgetMB", 256, "Runtime resource memory budget in MiB", false, [this](const ConsoleValue &value) {
+            m_assetStreaming.SetMemoryBudget(static_cast<std::size_t>(std::max(1, std::get<int>(value))) * 1024u * 1024u);
+        });
+    console.RegisterCommand("asset.gc", [this](const std::vector<std::string> &) {
+        m_resourceManager.GarbageCollect();
+        return std::string{"Resource garbage collection complete"};
+    });
+    m_context = {&m_logger,      &m_memoryManager,  &m_jobSystem,   &m_resourceManager, &m_world,        &m_renderer,
+                 &m_inputSystem, &m_physicsWorld,   &m_audioEngine, &m_scriptEngine,    &m_sceneManager, &m_projectSettings,
+                 &m_uiSystem,    &m_assetStreaming, &m_gameplay,    &m_diagnostics};
     bool sceneLoaded = false;
     if (projectLoaded)
         sceneLoaded = m_sceneManager.LoadScene(m_projectPakMounted ? m_projectSettings.startupScene
@@ -114,12 +133,14 @@ void Engine::Shutdown()
     if (m_gameInstance)
         m_gameInstance->OnShutdown();
     m_scriptEngine.Shutdown();
+    m_gameplay.Shutdown();
     m_audioEngine.Shutdown();
     m_renderer.Shutdown();
     m_physicsWorld.Clear();
     m_world.Shutdown();
     m_world.RemoveListener(this);
     m_resourceManager.Shutdown();
+    m_assetStreaming.Shutdown();
     m_jobSystem.Shutdown();
     m_memoryManager.Shutdown();
     if (m_projectPakMounted)
@@ -132,6 +153,7 @@ void Engine::Shutdown()
         m_logger.Info("Engine shutdown complete.");
     m_initialized = false;
     m_playing = false;
+    m_diagnostics.Shutdown();
 }
 
 const EngineContext &Engine::GetContext() const
@@ -175,6 +197,7 @@ bool Engine::EnterPlayMode()
     if (m_editSnapshot.empty())
         return false;
     m_scriptEngine.RebuildWorldInstances(m_world);
+    m_gameplay.StartPlay();
     m_fixedAccumulator = 0.0f;
     m_paused = false;
     m_playing = true;
@@ -186,6 +209,7 @@ bool Engine::ExitPlayMode()
     if (!m_initialized || !m_playing)
         return false;
     m_scriptEngine.ClearInstances();
+    m_gameplay.StopPlay();
     const bool restored = m_sceneManager.RestoreSnapshot(m_editSnapshot);
     m_editSnapshot.clear();
     m_fixedAccumulator = 0.0f;
@@ -223,16 +247,7 @@ void Engine::Tick(const float rawDeltaTime)
     m_inputSystem.Update(input);
     if (deltaTime > 0.0f)
     {
-        if (auto *transform = m_world.GetComponent<TransformComponent>(m_playerEntity))
-        {
-            const float moveSpeed = m_inputSystem.IsDown("Sprint") ? 8.0f : 3.0f;
-            transform->position += Vec3{m_inputSystem.GetAxis("MoveX"), m_inputSystem.GetAxis("MoveY"), m_inputSystem.GetAxis("MoveZ")} *
-                                   (moveSpeed * deltaTime);
-            transform->rotation += Vec3{m_inputSystem.GetAxis("LookY"), m_inputSystem.GetAxis("LookX"), m_inputSystem.GetAxis("RotateZ")} *
-                                   (90.0f * deltaTime);
-            const float uniformScale = std::clamp(transform->scale.x + m_inputSystem.GetAxis("Scale") * deltaTime, 0.2f, 4.0f);
-            transform->scale = {uniformScale, uniformScale, uniformScale};
-        }
+        m_gameplay.Update(deltaTime);
         m_scriptEngine.UpdateAll(deltaTime);
         if (m_gameInstance)
             m_gameInstance->OnUpdate(deltaTime);
@@ -247,9 +262,16 @@ void Engine::Tick(const float rawDeltaTime)
         m_audioEngine.UpdateWorld(m_world);
     }
     m_renderer.RenderFrame(m_world);
+    const auto &profile = m_renderer.GetLastFrameProfile();
+    auto &stats = m_diagnostics.GetStats();
+    stats.Set("frame.delta_ms", rawDeltaTime * 1000.0);
+    stats.Set("render.total_ms", profile.totalMilliseconds);
+    stats.Set("render.draw_calls", static_cast<double>(m_renderer.GetLastDrawCallCount()));
+    stats.Set("asset.resident_bytes", static_cast<double>(m_assetStreaming.GetResidentBytes()));
+    stats.Set("job.outstanding", static_cast<double>(m_jobSystem.GetOutstandingJobCount()));
     m_memoryManager.ResetFrame();
-    if ((m_frameIndex % 300) == 0)
-        m_resourceManager.GarbageCollect();
+    if ((m_frameIndex % 60) == 0)
+        m_assetStreaming.Update();
 }
 
 void Engine::SetupDemoScene()
@@ -259,7 +281,9 @@ void Engine::SetupDemoScene()
         transform->position = {0.0f, 1.0f, 0.0f};
     m_world.AddComponent(m_playerEntity, MeshComponent{"assets/player.mesh", "assets/default.mat"});
     m_world.AddComponent(m_playerEntity, ScriptComponent{"OrbitScript"});
-    m_world.AddComponent(m_playerEntity, RigidBodyComponent{});
+    m_world.AddComponent(m_playerEntity, PawnComponent{});
+    m_world.AddComponent(m_playerEntity, CharacterControllerComponent{});
+    m_world.AddComponent(m_playerEntity, RigidBodyComponent{BodyType::Kinematic, 1.0f, {}, false});
     m_world.AddComponent(m_playerEntity, ColliderComponent{});
 
     const Entity camera = m_world.CreateEntity("MainCamera");
@@ -286,8 +310,8 @@ void Engine::SetupDemoScene()
     m_world.AddComponent(animated, MeshComponent{"assets/player.mesh", "assets/default.mat"});
     m_world.AddComponent(animated, AnimationComponent{"assets/player.anim"});
 
-    m_resourceManager.LoadAsync<MeshResource>("assets/player.mesh");
-    m_resourceManager.LoadAsync<MaterialResource>("assets/default.mat");
+    m_assetStreaming.Request<MeshResource>("assets/player.mesh", true);
+    m_assetStreaming.Request<MaterialResource>("assets/default.mat", true);
     m_uiSystem.AddPanel("demo.hud", {16.0f, 16.0f, 270.0f, 112.0f}, {0.05f, 0.08f, 0.13f, 0.88f});
     m_uiSystem.SetLayout("demo.hud", UILayout::Vertical, 6.0f, 10.0f);
     m_uiSystem.AddLabel("demo.title", "TinyEngine Runtime UI", {0.0f, 0.0f, 200.0f, 30.0f}).fontSize = 18.0f;

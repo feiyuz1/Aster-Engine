@@ -1,6 +1,6 @@
 # TinyEngine 架构说明
 
-本文对应 TinyEngine 0.13.0，最后同步于 2026-07-14。
+本文对应 TinyEngine 0.14.0，最后同步于 2026-07-15。
 
 ## 依赖方向
 
@@ -11,16 +11,18 @@ Editor / Demo / AssetTool
         |
 Runtime / Project / UI
         |
-Script | Audio | Physics | Renderer / RenderDevice | Input
+Gameplay | Script | Audio | Physics | Renderer / RenderDevice | Input
         |
 Scene / ECS
         |
-Resource / AssetRegistry / Cooker / TPAK / VFS
+AssetStreaming / Resource / AssetRegistry / TargetPlatform Cooker / TPAK / VFS
         |
-Task | Memory | Core | Math | Platform
+Automation | Diagnostics | Serialization | Task | Memory | Core | Math | Platform
 ```
 
 上层可以依赖下层，下层不得访问 Runtime 或 Editor。Editor 是独立可执行目标；核心库不依赖 Dear ImGui。Assimp 只属于 Authoring，发布 Runtime 不链接 Assimp。
+
+0.14 将跨系统的数据读写、诊断、平台 Cook 和自动化从具体业务类中抽出。`Engine` 仍是组合根，新增 `GameplayFramework`、`AssetStreamingManager` 与 `DiagnosticsService` 由 Engine 显式持有，初始化和销毁顺序保持可检查。
 
 ## UE 5.3.2 职责映射
 
@@ -33,6 +35,9 @@ Task | Memory | Core | Math | Platform
 | PhysicsWorld | Chaos/PhysicsCore | 自研基础后端，公开 API 保持可替换 |
 | UISystem | UMG/Slate Runtime | Widget、字体 Atlas、布局、命中和焦点模型 |
 | Editor | UnrealEd/LevelEditor | Dear ImGui 独立工具，只覆盖高频工作流 |
+| Serialization/Migration | Archive、Custom Version | 小端二进制 Archive、版本化键值文档和逐版本迁移注册表 |
+| Gameplay/Diagnostics/Automation | Gameplay Framework、Console/Stats、Commandlet | ECS 角色控制、Timer/GameMode、CVar/Stat 与无头批处理 |
+| TargetPlatform | TargetPlatform、CookCommandlet | Windows/Linux Profile、资产过滤、Shader 变体缓存和平台清单 |
 
 ## 关键数据流
 
@@ -78,11 +83,19 @@ Runtime UI 在提交前根据 Viewport 解析锚点和父子容器布局，生�
 
 Assimp 的 CPU/文件转换通过 `AssetImportQueue` 提交到 JobSystem，编辑器只轮询原子状态与受锁保护的结果，不阻塞 UI 帧。取消是协作式的：排队阶段立即终止，Assimp 已进入解析后在产物提交点转为 Cancelled。AssetCooker 用 `TINYCOOK 1` 清单比较相对路径、时间戳和大小，仅复制变化文件、删除清单中的陈旧产物，再重建 TPAK。
 
+`AssetStreamingManager` 在 `ResourceManager` 之上返回类型化 `AssetHandle<T>`，用 `.meta` 依赖构造传递闭包，并按最近访问、Pin 状态和字节预算淘汰只剩缓存引用的资源。它不越过 ResourceManager 直接销毁仍被调用方持有的对象。
+
+`GameplayFramework` 管理 GameMode、Timer 和玩家 Pawn；`CharacterControllerComponent` 将语义输入转换为速度，再复用 `PhysicsWorld::MoveCharacter`。通用运行逻辑不再硬编码在 `Engine::Tick`。Diagnostics 提供类型化 CVar、命令和线程安全 Stat；Engine 注册时间缩放、FXAA、流送预算和资源 GC，并逐帧写入渲染、资源和 Job 统计。
+
+无头 `tinyengine_commandlet` 当前提供 `ValidateAssets`、`ValidateScenes`、`MigrateScenes` 和 `CookProject`。TargetPlatform Cook 对源资产执行平台过滤、离线展开 Shader variant、生成 `Game.tpak` 和版本化 `PlatformCook.manifest`；Windows/Linux Profile 已存在，压缩纹理编译器仍属于后续平台工具链。
+
 编辑器属性面板不直接依赖具体组件类型。`ReflectionRegistry` 登记组件存在性、增删回调、字段访问器、枚举项、数值范围和资产类型，Inspector 据此生成通用控件。资产浏览器拖放路径时先经 `AssetRegistry` 校验类型。编辑操作进入序列化快照 Undo 栈并设置脏标记；未保存场景每 30 秒写入项目 `Saved/EditorAutosave.scene`，启动后可显式恢复，正常保存会删除恢复文件。
 
 ## 数据格式与约束
 
-- `TINYSCENE 6`：场景和 Prefab 文本格式，增加 Joint、物理材质参数、动画过渡、空间音频与 LOD 字段，并继续读取 1–5 版。
+- `TINYSCENE 7`：场景和 Prefab 文本格式，增加 Pawn/CharacterController，并继续读取 1–6 版。
+- `TINYARCHIVE`：带格式名、版本号和有序字段的通用文本 Archive；二进制 Archive 固定使用小端编码和有界字符串。
+- `TinyEnginePlatformCook 1`：平台、配置、纹理/Shader 格式、启动场景和变体数量清单。
 - `TINYINPUT 1`：逻辑 Axis/Action 到物理输入通道的多重映射。
 - `.mat`：`color`、`metallic`、`roughness`、`emissive`、`texture`、`blend`。
 - `<asset>.meta`：32 位十六进制 GUID、类型、导入时间、设置和依赖。

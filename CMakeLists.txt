@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(TinyEngine VERSION 0.13.0 LANGUAGES C CXX)
+project(TinyEngine VERSION 0.14.0 LANGUAGES C CXX)
 
 option(TINYENGINE_BUILD_TESTS "Build TinyEngine tests" ON)
 option(TINYENGINE_BUILD_DEMO "Build TinyEngine demo" ON)
@@ -56,6 +56,8 @@ add_library(tinyengine STATIC
     src/Core/CrashReporter.cpp
     src/Core/Config.cpp
     src/Core/Module.cpp
+    src/Serialization/Archive.cpp
+    src/Diagnostics/Diagnostics.cpp
     src/Platform/Platform.cpp
     src/Memory/Allocators.cpp
     src/Task/JobSystem.cpp
@@ -64,12 +66,16 @@ add_library(tinyengine STATIC
     src/Resource/AssetCooker.cpp
     src/Resource/PakArchive.cpp
     src/Resource/ResourceManager.cpp
+    src/Resource/AssetStreaming.cpp
     src/ECS/ECS.cpp
     src/ECS/Reflection.cpp
     src/ECS/SceneSerializer.cpp
     src/ECS/Systems.cpp
+    src/Gameplay/Gameplay.cpp
     src/Project/Project.cpp
     src/Project/ProjectPackager.cpp
+    src/Build/TargetPlatform.cpp
+    src/Automation/Automation.cpp
     src/Render/Renderer.cpp
     src/Render/ShaderPipeline.cpp
     src/Render/SdlGlRenderDevice.cpp
@@ -153,6 +159,8 @@ add_executable(tinyengine_scene_tool tools/SceneTool.cpp)
 target_link_libraries(tinyengine_scene_tool PRIVATE tinyengine)
 add_executable(tinyengine_package_tool tools/PackageTool.cpp)
 target_link_libraries(tinyengine_package_tool PRIVATE tinyengine)
+add_executable(tinyengine_commandlet tools/Commandlet.cpp)
+target_link_libraries(tinyengine_commandlet PRIVATE tinyengine)
 
 if(TINYENGINE_BUILD_GAME)
     add_custom_target(package_game
@@ -190,6 +198,7 @@ endif()
 install(TARGETS tinyengine_asset_tool RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 install(TARGETS tinyengine_scene_tool RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 install(TARGETS tinyengine_package_tool RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+install(TARGETS tinyengine_commandlet RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 install(DIRECTORY include/ DESTINATION ${CMAKE_INSTALL_INCLUDEDIR} PATTERN "Import" EXCLUDE)
 install(DIRECTORY assets/ DESTINATION ${CMAKE_INSTALL_DATADIR}/tinyengine/assets)
 install(FILES TinyEngine.tinyproject DESTINATION .)

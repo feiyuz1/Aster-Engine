@@ -977,6 +977,20 @@ void EditorApp::DrawConsole()
     const auto &profile = renderer->GetLastFrameProfile();
     ImGui::Text("CPU: %.2f ms (queue %.2f | shadow %.2f | scene/UI %.2f)", profile.totalMilliseconds, profile.queueMilliseconds,
                 profile.shadowMilliseconds, profile.sceneMilliseconds);
+    ImGui::SetNextItemWidth(-1.0f);
+    if (ImGui::InputText("##ConsoleCommand", m_consoleInput.data(), m_consoleInput.size(), ImGuiInputTextFlags_EnterReturnsTrue))
+    {
+        const std::string command = m_consoleInput.data();
+        if (!command.empty() && m_engine.GetContext().diagnostics)
+        {
+            m_messages.push_back("> " + command);
+            const std::string response = m_engine.GetContext().diagnostics->GetConsole().Execute(command);
+            if (!response.empty())
+                m_messages.push_back(response);
+        }
+        m_consoleInput.fill('\0');
+        ImGui::SetKeyboardFocusHere(-1);
+    }
     for (const auto &message : m_messages)
         ImGui::TextUnformatted(message.c_str());
     ImGui::End();

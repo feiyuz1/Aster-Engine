@@ -80,7 +80,7 @@ CookResult AssetCooker::Cook(const std::filesystem::path &assetDirectory, const 
     Manifest current;
     std::vector<std::filesystem::path> sources;
     for (const auto &entry : std::filesystem::recursive_directory_iterator(assetDirectory))
-        if (entry.is_regular_file() && entry.path().extension() != ".meta")
+        if (entry.is_regular_file() && entry.path().extension() != ".meta" && (!options.include || options.include(entry.path())))
             sources.push_back(entry.path());
     std::sort(sources.begin(), sources.end());
     for (std::size_t index = 0; index < sources.size(); ++index)

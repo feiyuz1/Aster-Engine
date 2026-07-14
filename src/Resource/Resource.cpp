@@ -587,6 +587,12 @@ void MaterialResource::Unload()
     m_emissiveTexturePath.clear();
     SetState(ResourceState::Unloaded);
 }
+
+std::size_t MaterialResource::GetByteSize() const
+{
+    return sizeof(*this) + m_path.size() + m_shaderPath.size() + m_texturePath.size() + m_normalTexturePath.size() +
+           m_metallicTexturePath.size() + m_roughnessTexturePath.size() + m_aoTexturePath.size() + m_emissiveTexturePath.size();
+}
 Vec4 MaterialResource::GetBaseColor() const
 {
     return m_baseColor;

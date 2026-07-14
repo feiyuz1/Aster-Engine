@@ -75,6 +75,23 @@ struct ScriptComponent
     std::string scriptClassName;
 };
 
+struct PawnComponent
+{
+    bool playerControlled = true;
+    std::uint32_t controllerIndex = 0;
+};
+
+struct CharacterControllerComponent
+{
+    float movementSpeed = 4.0f;
+    float sprintSpeed = 8.0f;
+    float jumpSpeed = 5.0f;
+    float gravity = 18.0f;
+    float airControl = 0.35f;
+    bool grounded = false;
+    Vec3 velocity{};
+};
+
 enum class BodyType
 {
     Static,

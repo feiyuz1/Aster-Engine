@@ -15,11 +15,9 @@ void InputSystem::Update(const InputState &state)
         {"MoveX", state.moveX},     {"MoveY", state.moveY},     {"MoveZ", state.moveZ},
         {"RotateX", state.rotateX}, {"RotateY", state.rotateY}, {"RotateZ", state.rotateZ},
         {"MouseX", state.mouseX},   {"MouseY", state.mouseY},   {"Scale", state.scale}};
-    const std::unordered_map<std::string, bool> physicalActions = {{"Primary", state.primaryAction},
-                                                                   {"Sprint", state.sprint},
-                                                                   {"Quit", state.quitRequested},
-                                                                   {"UINext", state.uiNavigateNext},
-                                                                   {"UIAccept", state.uiAccept}};
+    const std::unordered_map<std::string, bool> physicalActions = {
+        {"Primary", state.primaryAction}, {"Sprint", state.sprint},         {"Jump", state.jump},
+        {"Quit", state.quitRequested},    {"UINext", state.uiNavigateNext}, {"UIAccept", state.uiAccept}};
     m_axes.clear();
     for (const auto &pair : m_axisBindings)
         for (const auto &binding : pair.second)
@@ -85,6 +83,7 @@ void InputSystem::ResetDefaultBindings()
     BindAxis("Scale", "Scale");
     BindAction("Primary", "Primary");
     BindAction("Sprint", "Sprint");
+    BindAction("Jump", "Jump");
     BindAction("Quit", "Quit");
     BindAction("UINext", "UINext");
     BindAction("UIAccept", "UIAccept");

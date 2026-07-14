@@ -2,11 +2,11 @@
 
 本文记录本轮开发对 TinyEngine 做过的主要更新，以及各功能采用的简要实现方式。内容按 Git 提交顺序整理，方便以后定位代码、回溯设计和继续开发。
 
-当前引擎版本：0.13.0
+当前引擎版本：0.14.0
 
 参考源码：Unreal Engine 5.3.2
 
-最后同步：2026-07-14
+最后同步：2026-07-15
 
 ## 1. 初始化引擎工程
 
@@ -247,13 +247,30 @@
 - CTest 覆盖数学、ECS、场景、Prefab、项目、Job、资源、Assimp、PNG/HDR、PBR Material、Shader、Cook/TPAK/VFS、物理和 UI。
 - 编辑器执行 OpenGL Shader、Shadow FBO、HDR/Tonemap FBO 和窗口响应冒烟检查。
 
+## 16. 可维护性基础与平台 Cook
+
+更新内容：
+
+- 新增 `Serialization`：小端 BinaryWriter/Reader、版本化文本 Archive、原子保存/备份和逐版本 MigrationRegistry。
+- 新增 `AssetStreamingManager`：类型化异步 AssetHandle、`.meta` 依赖闭包、Pin、最近访问与内存预算淘汰。
+- 新增 `GameplayFramework`：GameMode、TimerManager、Pawn 和 CharacterController；场景升级为 `TINYSCENE 7`。
+- 新增 `DiagnosticsService`：类型化 CVar、控制台命令和线程安全 StatRegistry，并接入时间缩放、FXAA、资源预算与帧统计。
+- 新增 `Automation` 和 `tinyengine_commandlet`：资产/场景无头校验、场景备份迁移和平台 Cook。
+- 新增 `TargetPlatform`：Windows/Linux Profile、生产期扩展名过滤、Shader variant 缓存、Game.tpak 与版本化 Cook 清单。
+
+实现方式：
+
+- 保持 Engine 为唯一组合根，新服务只通过明确指针访问 World、Input、Physics 和 ResourceManager。
+- AssetHandle 持有资源强引用；预算淘汰只移除没有外部强引用且未 Pin 的缓存对象。
+- CharacterController 使用语义输入和现有 `MoveCharacter`，避免在 Engine 主循环中继续保留 Demo 专用移动代码。
+- Commandlet 不创建 SDL/OpenGL 窗口，适合 CI、内容审计和批量迁移；平台 Cook 复用 AssetCooker、ShaderPipeline 与 PakArchive。
+
 ## 当前仍未完成
 
 - Cubemap 离线预过滤/BRDF LUT、级联阴影、实例化和遮挡裁剪；HDR IBL、FXAA、LOD 和 GPU profiler 已完成。
-- Shader include/variant、磁盘缓存和完整错误面板。
 - 精确 Mesh 窄相位/可选 Jolt、完整 Sweep/Slide CharacterController。
 - 骨骼蒙皮与状态机、OGG 流式音频、Unicode 字体和高级 UI 排版。
 - 多选/框选、Gizmo local/world 和 Shader 文本编辑器；多场景与 Material 编辑已完成。
-- 格式检查、无界面编辑器自动化和数据迁移；CI、崩溃报告、许可证清单和发布包冒烟已完成。
+- 格式 CI 检查、渲染截图对比和逐分配内存追踪；基础无头 Commandlet、数据迁移、CI、崩溃报告、许可证清单和发布包冒烟已完成。
 
 继续开发时，应同时更新本文、`README.md`、`设计.md` 和 `docs/ARCHITECTURE.md`。

@@ -964,6 +964,7 @@ bool SdlGlRenderDevice::PumpEvents()
     m_impl->input.rotateZ = axis(SDL_SCANCODE_Q, SDL_SCANCODE_E);
     m_impl->input.scale = axis(SDL_SCANCODE_X, SDL_SCANCODE_Z);
     m_impl->input.sprint = keys[SDL_SCANCODE_LSHIFT] || keys[SDL_SCANCODE_RSHIFT];
+    m_impl->input.jump = keys[SDL_SCANCODE_SPACE] != 0;
     m_impl->input.primaryAction = (SDL_GetMouseState(nullptr, nullptr) & SDL_BUTTON(SDL_BUTTON_LEFT)) != 0;
     int cursorX = 0, cursorY = 0;
     SDL_GetMouseState(&cursorX, &cursorY);
@@ -999,6 +1000,7 @@ bool SdlGlRenderDevice::PumpEvents()
         m_impl->input.primaryAction =
             m_impl->input.primaryAction || SDL_GameControllerGetButton(m_impl->controller, SDL_CONTROLLER_BUTTON_A);
         m_impl->input.sprint = m_impl->input.sprint || SDL_GameControllerGetButton(m_impl->controller, SDL_CONTROLLER_BUTTON_LEFTSHOULDER);
+        m_impl->input.jump = m_impl->input.jump || SDL_GameControllerGetButton(m_impl->controller, SDL_CONTROLLER_BUTTON_A);
         controllerNext = SDL_GameControllerGetButton(m_impl->controller, SDL_CONTROLLER_BUTTON_DPAD_DOWN);
         controllerAccept = SDL_GameControllerGetButton(m_impl->controller, SDL_CONTROLLER_BUTTON_A);
     }

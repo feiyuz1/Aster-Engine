@@ -9,12 +9,23 @@ jobs:
     runs-on: windows-2022
     steps:
       - uses: actions/checkout@v4
+      - name: Check C++ formatting
+        shell: pwsh
+        run: |
+          $files = git ls-files '*.cpp' '*.hpp'
+          foreach ($file in $files) { clang-format --dry-run --Werror --style=file $file }
       - name: Configure core build
         run: cmake -S . -B build-ci -DTINYENGINE_BUILD_EDITOR=OFF -DTINYENGINE_BUILD_IMPORTERS=OFF -DTINYENGINE_BUILD_TESTS=ON -DTINYENGINE_BUILD_GAME=ON
       - name: Build
         run: cmake --build build-ci --config Release --parallel 4
       - name: Test
         run: ctest --test-dir build-ci -C Release --output-on-failure
+      - name: Validate content
+        run: |
+          .\build-ci\Release\tinyengine_commandlet.exe ValidateAssets assets
+          .\build-ci\Release\tinyengine_commandlet.exe ValidateScenes assets
+      - name: Platform cook
+        run: .\build-ci\Release\tinyengine_commandlet.exe CookProject TinyEngine.tinyproject build-ci\PlatformCook Windows Shipping
       - name: Package
         run: cmake --build build-ci --config Release --target package_game
       - name: Upload package

@@ -1,11 +1,15 @@
 #include "MiniEngine/Audio/AudioEngine.hpp"
+#include "MiniEngine/Automation/Automation.hpp"
+#include "MiniEngine/Build/TargetPlatform.hpp"
 #include "MiniEngine/Core/Config.hpp"
 #include "MiniEngine/Core/CrashReporter.hpp"
+#include "MiniEngine/Diagnostics/Diagnostics.hpp"
 #include "MiniEngine/ECS/Components.hpp"
 #include "MiniEngine/ECS/ECS.hpp"
 #include "MiniEngine/ECS/Reflection.hpp"
 #include "MiniEngine/ECS/SceneSerializer.hpp"
 #include "MiniEngine/ECS/Systems.hpp"
+#include "MiniEngine/Gameplay/Gameplay.hpp"
 #include "MiniEngine/Input/InputSystem.hpp"
 #include "MiniEngine/Math/Math.hpp"
 #include "MiniEngine/Physics/PhysicsWorld.hpp"
@@ -16,8 +20,11 @@
 #include "MiniEngine/Render/ShaderPipeline.hpp"
 #include "MiniEngine/Resource/AssetCooker.hpp"
 #include "MiniEngine/Resource/AssetRegistry.hpp"
+#include "MiniEngine/Resource/AssetStreaming.hpp"
 #include "MiniEngine/Resource/PakArchive.hpp"
 #include "MiniEngine/Resource/Resource.hpp"
+#include "MiniEngine/Resource/ResourceManager.hpp"
+#include "MiniEngine/Serialization/Archive.hpp"
 #include "MiniEngine/Task/JobSystem.hpp"
 #include "MiniEngine/UI/UISystem.hpp"
 #ifdef TINYENGINE_HAS_ASSIMP
@@ -57,6 +64,30 @@ int main()
     const Mat4 orthographic = Orthographic(-2.0f, 2.0f, -1.0f, 1.0f, 0.1f, 10.0f);
     CHECK(std::abs(orthographic.At(0, 0) - 0.5f) < 0.0001f && std::abs(orthographic.At(1, 1) - 1.0f) < 0.0001f);
 
+    BinaryWriter binaryWriter;
+    binaryWriter.WriteU32(0x12345678u);
+    binaryWriter.WriteFloat(3.5f);
+    binaryWriter.WriteString("TinyEngine");
+    BinaryReader binaryReader(binaryWriter.GetData());
+    std::uint32_t archiveInteger = 0;
+    float archiveFloat = 0.0f;
+    std::string archiveString;
+    CHECK(binaryReader.ReadU32(archiveInteger) && archiveInteger == 0x12345678u);
+    CHECK(binaryReader.ReadFloat(archiveFloat) && std::abs(archiveFloat - 3.5f) < 0.001f);
+    CHECK(binaryReader.ReadString(archiveString) && archiveString == "TinyEngine" && binaryReader.GetRemainingBytes() == 0);
+    VersionedDocument versioned{"TestData", 1, {{"oldName", "value"}}};
+    MigrationRegistry migrations;
+    CHECK(migrations.Register("TestData", 1, [](VersionedDocument &document, std::string &) {
+        document.fields["newName"] = document.fields["oldName"];
+        document.fields.erase("oldName");
+        return true;
+    }));
+    CHECK(migrations.Migrate(versioned, 2) && versioned.version == 2 && versioned.fields["newName"] == "value");
+    CHECK(VersionedTextArchive::SaveAtomic("Saved/Test.archive", versioned, false));
+    VersionedDocument loadedVersioned;
+    CHECK(VersionedTextArchive::Deserialize(PlatformFile::ReadAllText("Saved/Test.archive"), loadedVersioned));
+    CHECK(loadedVersioned.version == 2 && loadedVersioned.fields["newName"] == "value");
+
     World world;
     const Entity first = world.CreateEntity("First");
     world.AddComponent(first, MeshComponent{"mesh", "material"});
@@ -87,6 +118,8 @@ int main()
     CHECK(!world.SetParent(replacement, child));
     world.AddComponent(replacement, JointComponent{JointType::Distance, child, 2.0f, 0.75f});
     world.AddComponent(replacement, LodComponent{"assets/player.mesh", "assets/player.mesh", 10.0f, 30.0f});
+    world.AddComponent(replacement, PawnComponent{});
+    world.AddComponent(replacement, CharacterControllerComponent{});
     CHECK(SceneSerializer::Save(world, "Saved/Test.scene"));
     World loaded;
     CHECK(SceneSerializer::Load(loaded, "Saved/Test.scene"));
@@ -101,6 +134,11 @@ int main()
         if (const auto *lod = loaded.GetComponent<LodComponent>(entity))
             loadedLod = std::abs(lod->level2Distance - 30.0f) < 0.001f;
     CHECK(loadedLod);
+    bool loadedCharacter = false;
+    for (const Entity entity : loaded.GetEntityManager().GetAliveEntities())
+        loadedCharacter =
+            loadedCharacter || (loaded.HasComponent<PawnComponent>(entity) && loaded.HasComponent<CharacterControllerComponent>(entity));
+    CHECK(loadedCharacter);
     const std::string snapshot = SceneSerializer::Serialize(loaded);
     loaded.CreateEntity("Temporary");
     CHECK(SceneSerializer::Deserialize(loaded, snapshot));
@@ -161,6 +199,42 @@ int main()
     }
     CHECK(exceptionObserved);
     jobs.Shutdown();
+
+    TimerManager timers;
+    int timerExecutions = 0;
+    const auto timer = timers.SetTimer(0.1f, [&timerExecutions]() { ++timerExecutions; }, true);
+    timers.Update(0.25f);
+    CHECK(timerExecutions == 1 && timers.IsActive(timer));
+    CHECK(timers.ClearTimer(timer));
+    World gameplayWorld;
+    const Entity pawn = gameplayWorld.CreateEntity("Pawn");
+    gameplayWorld.AddComponent(pawn, PawnComponent{});
+    CharacterControllerComponent testController;
+    testController.grounded = true;
+    gameplayWorld.AddComponent(pawn, testController);
+    InputSystem gameplayInput;
+    InputState gameplayState;
+    gameplayState.moveX = 1.0f;
+    gameplayInput.Update(gameplayState);
+    PhysicsWorld gameplayPhysics;
+    GameplayFramework gameplay;
+    gameplay.Initialize(&gameplayWorld, &gameplayInput, &gameplayPhysics);
+    gameplay.StartPlay();
+    gameplay.Update(0.5f);
+    CHECK(gameplayWorld.GetComponent<TransformComponent>(pawn)->position.x > 1.9f);
+    gameplay.StopPlay();
+    gameplay.Shutdown();
+
+    DiagnosticsService diagnostics;
+    diagnostics.Initialize();
+    int changedValue = 0;
+    CHECK(diagnostics.GetConsole().RegisterVariable("test.value", 1, "Test variable", false,
+                                                    [&changedValue](const ConsoleValue &value) { changedValue = std::get<int>(value); }));
+    CHECK(diagnostics.GetConsole().Execute("test.value 7") == "test.value = 7" && changedValue == 7);
+    diagnostics.GetStats().Set("test.stat", 2.0);
+    diagnostics.GetStats().Add("test.stat", 3.0);
+    CHECK(diagnostics.GetStats().Get("test.stat").value == 5.0);
+    diagnostics.Shutdown();
 
     MeshResource mesh;
     CHECK(mesh.Load("assets/player.mesh"));
@@ -250,11 +324,40 @@ int main()
     CHECK(shaderInfo.has_value() && shaderInfo->type == "Shader");
     CHECK(registry.MarkImported("assets/player.mesh"));
     CHECK(!registry.NeedsReimport("assets/player.mesh"));
+    AssetDependencyGraph dependencyGraph;
+    dependencyGraph.Build(registry);
+    const auto dependencyClosure = dependencyGraph.ResolveClosure("assets/default.mat");
+    CHECK(!dependencyClosure.empty() && !dependencyGraph.HasCycles());
+    ResourceManager streamingResources;
+    streamingResources.Initialize(nullptr, "assets");
+    AssetStreamingManager streaming;
+    streaming.Initialize(&streamingResources, 1);
+    {
+        auto handle = streaming.Request<MeshResource>("assets/player.mesh");
+        CHECK(handle.Wait() && handle.IsReady());
+    }
+    streaming.Update();
+    CHECK(streamingResources.GetCachedResourceCount() == 0);
+    streaming.Shutdown();
+    streamingResources.Shutdown();
     const auto cook = AssetCooker::Cook("assets", "Saved/CookedTest", "Saved/CookedTest.tpak");
     CHECK(cook.success && cook.cookedFiles + cook.skippedFiles >= 4);
     const auto incrementalCook = AssetCooker::Cook("assets", "Saved/CookedTest", "Saved/CookedTest.tpak");
     CHECK(incrementalCook.success && incrementalCook.skippedFiles >= 4 && incrementalCook.cookedFiles == 0);
     PlatformFile::ClearMounts();
+
+    CHECK(TargetPlatformRegistry::Get().Find("windows") != nullptr);
+    CHECK(TargetPlatformCooker::ParseConfiguration("shipping") == BuildConfiguration::Shipping);
+    const auto platformCook =
+        TargetPlatformCooker::Cook({"TinyEngine.tinyproject", "Saved/PlatformCookTest", "Windows", BuildConfiguration::Shipping, false});
+    CHECK(platformCook.success && std::filesystem::is_regular_file(platformCook.archive) && platformCook.shaderVariants >= 2);
+    VersionedDocument cookManifest;
+    CHECK(VersionedTextArchive::Deserialize(PlatformFile::ReadAllText(platformCook.manifest), cookManifest));
+    CHECK(cookManifest.fields["platform"] == "Windows" && cookManifest.fields["configuration"] == "Shipping");
+    CommandletRegistry commandlets;
+    RegisterBuiltInCommandlets(commandlets);
+    CHECK(commandlets.Run("ValidateAssets", {"assets"}).exitCode == 0);
+    CHECK(commandlets.Run("ValidateScenes", {"Saved"}).exitCode == 0);
     CHECK(PlatformFile::MountPak("Saved/CookedTest.tpak"));
     CHECK(!PlatformFile::ReadAllBytes("player.mesh").empty());
     PlatformFile::ClearMounts();

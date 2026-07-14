@@ -90,8 +90,10 @@ class ResourceManager
 
     void RegisterLoader(std::shared_ptr<IAssetLoader> loader);
     void GarbageCollect();
+    bool UnloadUnused(const std::string &path);
     bool Reload(const std::string &path);
     std::size_t GetCachedResourceCount() const;
+    std::size_t GetCachedByteSize() const;
     AssetRegistry &GetAssetRegistry();
     const AssetRegistry &GetAssetRegistry() const;
 

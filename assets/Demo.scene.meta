@@ -1,0 +1,7 @@
+asset.id=7bb1c33c0ac64a6bb53a4c1096b47fde
+asset.type=Scene
+asset.importedStamp=0
+dependencies.count=3
+dependencies.0=assets/default.mat
+dependencies.1=assets/player.anim
+dependencies.2=assets/player.mesh

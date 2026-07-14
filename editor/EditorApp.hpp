@@ -5,6 +5,7 @@
 #include "MiniEngine/Import/AssimpImporter.hpp"
 #endif
 
+#include <array>
 #include <filesystem>
 #include <string>
 #include <vector>
@@ -56,6 +57,7 @@ class EditorApp
     std::vector<std::string> m_undo;
     std::vector<std::string> m_redo;
     std::vector<std::string> m_messages;
+    std::array<char, 256> m_consoleInput{};
     bool m_initialized = false;
     Vec3 m_editorCameraPosition{0.0f, 2.5f, 7.0f};
     Vec3 m_editorCameraRotation{-10.0f, 0.0f, 0.0f};

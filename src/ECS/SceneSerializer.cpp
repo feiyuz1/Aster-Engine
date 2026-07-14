@@ -20,7 +20,7 @@ std::string SceneSerializer::Serialize(const World &world)
     for (std::size_t index = 0; index < entities.size(); ++index)
         ids[entities[index]] = index + 1;
     std::ostringstream out;
-    out << "TINYSCENE 6\n";
+    out << "TINYSCENE 7\n";
     for (const Entity entity : entities)
     {
         const auto *name = world.GetComponent<NameComponent>(entity);
@@ -60,6 +60,11 @@ std::string SceneSerializer::Serialize(const World &world)
                 << ' ' << v->collideConnected << '\n';
         if (const auto *v = world.GetComponent<ScriptComponent>(entity))
             out << "script " << std::quoted(v->scriptClassName) << '\n';
+        if (const auto *v = world.GetComponent<PawnComponent>(entity))
+            out << "pawn " << v->playerControlled << ' ' << v->controllerIndex << '\n';
+        if (const auto *v = world.GetComponent<CharacterControllerComponent>(entity))
+            out << "character " << v->movementSpeed << ' ' << v->sprintSpeed << ' ' << v->jumpSpeed << ' ' << v->gravity << ' '
+                << v->airControl << ' ' << v->grounded << ' ' << v->velocity.x << ' ' << v->velocity.y << ' ' << v->velocity.z << '\n';
         if (const auto *v = world.GetComponent<AnimationComponent>(entity))
             out << "animation " << std::quoted(v->clipPath) << ' ' << v->time << ' ' << v->speed << ' ' << v->loop << ' ' << v->playing
                 << ' ' << std::quoted(v->nextClipPath) << ' ' << v->blendDuration << ' ' << v->blendTime << ' ' << v->rootMotion << '\n';
@@ -81,7 +86,7 @@ bool SceneSerializer::Deserialize(World &world, const std::string &text)
     std::istringstream in(text);
     std::string token;
     int version = 0;
-    if (!(in >> token >> version) || token != "TINYSCENE" || version < 1 || version > 6)
+    if (!(in >> token >> version) || token != "TINYSCENE" || version < 1 || version > 7)
         return false;
     world.Clear();
     std::unordered_map<std::size_t, Entity> ids;
@@ -187,6 +192,21 @@ bool SceneSerializer::Deserialize(World &world, const std::string &text)
         {
             ScriptComponent v;
             in >> std::quoted(v.scriptClassName);
+            world.AddComponent(current, v);
+        }
+        else if (token == "pawn")
+        {
+            PawnComponent v;
+            if (!(in >> v.playerControlled >> v.controllerIndex))
+                return false;
+            world.AddComponent(current, v);
+        }
+        else if (token == "character")
+        {
+            CharacterControllerComponent v;
+            if (!(in >> v.movementSpeed >> v.sprintSpeed >> v.jumpSpeed >> v.gravity >> v.airControl >> v.grounded >> v.velocity.x >>
+                  v.velocity.y >> v.velocity.z))
+                return false;
             world.AddComponent(current, v);
         }
         else if (token == "animation")

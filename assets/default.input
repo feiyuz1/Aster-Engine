@@ -10,6 +10,7 @@ axis "RotateZ" "RotateZ" 1
 axis "Scale" "Scale" 1
 action "Primary" "Primary"
 action "Sprint" "Sprint"
+action "Jump" "Jump"
 action "Quit" "Quit"
 action "UINext" "UINext"
 action "UIAccept" "UIAccept"

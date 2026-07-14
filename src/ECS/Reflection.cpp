@@ -130,6 +130,27 @@ ReflectionRegistry::ReflectionRegistry()
     script.properties.push_back(MakeProperty("Class", ReflectedPropertyType::String, &ScriptComponent::scriptClassName));
     m_components.push_back(std::move(script));
 
+    auto pawn = MakeComponent<PawnComponent>("Pawn");
+    pawn.properties.push_back(MakeProperty("Player Controlled", ReflectedPropertyType::Bool, &PawnComponent::playerControlled));
+    pawn.properties.push_back(MakeProperty("Controller Index", ReflectedPropertyType::UInt, &PawnComponent::controllerIndex));
+    m_components.push_back(std::move(pawn));
+
+    auto character = MakeComponent<CharacterControllerComponent>("Character Controller");
+    character.properties.push_back(
+        MakeProperty("Movement Speed", ReflectedPropertyType::Float, &CharacterControllerComponent::movementSpeed));
+    Range(character.properties.back(), 0.0f, 1000.0f, 0.1f);
+    character.properties.push_back(MakeProperty("Sprint Speed", ReflectedPropertyType::Float, &CharacterControllerComponent::sprintSpeed));
+    Range(character.properties.back(), 0.0f, 1000.0f, 0.1f);
+    character.properties.push_back(MakeProperty("Jump Speed", ReflectedPropertyType::Float, &CharacterControllerComponent::jumpSpeed));
+    Range(character.properties.back(), 0.0f, 1000.0f, 0.1f);
+    character.properties.push_back(MakeProperty("Gravity", ReflectedPropertyType::Float, &CharacterControllerComponent::gravity));
+    Range(character.properties.back(), 0.0f, 1000.0f, 0.1f);
+    character.properties.push_back(MakeProperty("Air Control", ReflectedPropertyType::Float, &CharacterControllerComponent::airControl));
+    Range(character.properties.back(), 0.0f, 1.0f, 0.01f);
+    character.properties.push_back(MakeProperty("Grounded", ReflectedPropertyType::Bool, &CharacterControllerComponent::grounded));
+    character.properties.push_back(MakeProperty("Velocity", ReflectedPropertyType::Vec3, &CharacterControllerComponent::velocity));
+    m_components.push_back(std::move(character));
+
     auto rigidBody = MakeComponent<RigidBodyComponent>("Rigid Body");
     rigidBody.properties.push_back(MakeEnumProperty("Type", &RigidBodyComponent::type, {"Static", "Dynamic", "Kinematic"}));
     rigidBody.properties.push_back(MakeProperty("Mass", ReflectedPropertyType::Float, &RigidBodyComponent::mass));

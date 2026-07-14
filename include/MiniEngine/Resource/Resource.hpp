@@ -27,6 +27,7 @@ class Resource
     virtual ~Resource() = default;
     virtual bool Load(const std::string &path) = 0;
     virtual void Unload() = 0;
+    virtual std::size_t GetByteSize() const = 0;
 
     const std::string &GetPath() const;
     ResourceState GetState() const;
@@ -51,7 +52,7 @@ class TextureResource final : public Resource
   public:
     bool Load(const std::string &path) override;
     void Unload() override;
-    std::size_t GetByteSize() const;
+    std::size_t GetByteSize() const override;
     const std::vector<std::uint8_t> &GetData() const;
     const std::vector<float> &GetFloatData() const;
     bool IsHdr() const;
@@ -78,7 +79,7 @@ class MeshResource final : public Resource
   public:
     bool Load(const std::string &path) override;
     void Unload() override;
-    std::size_t GetByteSize() const;
+    std::size_t GetByteSize() const override;
     const std::vector<MeshVertex> &GetVertices() const;
     const std::vector<std::uint32_t> &GetIndices() const;
     const Aabb &GetBounds() const;
@@ -94,7 +95,7 @@ class ShaderResource final : public Resource
   public:
     bool Load(const std::string &path) override;
     void Unload() override;
-    std::size_t GetByteSize() const;
+    std::size_t GetByteSize() const override;
     const std::string &GetSource() const;
 
   private:
@@ -106,6 +107,7 @@ class MaterialResource final : public Resource
   public:
     bool Load(const std::string &path) override;
     void Unload() override;
+    std::size_t GetByteSize() const override;
     Vec4 GetBaseColor() const;
     const std::string &GetShaderPath() const;
     const std::string &GetTexturePath() const;

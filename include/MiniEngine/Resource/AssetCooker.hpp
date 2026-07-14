@@ -23,6 +23,7 @@ struct CookOptions
     bool incremental = true;
     std::atomic<bool> *cancel = nullptr;
     std::function<void(float, const std::string &)> progress;
+    std::function<bool(const std::filesystem::path &)> include;
 };
 
 class AssetCooker

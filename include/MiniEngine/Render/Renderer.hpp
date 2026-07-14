@@ -26,6 +26,7 @@ struct InputState
     float mouseX = 0.0f, mouseY = 0.0f;
     bool primaryAction = false;
     bool sprint = false;
+    bool jump = false;
     bool quitRequested = false;
     bool uiNavigateNext = false;
     bool uiAccept = false;
