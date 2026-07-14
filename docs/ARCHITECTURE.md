@@ -1,6 +1,6 @@
 # TinyEngine 架构说明
 
-本文对应 TinyEngine 0.7.0，最后同步于 2026-07-14。
+本文对应 TinyEngine 0.8.0，最后同步于 2026-07-14。
 
 ## 依赖方向
 
@@ -31,7 +31,7 @@ Task | Memory | Core | Math | Platform
 | AssimpImporter/Registry/Cooker/TPAK | Interchange、AssetRegistry、Cook、PakFile | Authoring 转换为轻量运行时格式 |
 | Renderer/RenderDevice | Renderer、RenderCore、RHI | 当前仅 OpenGL 3.3 后端 |
 | PhysicsWorld | Chaos/PhysicsCore | 自研基础后端，公开 API 保持可替换 |
-| UISystem | UMG/Slate Runtime | 小型 Widget、命中和焦点模型 |
+| UISystem | UMG/Slate Runtime | Widget、字体 Atlas、布局、命中和焦点模型 |
 | Editor | UnrealEd/LevelEditor | Dear ImGui 独立工具，只覆盖高频工作流 |
 
 ## 关键数据流
@@ -69,6 +69,8 @@ SDL events -> semantic input / ImGui
 编辑态由 Renderer 的 camera override 使用编辑器相机；Play 时恢复场景 Primary Camera。Scene View 显示 Tonemap 后的颜色纹理，拾取在 CPU 侧将屏幕坐标转为射线并检测 Mesh/Collider AABB；Gizmo 修改 Transform、支持步长吸附并接入 Undo。资产浏览器通过 ImGui payload 将 Prefab、Mesh 或 Material 拖入 Scene View。
 
 默认 PBR Shader 是独立 `.vert/.frag` 资产。RenderDevice 监测修改时间并尝试原子替换 OpenGL program；编译或链接失败时继续使用上一份有效 program。每帧最多收集四盏方向光，第一盏灯使用固定 2048² 深度图和 3×3 PCF；其余灯只计算直接 PBR 光照。Tonemap Pass 在无几何覆盖的像素绘制程序化天空渐变，并为物体提供半球环境近似。
+
+Runtime UI 在提交前根据 Viewport 解析锚点和父子容器布局，生成裁剪后的矩形、图片与文本命令。OpenGL UI Program 使用动态 VBO 批量提交四边形；Windows 运行时用 GDI 构建固定 ASCII Atlas，Label/Button 采样 Atlas，Image 复用 TextureResource。Tab/Enter/Space 使用按下沿驱动焦点和激活。
 
 ## 数据格式与约束
 

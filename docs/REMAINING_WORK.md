@@ -9,7 +9,7 @@
 1. 渲染：Cubemap Skybox、漫反射/镜面 IBL、预过滤环境贴图、BRDF LUT、各向异性过滤、级联阴影、Normal Matrix、透明阴影、抗锯齿和 GPU profiler。
 2. Shader/材质：include、宏与 variant、编译缓存、完整错误面板、材质 Inspector、材质实例和贴图导入通道规则。
 3. 资产：DDS/KTX2/BCn、后台导入 worker、进度/取消、增量 Cook、缩略图、丢失依赖修复和平台资产配置。
-4. Runtime UI：字体 Atlas、文本绘制、锚点/布局、裁剪/滚动、图片采样、DPI、键盘和手柄导航。
+4. Runtime UI：Unicode/TTF 字体资产、滚动容器、DPI、多语言排版和手柄导航；ASCII Atlas、文本/图片、锚点、父子布局、裁剪和键盘导航已完成。
 5. 物理：Jolt 后端、Convex/TriangleMesh、准确窄相位、CCD、Joint、完整 CharacterController、Sweep/Slide 和调试绘制。
 6. 编辑器：属性反射、自动 Inspector、场景脏标记/自动恢复、多场景标签、多选/框选、Local Gizmo、Inspector 拖放、Material/Shader 编辑器。
 

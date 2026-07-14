@@ -16,6 +16,7 @@ namespace MiniEngine
     bool NullRenderDevice::PumpEvents() { return true; }
     const InputState& NullRenderDevice::GetInputState() const { return m_inputState; }
     float NullRenderDevice::GetAspectRatio() const { return 16.0f / 9.0f; }
+    Vec2 NullRenderDevice::GetViewportSize() const { return {1280.0f, 720.0f}; }
     void NullRenderDevice::BeginShadowPass(const FrameView&) {}
     void NullRenderDevice::DrawShadow(const RenderItem&) {}
     void NullRenderDevice::EndShadowPass() {}
@@ -145,7 +146,7 @@ namespace MiniEngine
         m_device->EndShadowPass();
         m_device->BeginFrame(m_frameView);
         for (const auto& item : m_renderQueue.GetItems()) m_device->Draw(item);
-        if (m_uiSystem) m_device->DrawUi(m_uiSystem->BuildDrawList());
+        if (m_uiSystem) { const Vec2 viewport = m_device->GetViewportSize(); m_uiSystem->SetViewportSize(viewport.x, viewport.y); m_device->DrawUi(m_uiSystem->BuildDrawList()); }
         m_device->EndFrame();
         if (m_overlayCallback) m_overlayCallback();
         m_device->Present();

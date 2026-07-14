@@ -3,12 +3,19 @@
 #include "MiniEngine/Platform/Platform.hpp"
 
 #define SDL_MAIN_HANDLED
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <Windows.h>
+#endif
 #include <SDL.h>
 #include <SDL_opengl.h>
 
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <filesystem>
 #include <string>
 #include <unordered_map>
@@ -153,6 +160,29 @@ namespace MiniEngine
                 outColor = vec4(pow(AcesFilm(hdr), vec3(1.0 / 2.2)), 1.0);
             }
         )GLSL";
+
+        constexpr const char* UiVertexShaderSource = R"GLSL(
+            #version 330 core
+            layout(location = 0) in vec2 aPosition;
+            layout(location = 1) in vec2 aUv;
+            uniform vec2 uViewport;
+            out vec2 vUv;
+            void main()
+            {
+                vec2 ndc = vec2(aPosition.x / uViewport.x * 2.0 - 1.0, 1.0 - aPosition.y / uViewport.y * 2.0);
+                gl_Position = vec4(ndc, 0.0, 1.0); vUv = aUv;
+            }
+        )GLSL";
+
+        constexpr const char* UiFragmentShaderSource = R"GLSL(
+            #version 330 core
+            in vec2 vUv;
+            uniform vec4 uColor;
+            uniform sampler2D uUiTexture;
+            uniform int uHasUiTexture;
+            out vec4 outColor;
+            void main() { outColor = uHasUiTexture != 0 ? texture(uUiTexture, vUv) * uColor : uColor; }
+        )GLSL";
     }
 
     struct SdlGlRenderDevice::Impl
@@ -183,6 +213,7 @@ namespace MiniEngine
         using UniformMatrix4fvProc = void (APIENTRY*)(GLint, GLsizei, GLboolean, const GLfloat*);
         using Uniform4fProc = void (APIENTRY*)(GLint, GLfloat, GLfloat, GLfloat, GLfloat);
         using Uniform3fProc = void (APIENTRY*)(GLint, GLfloat, GLfloat, GLfloat);
+        using Uniform2fProc = void (APIENTRY*)(GLint, GLfloat, GLfloat);
         using Uniform1fProc = void (APIENTRY*)(GLint, GLfloat);
         using Uniform1iProc = void (APIENTRY*)(GLint, GLint);
         using ActiveTextureProc = void (APIENTRY*)(GLenum);
@@ -197,13 +228,15 @@ namespace MiniEngine
         SDL_GLContext context = nullptr;
         InputState input;
         FrameView view;
-        GLuint program = 0, shadowProgram = 0, toneProgram = 0, fullScreenVao = 0;
+        GLuint program = 0, shadowProgram = 0, toneProgram = 0, uiProgram = 0, fullScreenVao = 0;
+        GLuint uiVao = 0, uiVertexBuffer = 0, uiIndexBuffer = 0, fontAtlas = 0;
         GLuint sceneFramebuffer = 0, toneFramebuffer = 0, sceneHdrColor = 0, sceneColor = 0, sceneDepth = 0;
         GLuint shadowFramebuffer = 0, shadowDepth = 0;
         int shadowResolution = 2048;
         float exposure = 1.0f;
         int sceneWidth = 0, sceneHeight = 0;
         bool sceneTargetEnabled = false;
+        bool previousUiNext = false, previousUiAccept = false;
         GLint mvpLocation = -1, modelLocation = -1, lightViewProjectionLocation = -1, baseColorLocation = -1;
         GLint metallicLocation = -1, roughnessLocation = -1, emissiveLocation = -1, cameraPositionLocation = -1;
         GLint lightDirectionLocation = -1, lightColorLocation = -1, lightIntensityLocation = -1;
@@ -214,6 +247,7 @@ namespace MiniEngine
         GLint roughnessTextureLocation = -1, hasRoughnessTextureLocation = -1, aoTextureLocation = -1, hasAoTextureLocation = -1;
         GLint emissiveTextureLocation = -1, hasEmissiveTextureLocation = -1;
         GLint shadowMvpLocation = -1, toneTextureLocation = -1, exposureLocation = -1;
+        GLint uiViewportLocation = -1, uiColorLocation = -1, uiTextureLocation = -1, uiHasTextureLocation = -1;
         FileWatcher vertexShaderWatcher, fragmentShaderWatcher;
         std::filesystem::path vertexShaderPath{"assets/shaders/default.vert"}, fragmentShaderPath{"assets/shaders/default.frag"};
 
@@ -243,6 +277,7 @@ namespace MiniEngine
         UniformMatrix4fvProc UniformMatrix4fv = nullptr;
         Uniform4fProc Uniform4f = nullptr;
         Uniform3fProc Uniform3f = nullptr;
+        Uniform2fProc Uniform2f = nullptr;
         Uniform1fProc Uniform1f = nullptr;
         Uniform1iProc Uniform1i = nullptr;
         ActiveTextureProc ActiveTexture = nullptr;
@@ -254,8 +289,10 @@ namespace MiniEngine
         CheckFramebufferStatusProc CheckFramebufferStatus = nullptr;
 
         struct GpuMesh { GLuint vao = 0, vertexBuffer = 0, indexBuffer = 0; GLsizei indexCount = 0; };
+        struct UiVertex { Vec2 position; Vec2 uv; };
         std::unordered_map<std::string, GpuMesh> meshes;
         std::unordered_map<std::string, GLuint> textures;
+        std::unordered_map<std::string, std::shared_ptr<TextureResource>> uiTextureResources;
 
         bool LoadFunctions()
         {
@@ -271,7 +308,7 @@ namespace MiniEngine
                 LoadGl(GetProgramiv, "glGetProgramiv") && LoadGl(GetProgramInfoLog, "glGetProgramInfoLog") &&
                 LoadGl(DeleteProgram, "glDeleteProgram") && LoadGl(UseProgram, "glUseProgram") &&
                 LoadGl(GetUniformLocation, "glGetUniformLocation") && LoadGl(UniformMatrix4fv, "glUniformMatrix4fv") &&
-                LoadGl(Uniform4f, "glUniform4f") && LoadGl(Uniform3f, "glUniform3f") && LoadGl(Uniform1f, "glUniform1f") &&
+                LoadGl(Uniform4f, "glUniform4f") && LoadGl(Uniform3f, "glUniform3f") && LoadGl(Uniform2f, "glUniform2f") && LoadGl(Uniform1f, "glUniform1f") &&
                 LoadGl(Uniform1i, "glUniform1i") && LoadGl(ActiveTexture, "glActiveTexture") && LoadGl(GenerateMipmap, "glGenerateMipmap") &&
                 LoadGl(GenFramebuffers, "glGenFramebuffers") && LoadGl(BindFramebuffer, "glBindFramebuffer") &&
                 LoadGl(DeleteFramebuffers, "glDeleteFramebuffers") && LoadGl(FramebufferTexture2D, "glFramebufferTexture2D") &&
@@ -396,15 +433,65 @@ namespace MiniEngine
             return true;
         }
 
+        bool CreateFontAtlas()
+        {
+            constexpr int width = 512, height = 256, cell = 32;
+            std::vector<std::uint8_t> pixels(static_cast<std::size_t>(width) * height * 4, 0);
+            for (std::size_t index = 0; index < static_cast<std::size_t>(width) * height; ++index) pixels[index * 4] = pixels[index * 4 + 1] = pixels[index * 4 + 2] = 255;
+#ifdef _WIN32
+            BITMAPINFO bitmapInfo{}; bitmapInfo.bmiHeader.biSize = sizeof(BITMAPINFOHEADER); bitmapInfo.bmiHeader.biWidth = width;
+            bitmapInfo.bmiHeader.biHeight = -height; bitmapInfo.bmiHeader.biPlanes = 1; bitmapInfo.bmiHeader.biBitCount = 32; bitmapInfo.bmiHeader.biCompression = BI_RGB;
+            void* bitmapPixels = nullptr; HDC device = CreateCompatibleDC(nullptr);
+            HBITMAP bitmap = device ? CreateDIBSection(device, &bitmapInfo, DIB_RGB_COLORS, &bitmapPixels, nullptr, 0) : nullptr;
+            HFONT font = CreateFontW(-24, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, ANSI_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, ANTIALIASED_QUALITY, FIXED_PITCH, L"Consolas");
+            if (device && bitmap && bitmapPixels && font)
+            {
+                const HGDIOBJ oldBitmap = SelectObject(device, bitmap), oldFont = SelectObject(device, font);
+                std::fill_n(static_cast<std::uint8_t*>(bitmapPixels), static_cast<std::size_t>(width) * height * 4, static_cast<std::uint8_t>(0));
+                SetBkColor(device, RGB(0, 0, 0)); SetTextColor(device, RGB(255, 255, 255)); SetBkMode(device, OPAQUE);
+                for (int character = 32; character < 127; ++character)
+                {
+                    const wchar_t text = static_cast<wchar_t>(character); const int column = character % 16, row = character / 16;
+                    TextOutW(device, column * cell + 4, row * cell + 3, &text, 1);
+                }
+                const auto* source = static_cast<const std::uint8_t*>(bitmapPixels);
+                for (std::size_t index = 0; index < static_cast<std::size_t>(width) * height; ++index)
+                {
+                    const std::uint8_t alpha = std::max(source[index * 4], std::max(source[index * 4 + 1], source[index * 4 + 2]));
+                    pixels[index * 4] = pixels[index * 4 + 1] = pixels[index * 4 + 2] = 255; pixels[index * 4 + 3] = alpha;
+                }
+                SelectObject(device, oldFont); SelectObject(device, oldBitmap);
+            }
+            if (font) DeleteObject(font); if (bitmap) DeleteObject(bitmap); if (device) DeleteDC(device);
+#else
+            for (int character = 32; character < 127; ++character)
+                for (int y = 6; y < 26; ++y) for (int x = 6; x < 20; ++x)
+                    if (x == 6 || x == 19 || y == 6 || y == 25) pixels[((character / 16 * cell + y) * width + character % 16 * cell + x) * 4 + 3] = 255;
+#endif
+            glGenTextures(1, &fontAtlas); glBindTexture(GL_TEXTURE_2D, fontAtlas);
+            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR); glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE); glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+            glBindTexture(GL_TEXTURE_2D, 0); return fontAtlas != 0;
+        }
+
         bool CreateAuxiliaryPrograms()
         {
             shadowProgram = CreateLinkedProgram(ShadowVertexShaderSource, ShadowFragmentShaderSource);
             toneProgram = CreateLinkedProgram(ToneVertexShaderSource, ToneFragmentShaderSource);
-            if (!shadowProgram || !toneProgram) return false;
+            uiProgram = CreateLinkedProgram(UiVertexShaderSource, UiFragmentShaderSource);
+            if (!shadowProgram || !toneProgram || !uiProgram) return false;
             shadowMvpLocation = GetUniformLocation(shadowProgram, "uLightMvp");
             toneTextureLocation = GetUniformLocation(toneProgram, "uHdrTexture"); exposureLocation = GetUniformLocation(toneProgram, "uExposure");
             GenVertexArrays(1, &fullScreenVao);
-            return fullScreenVao != 0;
+            uiViewportLocation = GetUniformLocation(uiProgram, "uViewport"); uiColorLocation = GetUniformLocation(uiProgram, "uColor");
+            uiTextureLocation = GetUniformLocation(uiProgram, "uUiTexture"); uiHasTextureLocation = GetUniformLocation(uiProgram, "uHasUiTexture");
+            GenVertexArrays(1, &uiVao); BindVertexArray(uiVao);
+            GenBuffers(1, &uiVertexBuffer); BindBuffer(GL_ARRAY_BUFFER, uiVertexBuffer);
+            GenBuffers(1, &uiIndexBuffer); BindBuffer(GL_ELEMENT_ARRAY_BUFFER, uiIndexBuffer);
+            VertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, sizeof(UiVertex), reinterpret_cast<void*>(offsetof(UiVertex, position))); EnableVertexAttribArray(0);
+            VertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, sizeof(UiVertex), reinterpret_cast<void*>(offsetof(UiVertex, uv))); EnableVertexAttribArray(1); BindVertexArray(0);
+            return fullScreenVao != 0 && uiVao != 0 && CreateFontAtlas();
         }
 
         bool ReloadDefaultShadersFromFiles()
@@ -463,6 +550,31 @@ namespace MiniEngine
             else glTexImage2D(GL_TEXTURE_2D, 0, srgb ? GL_SRGB8_ALPHA8 : GL_RGBA8, resource->GetWidth(), resource->GetHeight(), 0, GL_RGBA, GL_UNSIGNED_BYTE, resource->GetData().data());
             GenerateMipmap(GL_TEXTURE_2D); glBindTexture(GL_TEXTURE_2D, 0); textures[key] = texture; return texture;
         }
+
+        GLuint GetOrCreateUiTexture(const std::string& path)
+        {
+            if (path.empty()) return 0;
+            auto found = uiTextureResources.find(path);
+            if (found == uiTextureResources.end())
+            {
+                auto resource = std::make_shared<TextureResource>(); if (!resource->Load(path)) return 0;
+                found = uiTextureResources.emplace(path, std::move(resource)).first;
+            }
+            return GetOrCreateTexture(found->second, true);
+        }
+
+        void DrawUiGeometry(const std::vector<UiVertex>& vertices, const std::vector<std::uint32_t>& indices, const Vec4& color, const GLuint texture, const int width, const int height)
+        {
+            if (vertices.empty() || indices.empty()) return;
+            UseProgram(uiProgram); Uniform2f(uiViewportLocation, static_cast<float>(width), static_cast<float>(height));
+            Uniform4f(uiColorLocation, color.x, color.y, color.z, color.w); Uniform1i(uiTextureLocation, 0); Uniform1i(uiHasTextureLocation, texture ? 1 : 0);
+            ActiveTexture(GL_TEXTURE0); glBindTexture(GL_TEXTURE_2D, texture);
+            BindVertexArray(uiVao); BindBuffer(GL_ARRAY_BUFFER, uiVertexBuffer);
+            BufferData(GL_ARRAY_BUFFER, static_cast<GLsizeiptr>(vertices.size() * sizeof(UiVertex)), vertices.data(), GL_DYNAMIC_DRAW);
+            BindBuffer(GL_ELEMENT_ARRAY_BUFFER, uiIndexBuffer);
+            BufferData(GL_ELEMENT_ARRAY_BUFFER, static_cast<GLsizeiptr>(indices.size() * sizeof(std::uint32_t)), indices.data(), GL_DYNAMIC_DRAW);
+            glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(indices.size()), GL_UNSIGNED_INT, nullptr); BindVertexArray(0);
+        }
     };
 
     SdlGlRenderDevice::SdlGlRenderDevice(const int width, const int height, std::string title)
@@ -502,12 +614,18 @@ namespace MiniEngine
                 m_impl->DeleteVertexArrays(1, &pair.second.vao);
             }
             m_impl->meshes.clear();
+            m_impl->uiTextureResources.clear();
             for (const auto& pair : m_impl->textures) glDeleteTextures(1, &pair.second);
             m_impl->textures.clear();
+            if (m_impl->fontAtlas) { glDeleteTextures(1, &m_impl->fontAtlas); m_impl->fontAtlas = 0; }
             if (m_impl->program) { m_impl->DeleteProgram(m_impl->program); m_impl->program = 0; }
             if (m_impl->shadowProgram) { m_impl->DeleteProgram(m_impl->shadowProgram); m_impl->shadowProgram = 0; }
             if (m_impl->toneProgram) { m_impl->DeleteProgram(m_impl->toneProgram); m_impl->toneProgram = 0; }
+            if (m_impl->uiProgram) { m_impl->DeleteProgram(m_impl->uiProgram); m_impl->uiProgram = 0; }
             if (m_impl->fullScreenVao) { m_impl->DeleteVertexArrays(1, &m_impl->fullScreenVao); m_impl->fullScreenVao = 0; }
+            if (m_impl->uiVertexBuffer) { m_impl->DeleteBuffers(1, &m_impl->uiVertexBuffer); m_impl->uiVertexBuffer = 0; }
+            if (m_impl->uiIndexBuffer) { m_impl->DeleteBuffers(1, &m_impl->uiIndexBuffer); m_impl->uiIndexBuffer = 0; }
+            if (m_impl->uiVao) { m_impl->DeleteVertexArrays(1, &m_impl->uiVao); m_impl->uiVao = 0; }
             SDL_GL_DeleteContext(m_impl->context); m_impl->context = nullptr;
         }
         if (m_impl->window) { SDL_DestroyWindow(m_impl->window); m_impl->window = nullptr; }
@@ -538,6 +656,9 @@ namespace MiniEngine
         m_impl->input.primaryAction = (SDL_GetMouseState(nullptr, nullptr) & SDL_BUTTON(SDL_BUTTON_LEFT)) != 0;
         int cursorX = 0, cursorY = 0; SDL_GetMouseState(&cursorX, &cursorY); m_impl->input.cursorX = static_cast<float>(cursorX); m_impl->input.cursorY = static_cast<float>(cursorY);
         m_impl->input.quitRequested = keys[SDL_SCANCODE_ESCAPE] != 0;
+        const bool uiNext = keys[SDL_SCANCODE_TAB] != 0, uiAccept = keys[SDL_SCANCODE_RETURN] != 0 || keys[SDL_SCANCODE_SPACE] != 0;
+        m_impl->input.uiNavigateNext = uiNext && !m_impl->previousUiNext; m_impl->input.uiAccept = uiAccept && !m_impl->previousUiAccept;
+        m_impl->previousUiNext = uiNext; m_impl->previousUiAccept = uiAccept;
         return !m_impl->input.quitRequested;
     }
 
@@ -545,6 +666,12 @@ namespace MiniEngine
     float SdlGlRenderDevice::GetAspectRatio() const
     {
         return m_impl && m_impl->sceneTargetEnabled && m_impl->sceneHeight > 0 ? static_cast<float>(m_impl->sceneWidth) / static_cast<float>(m_impl->sceneHeight) : m_aspect;
+    }
+    Vec2 SdlGlRenderDevice::GetViewportSize() const
+    {
+        if (m_impl && m_impl->sceneTargetEnabled) return {static_cast<float>(m_impl->sceneWidth), static_cast<float>(m_impl->sceneHeight)};
+        int width = 0, height = 0; if (m_impl && m_impl->window) SDL_GL_GetDrawableSize(m_impl->window, &width, &height);
+        return {static_cast<float>(width), static_cast<float>(height)};
     }
 
     void SdlGlRenderDevice::BeginShadowPass(const FrameView& view)
@@ -649,11 +776,46 @@ namespace MiniEngine
         if (m_impl->sceneTargetEnabled) { width = m_impl->sceneWidth; height = m_impl->sceneHeight; }
         else SDL_GL_GetDrawableSize(m_impl->window, &width, &height);
         glDisable(GL_DEPTH_TEST); glEnable(GL_BLEND); glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA); glEnable(GL_SCISSOR_TEST);
+        auto appendQuad = [](std::vector<Impl::UiVertex>& vertices, std::vector<std::uint32_t>& indices, const UIRect& rect, const float u0, const float v0, const float u1, const float v1)
+        {
+            const std::uint32_t base = static_cast<std::uint32_t>(vertices.size());
+            vertices.push_back({{rect.x, rect.y}, {u0, v0}}); vertices.push_back({{rect.x + rect.width, rect.y}, {u1, v0}});
+            vertices.push_back({{rect.x + rect.width, rect.y + rect.height}, {u1, v1}}); vertices.push_back({{rect.x, rect.y + rect.height}, {u0, v1}});
+            indices.insert(indices.end(), {base, base + 1, base + 2, base, base + 2, base + 3});
+        };
         for (const auto& command : commands)
         {
-            if (command.type == UIWidgetType::Label || command.rect.width <= 0.0f || command.rect.height <= 0.0f) continue;
+            if (command.rect.width <= 0.0f || command.rect.height <= 0.0f) continue;
             glScissor(static_cast<GLint>(command.rect.x), height - static_cast<GLint>(command.rect.y + command.rect.height), static_cast<GLsizei>(command.rect.width), static_cast<GLsizei>(command.rect.height));
-            glClearColor(command.color.x, command.color.y, command.color.z, command.color.w); glClear(GL_COLOR_BUFFER_BIT);
+            if (command.type == UIWidgetType::Panel || command.type == UIWidgetType::Button || command.type == UIWidgetType::Image)
+            {
+                std::vector<Impl::UiVertex> vertices; std::vector<std::uint32_t> indices; appendQuad(vertices, indices, command.rect, 0.0f, 0.0f, 1.0f, 1.0f);
+                const GLuint image = command.type == UIWidgetType::Image ? m_impl->GetOrCreateUiTexture(command.imagePath) : 0;
+                m_impl->DrawUiGeometry(vertices, indices, command.color, image, width, height);
+            }
+            if (!command.text.empty() && (command.type == UIWidgetType::Label || command.type == UIWidgetType::Button))
+            {
+                std::vector<Impl::UiVertex> vertices; std::vector<std::uint32_t> indices;
+                const float glyphSize = std::max(6.0f, command.fontSize), advance = glyphSize * 0.62f;
+                float cursorX = command.rect.x;
+                if (command.type == UIWidgetType::Button) cursorX += std::max(0.0f, (command.rect.width - advance * static_cast<float>(command.text.size())) * 0.5f);
+                float cursorY = command.rect.y + std::max(0.0f, (command.rect.height - glyphSize) * 0.5f);
+                for (const unsigned char byte : command.text)
+                {
+                    if (byte == '\n') { cursorX = command.rect.x; cursorY += glyphSize; continue; }
+                    const int character = byte >= 32 && byte < 127 ? byte : '?';
+                    if (character != ' ')
+                    {
+                        const int column = character % 16, row = character / 16;
+                        const float u0 = (column * 32.0f + 0.5f) / 512.0f, v0 = (row * 32.0f + 0.5f) / 256.0f;
+                        const float u1 = ((column + 1) * 32.0f - 0.5f) / 512.0f, v1 = ((row + 1) * 32.0f - 0.5f) / 256.0f;
+                        appendQuad(vertices, indices, {cursorX, cursorY, glyphSize, glyphSize}, u0, v0, u1, v1);
+                    }
+                    cursorX += advance;
+                }
+                const Vec4 textColor = command.type == UIWidgetType::Button ? Vec4{1.0f, 1.0f, 1.0f, command.color.w} : command.color;
+                m_impl->DrawUiGeometry(vertices, indices, textColor, m_impl->fontAtlas, width, height);
+            }
         }
         glDisable(GL_SCISSOR_TEST); glDisable(GL_BLEND); glEnable(GL_DEPTH_TEST);
     }

@@ -142,6 +142,8 @@ namespace MiniEngine
         const float deltaTime = m_paused ? 0.0f : rawDeltaTime * m_timeScale;
         const InputState& input = m_renderer.GetInputState();
         m_uiSystem.Update(input.cursorX, input.cursorY, input.primaryAction);
+        if (input.uiNavigateNext) m_uiSystem.FocusNext();
+        if (input.uiAccept) m_uiSystem.ActivateFocused();
         m_inputSystem.Update(input);
         if (deltaTime > 0.0f)
         {
@@ -196,6 +198,11 @@ namespace MiniEngine
 
         m_resourceManager.LoadAsync<MeshResource>("assets/player.mesh");
         m_resourceManager.LoadAsync<MaterialResource>("assets/default.mat");
+        m_uiSystem.AddPanel("demo.hud", {16.0f, 16.0f, 270.0f, 112.0f}, {0.05f, 0.08f, 0.13f, 0.88f});
+        m_uiSystem.SetLayout("demo.hud", UILayout::Vertical, 6.0f, 10.0f);
+        m_uiSystem.AddLabel("demo.title", "TinyEngine Runtime UI", {0.0f, 0.0f, 200.0f, 30.0f}).fontSize = 18.0f;
+        m_uiSystem.AddButton("demo.action", "Activate", {0.0f, 0.0f, 150.0f, 40.0f}, [this]() { m_logger.Info("Runtime UI button activated."); });
+        m_uiSystem.SetParent("demo.title", "demo.hud"); m_uiSystem.SetParent("demo.action", "demo.hud");
         SceneSerializer::Save(m_world, "Saved/Demo.scene");
     }
 

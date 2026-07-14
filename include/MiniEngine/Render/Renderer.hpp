@@ -27,6 +27,8 @@ namespace MiniEngine
         bool primaryAction = false;
         bool sprint = false;
         bool quitRequested = false;
+        bool uiNavigateNext = false;
+        bool uiAccept = false;
         float cursorX = 0.0f, cursorY = 0.0f;
     };
 
@@ -71,6 +73,7 @@ namespace MiniEngine
         virtual bool PumpEvents() = 0;
         virtual const InputState& GetInputState() const = 0;
         virtual float GetAspectRatio() const = 0;
+        virtual Vec2 GetViewportSize() const = 0;
         virtual void BeginShadowPass(const FrameView& view) = 0;
         virtual void DrawShadow(const RenderItem& item) = 0;
         virtual void EndShadowPass() = 0;
@@ -89,6 +92,7 @@ namespace MiniEngine
         bool PumpEvents() override;
         const InputState& GetInputState() const override;
         float GetAspectRatio() const override;
+        Vec2 GetViewportSize() const override;
         void BeginShadowPass(const FrameView& view) override;
         void DrawShadow(const RenderItem& item) override;
         void EndShadowPass() override;

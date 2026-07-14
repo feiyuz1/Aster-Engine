@@ -19,6 +19,7 @@ namespace MiniEngine
         bool PumpEvents() override;
         const InputState& GetInputState() const override;
         float GetAspectRatio() const override;
+        Vec2 GetViewportSize() const override;
         void BeginShadowPass(const FrameView& view) override;
         void DrawShadow(const RenderItem& item) override;
         void EndShadowPass() override;

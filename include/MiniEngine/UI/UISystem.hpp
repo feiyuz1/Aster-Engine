@@ -4,13 +4,16 @@
 
 #include <functional>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace MiniEngine
 {
     struct UIRect { float x = 0.0f, y = 0.0f, width = 100.0f, height = 30.0f; bool Contains(float px, float py) const { return px >= x && py >= y && px <= x + width && py <= y + height; } };
     enum class UIWidgetType { Panel, Label, Button, Image };
-    struct UIDrawCommand { UIWidgetType type = UIWidgetType::Panel; UIRect rect; Vec4 color{1, 1, 1, 1}; std::string text; std::string imagePath; };
+    enum class UIAnchor { TopLeft, TopRight, BottomLeft, BottomRight, Center, Stretch };
+    enum class UILayout { Absolute, Horizontal, Vertical };
+    struct UIDrawCommand { UIWidgetType type = UIWidgetType::Panel; UIRect rect; Vec4 color{1, 1, 1, 1}; std::string text; std::string imagePath; float fontSize = 18.0f; };
 
     struct UIWidget
     {
@@ -24,6 +27,12 @@ namespace MiniEngine
         bool enabled = true;
         bool focused = false;
         std::function<void()> onClick;
+        UIAnchor anchor = UIAnchor::TopLeft;
+        UILayout layout = UILayout::Absolute;
+        std::string parentId;
+        float spacing = 4.0f;
+        float padding = 4.0f;
+        float fontSize = 18.0f;
     };
 
     class UISystem
@@ -38,12 +47,22 @@ namespace MiniEngine
         void Clear();
         void Update(float cursorX, float cursorY, bool primaryDown);
         void FocusNext();
+        void ActivateFocused();
+        bool SetParent(const std::string& childId, const std::string& parentId);
+        bool SetLayout(const std::string& id, UILayout layout, float spacing = 4.0f, float padding = 4.0f);
+        bool SetAnchor(const std::string& id, UIAnchor anchor);
+        void SetViewportSize(float width, float height);
         const std::vector<UIDrawCommand>& BuildDrawList();
         const std::string& GetFocusedId() const;
     private:
         std::vector<UIWidget> m_widgets;
         std::vector<UIDrawCommand> m_drawList;
         std::string m_focusedId;
+        std::unordered_map<std::string, UIRect> m_resolvedRects;
+        float m_viewportWidth = 1280.0f;
+        float m_viewportHeight = 720.0f;
         bool m_wasPrimaryDown = false;
+
+        void ResolveLayout();
     };
 }

@@ -212,6 +212,14 @@ int main()
     ui.AddButton("start", "Start", {10, 10, 120, 40}, [&clicked]() { clicked = true; });
     ui.Update(20, 20, true); ui.Update(20, 20, false);
     CHECK(clicked && ui.GetFocusedId() == "start" && ui.BuildDrawList().size() == 2);
+    UISystem layoutUi; int activated = 0; layoutUi.SetViewportSize(800.0f, 600.0f);
+    layoutUi.AddPanel("menu", {0, 0, 300, 160}); layoutUi.SetAnchor("menu", UIAnchor::Center); layoutUi.SetLayout("menu", UILayout::Vertical, 8.0f, 10.0f);
+    layoutUi.AddLabel("title", "TinyEngine", {0, 0, 100, 28}); layoutUi.AddButton("play", "Play", {0, 0, 120, 36}, [&activated]() { ++activated; });
+    CHECK(layoutUi.SetParent("title", "menu") && layoutUi.SetParent("play", "menu"));
+    const auto& layoutCommands = layoutUi.BuildDrawList();
+    CHECK(layoutCommands.size() == 3 && std::abs(layoutCommands[0].rect.x - 250.0f) < 0.001f);
+    CHECK(layoutCommands[1].rect.x == 260.0f && layoutCommands[2].rect.y == layoutCommands[1].rect.y + layoutCommands[1].rect.height + 8.0f);
+    layoutUi.FocusNext(); layoutUi.ActivateFocused(); CHECK(activated == 1 && layoutUi.GetFocusedId() == "play");
 
     if (failures == 0) std::cout << "All TinyEngine tests passed\n";
     return failures == 0 ? 0 : 1;
