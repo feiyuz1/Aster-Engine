@@ -1,11 +1,11 @@
-#include "MiniEngine/Runtime/Engine.hpp"
 #include "MiniEngine/Core/CrashReporter.hpp"
+#include "MiniEngine/Runtime/Engine.hpp"
 
 #include <cstdint>
-#include <limits>
 #include <cstdlib>
+#include <limits>
 
-int main(int argc, char** argv)
+int main(int argc, char **argv)
 {
     MiniEngine::CrashReporter::Install("TinyEngineDemo");
     std::uint32_t maxFrames = 0;

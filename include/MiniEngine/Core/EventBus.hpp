@@ -8,51 +8,45 @@
 
 namespace MiniEngine
 {
-    struct Event
-    {
-        virtual ~Event() = default;
-    };
+struct Event
+{
+    virtual ~Event() = default;
+};
 
-    class EventBus
-    {
-    public:
-        template<typename TEvent>
-        using Handler = std::function<void(const TEvent&)>;
+class EventBus
+{
+  public:
+    template <typename TEvent> using Handler = std::function<void(const TEvent &)>;
 
-        template<typename TEvent>
-        void Subscribe(Handler<TEvent> handler)
+    template <typename TEvent> void Subscribe(Handler<TEvent> handler)
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        m_handlers[typeid(TEvent)].push_back(
+            [captured = std::move(handler)](const Event &event) { captured(static_cast<const TEvent &>(event)); });
+    }
+
+    template <typename TEvent> void Publish(const TEvent &event)
+    {
+        std::vector<BaseHandler> localHandlers;
         {
             std::lock_guard<std::mutex> lock(m_mutex);
-            m_handlers[typeid(TEvent)].push_back(
-                [captured = std::move(handler)](const Event& event)
-                {
-                    captured(static_cast<const TEvent&>(event));
-                });
+            const auto found = m_handlers.find(typeid(TEvent));
+            if (found == m_handlers.end())
+            {
+                return;
+            }
+            localHandlers = found->second;
         }
 
-        template<typename TEvent>
-        void Publish(const TEvent& event)
+        for (const auto &handler : localHandlers)
         {
-            std::vector<BaseHandler> localHandlers;
-            {
-                std::lock_guard<std::mutex> lock(m_mutex);
-                const auto found = m_handlers.find(typeid(TEvent));
-                if (found == m_handlers.end())
-                {
-                    return;
-                }
-                localHandlers = found->second;
-            }
-
-            for (const auto& handler : localHandlers)
-            {
-                handler(event);
-            }
+            handler(event);
         }
+    }
 
-    private:
-        using BaseHandler = std::function<void(const Event&)>;
-        std::unordered_map<std::type_index, std::vector<BaseHandler>> m_handlers;
-        std::mutex m_mutex;
-    };
-}
+  private:
+    using BaseHandler = std::function<void(const Event &)>;
+    std::unordered_map<std::type_index, std::vector<BaseHandler>> m_handlers;
+    std::mutex m_mutex;
+};
+} // namespace MiniEngine

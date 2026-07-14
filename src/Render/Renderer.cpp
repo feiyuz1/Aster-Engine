@@ -12,173 +12,308 @@
 
 namespace MiniEngine
 {
-    bool NullRenderDevice::Initialize() { return true; }
-    void NullRenderDevice::Shutdown() {}
-    bool NullRenderDevice::PumpEvents() { return true; }
-    const InputState& NullRenderDevice::GetInputState() const { return m_inputState; }
-    float NullRenderDevice::GetAspectRatio() const { return 16.0f / 9.0f; }
-    Vec2 NullRenderDevice::GetViewportSize() const { return {1280.0f, 720.0f}; }
-    void NullRenderDevice::BeginShadowPass(const FrameView&) {}
-    void NullRenderDevice::DrawShadow(const RenderItem&) {}
-    void NullRenderDevice::EndShadowPass() {}
-    void NullRenderDevice::BeginFrame(const FrameView&) {}
-    void NullRenderDevice::Draw(const RenderItem&) {}
-    void NullRenderDevice::EndFrame() {}
-    void NullRenderDevice::DrawUi(const std::vector<UIDrawCommand>&) {}
-    void NullRenderDevice::Present() {}
+bool NullRenderDevice::Initialize()
+{
+    return true;
+}
+void NullRenderDevice::Shutdown()
+{
+}
+bool NullRenderDevice::PumpEvents()
+{
+    return true;
+}
+const InputState &NullRenderDevice::GetInputState() const
+{
+    return m_inputState;
+}
+float NullRenderDevice::GetAspectRatio() const
+{
+    return 16.0f / 9.0f;
+}
+Vec2 NullRenderDevice::GetViewportSize() const
+{
+    return {1280.0f, 720.0f};
+}
+void NullRenderDevice::BeginShadowPass(const FrameView &)
+{
+}
+void NullRenderDevice::DrawShadow(const RenderItem &)
+{
+}
+void NullRenderDevice::EndShadowPass()
+{
+}
+void NullRenderDevice::BeginFrame(const FrameView &)
+{
+}
+void NullRenderDevice::Draw(const RenderItem &)
+{
+}
+void NullRenderDevice::EndFrame()
+{
+}
+void NullRenderDevice::DrawUi(const std::vector<UIDrawCommand> &)
+{
+}
+void NullRenderDevice::Present()
+{
+}
 
-    void RenderQueue::AddItem(const RenderItem& item) { m_items.push_back(item); }
-    void RenderQueue::Sort()
+void RenderQueue::AddItem(const RenderItem &item)
+{
+    m_items.push_back(item);
+}
+void RenderQueue::Sort()
+{
+    std::sort(m_items.begin(), m_items.end(), [](const RenderItem &lhs, const RenderItem &rhs) {
+        if (lhs.transparent != rhs.transparent)
+            return !lhs.transparent;
+        return lhs.transparent ? lhs.distanceToCamera > rhs.distanceToCamera : lhs.distanceToCamera < rhs.distanceToCamera;
+    });
+}
+void RenderQueue::Clear()
+{
+    m_items.clear();
+}
+const std::vector<RenderItem> &RenderQueue::GetItems() const
+{
+    return m_items;
+}
+
+void Renderer::SetLogger(Logger *logger)
+{
+    m_logger = logger;
+}
+void Renderer::SetResourceManager(ResourceManager *resources)
+{
+    m_resources = resources;
+}
+
+bool Renderer::Initialize(std::unique_ptr<RenderDevice> device)
+{
+    m_device = std::move(device);
+    return m_device && m_device->Initialize();
+}
+
+void Renderer::Shutdown()
+{
+    m_renderQueue.Clear();
+    m_lastLodSwitches = 0;
+    m_lastCulled = 0;
+    if (m_device)
     {
-        std::sort(m_items.begin(), m_items.end(), [](const RenderItem& lhs, const RenderItem& rhs)
+        m_device->Shutdown();
+        m_device.reset();
+    }
+}
+
+bool Renderer::PumpEvents()
+{
+    return m_device && m_device->PumpEvents();
+}
+const InputState &Renderer::GetInputState() const
+{
+    static const InputState empty{};
+    return m_device ? m_device->GetInputState() : empty;
+}
+
+void Renderer::BuildRenderQueue(World &world)
+{
+    m_renderQueue.Clear();
+    Vec3 cameraPosition{0.0f, 0.0f, 5.0f};
+    Vec3 cameraForward{0.0f, 0.0f, -1.0f};
+    CameraComponent camera{};
+    world.GetComponentManager().ForEach<CameraComponent>([&](const Entity entity, CameraComponent &candidate) {
+        if (!candidate.primary)
+            return;
+        camera = candidate;
+        if (const auto *transform = world.GetComponent<TransformComponent>(entity))
         {
-            if (lhs.transparent != rhs.transparent) return !lhs.transparent;
-            return lhs.transparent ? lhs.distanceToCamera > rhs.distanceToCamera : lhs.distanceToCamera < rhs.distanceToCamera;
-        });
-    }
-    void RenderQueue::Clear() { m_items.clear(); }
-    const std::vector<RenderItem>& RenderQueue::GetItems() const { return m_items; }
-
-    void Renderer::SetLogger(Logger* logger) { m_logger = logger; }
-    void Renderer::SetResourceManager(ResourceManager* resources) { m_resources = resources; }
-
-    bool Renderer::Initialize(std::unique_ptr<RenderDevice> device)
-    {
-        m_device = std::move(device);
-        return m_device && m_device->Initialize();
-    }
-
-    void Renderer::Shutdown()
-    {
-        m_renderQueue.Clear();
-        m_lastLodSwitches = 0;
-        m_lastCulled = 0;
-        if (m_device) { m_device->Shutdown(); m_device.reset(); }
-    }
-
-    bool Renderer::PumpEvents() { return m_device && m_device->PumpEvents(); }
-    const InputState& Renderer::GetInputState() const
-    {
-        static const InputState empty{};
-        return m_device ? m_device->GetInputState() : empty;
-    }
-
-    void Renderer::BuildRenderQueue(World& world)
-    {
-        m_renderQueue.Clear();
-        Vec3 cameraPosition{0.0f, 0.0f, 5.0f};
-        Vec3 cameraForward{0.0f, 0.0f, -1.0f};
-        CameraComponent camera{};
-        world.GetComponentManager().ForEach<CameraComponent>([&](const Entity entity, CameraComponent& candidate)
-        {
-            if (!candidate.primary) return;
-            camera = candidate;
-            if (const auto* transform = world.GetComponent<TransformComponent>(entity))
-            {
-                cameraPosition = transform->position;
-                const float pitch = DegreesToRadians(transform->rotation.x);
-                const float yaw = DegreesToRadians(transform->rotation.y);
-                cameraForward = Normalize({std::cos(pitch) * std::sin(yaw), std::sin(pitch), -std::cos(pitch) * std::cos(yaw)});
-            }
-        });
-        if (m_cameraOverrideEnabled)
-        {
-            cameraPosition = m_cameraOverridePosition; camera.fov = m_cameraOverrideFov;
-            const float pitch = DegreesToRadians(m_cameraOverrideRotation.x), yaw = DegreesToRadians(m_cameraOverrideRotation.y);
+            cameraPosition = transform->position;
+            const float pitch = DegreesToRadians(transform->rotation.x);
+            const float yaw = DegreesToRadians(transform->rotation.y);
             cameraForward = Normalize({std::cos(pitch) * std::sin(yaw), std::sin(pitch), -std::cos(pitch) * std::cos(yaw)});
         }
-        m_frameView.cameraPosition = cameraPosition;
-        m_frameView.environmentTexture = m_resources && !m_environmentPath.empty() ? m_resources->Load<TextureResource>(m_environmentPath) : nullptr;
-        m_frameView.view = LookAt(cameraPosition, cameraPosition + cameraForward, {0.0f, 1.0f, 0.0f});
-        m_frameView.projection = Perspective(camera.fov, m_device ? m_device->GetAspectRatio() : 16.0f / 9.0f, camera.nearPlane, camera.farPlane);
-        m_frameView.lightCount = 0;
-        world.GetComponentManager().ForEach<LightComponent>([&](Entity, LightComponent& light)
+    });
+    if (m_cameraOverrideEnabled)
+    {
+        cameraPosition = m_cameraOverridePosition;
+        camera.fov = m_cameraOverrideFov;
+        const float pitch = DegreesToRadians(m_cameraOverrideRotation.x), yaw = DegreesToRadians(m_cameraOverrideRotation.y);
+        cameraForward = Normalize({std::cos(pitch) * std::sin(yaw), std::sin(pitch), -std::cos(pitch) * std::cos(yaw)});
+    }
+    m_frameView.cameraPosition = cameraPosition;
+    m_frameView.environmentTexture =
+        m_resources && !m_environmentPath.empty() ? m_resources->Load<TextureResource>(m_environmentPath) : nullptr;
+    m_frameView.view = LookAt(cameraPosition, cameraPosition + cameraForward, {0.0f, 1.0f, 0.0f});
+    m_frameView.projection =
+        Perspective(camera.fov, m_device ? m_device->GetAspectRatio() : 16.0f / 9.0f, camera.nearPlane, camera.farPlane);
+    m_frameView.lightCount = 0;
+    world.GetComponentManager().ForEach<LightComponent>([&](Entity, LightComponent &light) {
+        if (m_frameView.lightCount >= static_cast<int>(FrameView::MaxLights))
+            return;
+        const int index = m_frameView.lightCount++;
+        m_frameView.lightDirections[index] = Normalize(light.direction);
+        m_frameView.lightColors[index] = light.color;
+        m_frameView.lightIntensities[index] = light.intensity;
+        if (index == 0)
         {
-            if (m_frameView.lightCount >= static_cast<int>(FrameView::MaxLights)) return;
-            const int index = m_frameView.lightCount++;
-            m_frameView.lightDirections[index] = Normalize(light.direction);
-            m_frameView.lightColors[index] = light.color;
-            m_frameView.lightIntensities[index] = light.intensity;
-            if (index == 0) { m_frameView.lightDirection = m_frameView.lightDirections[index]; m_frameView.lightColor = light.color; m_frameView.lightIntensity = light.intensity; }
-        });
-        if (m_frameView.lightCount == 0)
-        {
-            m_frameView.lightCount = 1; m_frameView.lightDirections[0] = m_frameView.lightDirection;
-            m_frameView.lightColors[0] = m_frameView.lightColor; m_frameView.lightIntensities[0] = m_frameView.lightIntensity;
+            m_frameView.lightDirection = m_frameView.lightDirections[index];
+            m_frameView.lightColor = light.color;
+            m_frameView.lightIntensity = light.intensity;
         }
-        const Vec3 shadowFocus = cameraPosition + cameraForward * 10.0f;
-        const Vec3 lightDirection = Normalize(m_frameView.lightDirection);
-        const Vec3 shadowUp = std::abs(Dot(lightDirection, Vec3{0.0f, 1.0f, 0.0f})) > 0.95f ? Vec3{0.0f, 0.0f, 1.0f} : Vec3{0.0f, 1.0f, 0.0f};
-        m_frameView.lightViewProjection = Orthographic(-24.0f, 24.0f, -24.0f, 24.0f, 0.1f, 80.0f) *
-            LookAt(shadowFocus - lightDirection * 35.0f, shadowFocus, shadowUp);
+    });
+    if (m_frameView.lightCount == 0)
+    {
+        m_frameView.lightCount = 1;
+        m_frameView.lightDirections[0] = m_frameView.lightDirection;
+        m_frameView.lightColors[0] = m_frameView.lightColor;
+        m_frameView.lightIntensities[0] = m_frameView.lightIntensity;
+    }
+    const Vec3 shadowFocus = cameraPosition + cameraForward * 10.0f;
+    const Vec3 lightDirection = Normalize(m_frameView.lightDirection);
+    const Vec3 shadowUp = std::abs(Dot(lightDirection, Vec3{0.0f, 1.0f, 0.0f})) > 0.95f ? Vec3{0.0f, 0.0f, 1.0f} : Vec3{0.0f, 1.0f, 0.0f};
+    m_frameView.lightViewProjection =
+        Orthographic(-24.0f, 24.0f, -24.0f, 24.0f, 0.1f, 80.0f) * LookAt(shadowFocus - lightDirection * 35.0f, shadowFocus, shadowUp);
 
-        world.GetComponentManager().ForEach<MeshComponent>([&](const Entity entity, MeshComponent& meshComponent)
+    world.GetComponentManager().ForEach<MeshComponent>([&](const Entity entity, MeshComponent &meshComponent) {
+        if (!m_resources)
+            return;
+        if (const auto *active = world.GetComponent<ActiveComponent>(entity); active && !active->active)
+            return;
+        auto material = m_resources->Load<MaterialResource>(meshComponent.materialPath);
+        auto loadTexture = [&](const std::string &path) {
+            return path.empty() ? std::shared_ptr<TextureResource>{} : m_resources->Load<TextureResource>(path);
+        };
+        const auto *transform = world.GetComponent<TransformComponent>(entity);
+        const Vec3 position = transform ? transform->position : Vec3{};
+        const Vec3 offset = position - cameraPosition;
+        const float distance = Length(offset);
+        const float facing = distance > 0.001f ? Dot(offset / distance, cameraForward) : 1.0f;
+        const float halfFov = DegreesToRadians(camera.fov * 0.65f);
+        if (distance > camera.farPlane || (distance > camera.nearPlane && facing < std::cos(halfFov)))
         {
-            if (!m_resources) return;
-            if (const auto* active = world.GetComponent<ActiveComponent>(entity); active && !active->active) return;
-            auto material = m_resources->Load<MaterialResource>(meshComponent.materialPath);
-            auto loadTexture = [&](const std::string& path) { return path.empty() ? std::shared_ptr<TextureResource>{} : m_resources->Load<TextureResource>(path); };
-            const auto* transform = world.GetComponent<TransformComponent>(entity);
-            const Vec3 position = transform ? transform->position : Vec3{};
-            const Vec3 offset = position - cameraPosition;
-            const float distance = Length(offset);
-            const float facing = distance > 0.001f ? Dot(offset / distance, cameraForward) : 1.0f;
-            const float halfFov = DegreesToRadians(camera.fov * 0.65f);
-            if (distance > camera.farPlane || (distance > camera.nearPlane && facing < std::cos(halfFov))) { ++m_lastCulled; return; }
-            std::string meshPath = meshComponent.meshPath;
-            if (const auto* lod = world.GetComponent<LodComponent>(entity))
+            ++m_lastCulled;
+            return;
+        }
+        std::string meshPath = meshComponent.meshPath;
+        if (const auto *lod = world.GetComponent<LodComponent>(entity))
+        {
+            if (distance >= lod->level2Distance && !lod->level2MeshPath.empty())
             {
-                if (distance >= lod->level2Distance && !lod->level2MeshPath.empty()) { meshPath = lod->level2MeshPath; ++m_lastLodSwitches; }
-                else if (distance >= lod->level1Distance && !lod->level1MeshPath.empty()) { meshPath = lod->level1MeshPath; ++m_lastLodSwitches; }
+                meshPath = lod->level2MeshPath;
+                ++m_lastLodSwitches;
             }
-            auto mesh = m_resources->Load<MeshResource>(meshPath); if (!mesh) return;
-            const bool transparent = material && material->IsTransparent();
-            RenderItem item; item.entity = entity; item.distanceToCamera = distance; item.model = world.GetWorldMatrix(entity); item.mesh = std::move(mesh); item.transparent = transparent;
-            if (material)
+            else if (distance >= lod->level1Distance && !lod->level1MeshPath.empty())
             {
-                item.texture = loadTexture(material->GetTexturePath()); item.normalTexture = loadTexture(material->GetNormalTexturePath());
-                item.metallicTexture = loadTexture(material->GetMetallicTexturePath()); item.roughnessTexture = loadTexture(material->GetRoughnessTexturePath());
-                item.aoTexture = loadTexture(material->GetAoTexturePath()); item.emissiveTexture = loadTexture(material->GetEmissiveTexturePath());
+                meshPath = lod->level1MeshPath;
+                ++m_lastLodSwitches;
             }
-            item.material = std::move(material); m_renderQueue.AddItem(item);
-        });
-        m_renderQueue.Sort();
-    }
-
-    void Renderer::RenderFrame(World& world)
-    {
-        if (!m_device) return;
-        const auto totalStart = std::chrono::steady_clock::now();
-        BuildRenderQueue(world);
-        const auto queueEnd = std::chrono::steady_clock::now();
-        m_device->BeginShadowPass(m_frameView);
-        for (const auto& item : m_renderQueue.GetItems()) if (!item.transparent) m_device->DrawShadow(item);
-        m_device->EndShadowPass();
-        const auto shadowEnd = std::chrono::steady_clock::now();
-        m_device->BeginFrame(m_frameView);
-        for (const auto& item : m_renderQueue.GetItems()) m_device->Draw(item);
-        if (m_uiSystem) { const Vec2 viewport = m_device->GetViewportSize(); m_uiSystem->SetViewportSize(viewport.x, viewport.y); m_device->DrawUi(m_uiSystem->BuildDrawList()); }
-        m_device->EndFrame();
-        if (m_overlayCallback) m_overlayCallback();
-        m_device->Present();
-        const auto sceneEnd = std::chrono::steady_clock::now();
-        m_lastDrawCalls = m_renderQueue.GetItems().size();
-        const auto milliseconds = [](const auto start, const auto end) { return std::chrono::duration<float, std::milli>(end - start).count(); };
-        m_lastFrameProfile = {milliseconds(totalStart, queueEnd), milliseconds(queueEnd, shadowEnd), milliseconds(shadowEnd, sceneEnd), milliseconds(totalStart, sceneEnd)};
-        if (m_logger) m_logger->Debug("RenderFrame draw calls: " + std::to_string(m_lastDrawCalls));
-    }
-
-    std::size_t Renderer::GetLastDrawCallCount() const { return m_lastDrawCalls; }
-    const FrameView& Renderer::GetFrameView() const { return m_frameView; }
-    RenderDevice* Renderer::GetDevice() { return m_device.get(); }
-    void Renderer::SetOverlayCallback(std::function<void()> callback) { m_overlayCallback = std::move(callback); }
-    void Renderer::SetUISystem(UISystem* uiSystem) { m_uiSystem = uiSystem; }
-    std::size_t Renderer::GetLastCulledCount() const { return m_lastCulled; }
-    std::size_t Renderer::GetLastLodSwitchCount() const { return m_lastLodSwitches; }
-    const FrameProfile& Renderer::GetLastFrameProfile() const { return m_lastFrameProfile; }
-    void Renderer::SetCameraOverride(const bool enabled, const Vec3& position, const Vec3& rotation, const float fov)
-    {
-        m_cameraOverrideEnabled = enabled; m_cameraOverridePosition = position; m_cameraOverrideRotation = rotation; m_cameraOverrideFov = fov;
-    }
-    void Renderer::SetEnvironmentPath(std::string path) { m_environmentPath = std::move(path); }
+        }
+        auto mesh = m_resources->Load<MeshResource>(meshPath);
+        if (!mesh)
+            return;
+        const bool transparent = material && material->IsTransparent();
+        RenderItem item;
+        item.entity = entity;
+        item.distanceToCamera = distance;
+        item.model = world.GetWorldMatrix(entity);
+        item.mesh = std::move(mesh);
+        item.transparent = transparent;
+        if (material)
+        {
+            item.texture = loadTexture(material->GetTexturePath());
+            item.normalTexture = loadTexture(material->GetNormalTexturePath());
+            item.metallicTexture = loadTexture(material->GetMetallicTexturePath());
+            item.roughnessTexture = loadTexture(material->GetRoughnessTexturePath());
+            item.aoTexture = loadTexture(material->GetAoTexturePath());
+            item.emissiveTexture = loadTexture(material->GetEmissiveTexturePath());
+        }
+        item.material = std::move(material);
+        m_renderQueue.AddItem(item);
+    });
+    m_renderQueue.Sort();
 }
+
+void Renderer::RenderFrame(World &world)
+{
+    if (!m_device)
+        return;
+    const auto totalStart = std::chrono::steady_clock::now();
+    BuildRenderQueue(world);
+    const auto queueEnd = std::chrono::steady_clock::now();
+    m_device->BeginShadowPass(m_frameView);
+    for (const auto &item : m_renderQueue.GetItems())
+        if (!item.transparent)
+            m_device->DrawShadow(item);
+    m_device->EndShadowPass();
+    const auto shadowEnd = std::chrono::steady_clock::now();
+    m_device->BeginFrame(m_frameView);
+    for (const auto &item : m_renderQueue.GetItems())
+        m_device->Draw(item);
+    if (m_uiSystem)
+    {
+        const Vec2 viewport = m_device->GetViewportSize();
+        m_uiSystem->SetViewportSize(viewport.x, viewport.y);
+        m_device->DrawUi(m_uiSystem->BuildDrawList());
+    }
+    m_device->EndFrame();
+    if (m_overlayCallback)
+        m_overlayCallback();
+    m_device->Present();
+    const auto sceneEnd = std::chrono::steady_clock::now();
+    m_lastDrawCalls = m_renderQueue.GetItems().size();
+    const auto milliseconds = [](const auto start, const auto end) {
+        return std::chrono::duration<float, std::milli>(end - start).count();
+    };
+    m_lastFrameProfile = {milliseconds(totalStart, queueEnd), milliseconds(queueEnd, shadowEnd), milliseconds(shadowEnd, sceneEnd),
+                          milliseconds(totalStart, sceneEnd)};
+    if (m_logger)
+        m_logger->Debug("RenderFrame draw calls: " + std::to_string(m_lastDrawCalls));
+}
+
+std::size_t Renderer::GetLastDrawCallCount() const
+{
+    return m_lastDrawCalls;
+}
+const FrameView &Renderer::GetFrameView() const
+{
+    return m_frameView;
+}
+RenderDevice *Renderer::GetDevice()
+{
+    return m_device.get();
+}
+void Renderer::SetOverlayCallback(std::function<void()> callback)
+{
+    m_overlayCallback = std::move(callback);
+}
+void Renderer::SetUISystem(UISystem *uiSystem)
+{
+    m_uiSystem = uiSystem;
+}
+std::size_t Renderer::GetLastCulledCount() const
+{
+    return m_lastCulled;
+}
+std::size_t Renderer::GetLastLodSwitchCount() const
+{
+    return m_lastLodSwitches;
+}
+const FrameProfile &Renderer::GetLastFrameProfile() const
+{
+    return m_lastFrameProfile;
+}
+void Renderer::SetCameraOverride(const bool enabled, const Vec3 &position, const Vec3 &rotation, const float fov)
+{
+    m_cameraOverrideEnabled = enabled;
+    m_cameraOverridePosition = position;
+    m_cameraOverrideRotation = rotation;
+    m_cameraOverrideFov = fov;
+}
+void Renderer::SetEnvironmentPath(std::string path)
+{
+    m_environmentPath = std::move(path);
+}
+} // namespace MiniEngine
