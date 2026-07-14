@@ -28,6 +28,10 @@ namespace MiniEngine
         void Undo();
         void Redo();
         bool SaveCurrentScene();
+        bool Autosave();
+        bool RestoreAutosave();
+        std::filesystem::path GetAutosavePath();
+        void UpdateWindowTitle();
         Entity PickEntity(float normalizedX, float normalizedY) const;
         bool DrawGizmo(float minimumX, float minimumY, float width, float height);
 
@@ -52,5 +56,9 @@ namespace MiniEngine
         float m_gizmoAccumulatedMotion = 0.0f;
         float m_gizmoAppliedMotion = 0.0f;
         std::string m_selectedAsset;
+        bool m_sceneDirty = false;
+        double m_lastAutosaveTime = 0.0;
+        bool m_lastTitleDirty = false;
+        bool m_titleInitialized = false;
     };
 }

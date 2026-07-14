@@ -1,6 +1,8 @@
 #include "EditorApp.hpp"
 
 #include "MiniEngine/ECS/Components.hpp"
+#include "MiniEngine/ECS/Reflection.hpp"
+#include "MiniEngine/ECS/SceneSerializer.hpp"
 #include "MiniEngine/Project/Project.hpp"
 #include "MiniEngine/Project/ProjectPackager.hpp"
 #include "MiniEngine/Render/SdlGlRenderDevice.hpp"
@@ -98,6 +100,8 @@ namespace MiniEngine
         m_device->SetEventCallback([](const void* event) { ImGui_ImplSDL2_ProcessEvent(static_cast<const SDL_Event*>(event)); });
         m_engine.GetContext().renderer->SetOverlayCallback([this]() { Draw(); });
         m_messages.emplace_back("Editor initialized. Scene changes are isolated from Play mode.");
+        if (std::filesystem::is_regular_file(GetAutosavePath())) m_messages.emplace_back("Recovery autosave available from File > Restore Autosave.");
+        UpdateWindowTitle();
         m_initialized = true; return true;
     }
 
@@ -106,6 +110,7 @@ namespace MiniEngine
     void EditorApp::Shutdown()
     {
         if (!m_initialized) return;
+        if (m_sceneDirty && !m_engine.IsPlaying()) Autosave();
         m_engine.GetContext().renderer->SetOverlayCallback({}); m_device->SetEventCallback({}); m_device->EnableSceneRenderTarget(false);
         ImGui_ImplOpenGL3_Shutdown(); ImGui_ImplSDL2_Shutdown(); ImGui::DestroyContext();
         m_engine.Shutdown(); m_initialized = false;
@@ -120,9 +125,12 @@ namespace MiniEngine
         {
             if (ImGui::IsKeyPressed(ImGuiKey_Z)) Undo();
             if (ImGui::IsKeyPressed(ImGuiKey_Y)) Redo();
+            if (ImGui::IsKeyPressed(ImGuiKey_S)) SaveCurrentScene();
             if (ImGui::IsKeyPressed(ImGuiKey_C) && m_selected != InvalidEntity) Prefab::Save(*m_engine.GetContext().world, m_selected, "Saved/EditorClipboard.prefab");
             if (ImGui::IsKeyPressed(ImGuiKey_V)) { RecordUndo(); const auto roots = Prefab::Instantiate(*m_engine.GetContext().world, "Saved/EditorClipboard.prefab"); if (!roots.empty()) m_selected = roots.front(); }
         }
+        if (m_sceneDirty && !m_engine.IsPlaying() && ImGui::GetTime() - m_lastAutosaveTime >= 30.0) Autosave();
+        UpdateWindowTitle();
         ImGui::Render(); ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
     }
 
@@ -133,6 +141,10 @@ namespace MiniEngine
         {
             if (ImGui::MenuItem("Save Scene", "Ctrl+S")) SaveCurrentScene();
             if (ImGui::MenuItem("New Scene")) { RecordUndo(); m_engine.GetSceneManager().NewScene(); m_selected = InvalidEntity; }
+            const auto autosavePath = GetAutosavePath();
+            ImGui::BeginDisabled(!std::filesystem::is_regular_file(autosavePath) || m_engine.IsPlaying());
+            if (ImGui::MenuItem("Restore Autosave")) RestoreAutosave();
+            ImGui::EndDisabled();
             const bool canPackage = !m_engine.IsPlaying() && !m_engine.GetProjectSettings().projectFile.empty();
             ImGui::BeginDisabled(!canPackage);
             if (ImGui::MenuItem("Package Project"))
@@ -204,44 +216,109 @@ namespace MiniEngine
         ImGui::Begin("Inspector"); World& world = *m_engine.GetContext().world;
         if (!world.IsAlive(m_selected)) { ImGui::TextDisabled("Select an entity"); ImGui::End(); return; }
         const bool editable = !m_engine.IsPlaying(); ImGui::BeginDisabled(!editable);
-        if (auto* name = world.GetComponent<NameComponent>(m_selected))
+        const auto& registry = ReflectionRegistry::Get();
+        for (const auto& component : registry.GetComponents())
         {
-            char buffer[256]{}; std::strncpy(buffer, name->name.c_str(), sizeof(buffer) - 1);
-            if (ImGui::InputText("Name", buffer, sizeof(buffer), ImGuiInputTextFlags_EnterReturnsTrue)) { RecordUndo(); name->name = buffer; }
+            if (!component.has(world, m_selected)) continue;
+            ImGui::PushID(component.name.c_str());
+            ImGui::SeparatorText(component.name.c_str());
+            for (const auto& property : component.properties)
+            {
+                ImGui::PushID(property.name.c_str());
+                void* value = property.access ? property.access(world, m_selected) : nullptr;
+                bool changed = false;
+                switch (property.type)
+                {
+                case ReflectedPropertyType::Bool:
+                {
+                    bool edited = value ? *static_cast<bool*>(value) : false;
+                    changed = value && ImGui::Checkbox(property.name.c_str(), &edited);
+                    if (changed) { RecordUndo(); *static_cast<bool*>(value) = edited; }
+                    break;
+                }
+                case ReflectedPropertyType::UInt:
+                {
+                    std::uint32_t edited = value ? *static_cast<std::uint32_t*>(value) : 0;
+                    changed = value && ImGui::InputScalar(property.name.c_str(), ImGuiDataType_U32, &edited);
+                    if (changed) { RecordUndo(); *static_cast<std::uint32_t*>(value) = edited; }
+                    break;
+                }
+                case ReflectedPropertyType::Float:
+                {
+                    float edited = value ? *static_cast<float*>(value) : 0.0f;
+                    const float minimum = property.hasRange ? property.minimum : 0.0f;
+                    const float maximum = property.hasRange ? property.maximum : 0.0f;
+                    changed = value && ImGui::DragFloat(property.name.c_str(), &edited, property.speed, minimum, maximum);
+                    if (ImGui::IsItemActivated()) RecordUndo();
+                    if (changed) *static_cast<float*>(value) = edited;
+                    break;
+                }
+                case ReflectedPropertyType::Vec3:
+                {
+                    Vec3 edited = value ? *static_cast<Vec3*>(value) : Vec3{};
+                    if (property.color) changed = value && ImGui::ColorEdit3(property.name.c_str(), &edited.x);
+                    else
+                    {
+                        const float minimum = property.hasRange ? property.minimum : 0.0f;
+                        const float maximum = property.hasRange ? property.maximum : 0.0f;
+                        changed = value && ImGui::DragFloat3(property.name.c_str(), &edited.x, property.speed, minimum, maximum);
+                    }
+                    if (ImGui::IsItemActivated()) RecordUndo();
+                    if (changed) *static_cast<Vec3*>(value) = edited;
+                    break;
+                }
+                case ReflectedPropertyType::String:
+                {
+                    auto* text = static_cast<std::string*>(value);
+                    char buffer[512]{};
+                    if (text) std::strncpy(buffer, text->c_str(), sizeof(buffer) - 1);
+                    if (text && ImGui::InputText(property.name.c_str(), buffer, sizeof(buffer), ImGuiInputTextFlags_EnterReturnsTrue))
+                    { RecordUndo(); *text = buffer; changed = true; }
+                    if (text && !property.assetType.empty() && ImGui::BeginDragDropTarget())
+                    {
+                        if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("TINY_ASSET_PATH"))
+                        {
+                            const std::string path = static_cast<const char*>(payload->Data);
+                            const auto asset = m_engine.GetContext().resourceManager->GetAssetRegistry().Find(path);
+                            const bool accepted = asset && (asset->type == property.assetType || (property.assetType == "Animation" && asset->extension == ".anim"));
+                            if (accepted) { RecordUndo(); *text = path; changed = true; }
+                            else m_messages.emplace_back("Inspector rejected " + path + "; expected " + property.assetType);
+                        }
+                        ImGui::EndDragDropTarget();
+                    }
+                    break;
+                }
+                case ReflectedPropertyType::Enum:
+                {
+                    int edited = property.getEnum ? property.getEnum(world, m_selected) : 0;
+                    const char* preview = edited >= 0 && static_cast<std::size_t>(edited) < property.enumNames.size() ? property.enumNames[edited].c_str() : "Unknown";
+                    if (ImGui::BeginCombo(property.name.c_str(), preview))
+                    {
+                        for (std::size_t index = 0; index < property.enumNames.size(); ++index)
+                            if (ImGui::Selectable(property.enumNames[index].c_str(), edited == static_cast<int>(index)))
+                            { RecordUndo(); property.setEnum(world, m_selected, static_cast<int>(index)); changed = true; }
+                        ImGui::EndCombo();
+                    }
+                    break;
+                }
+                }
+                (void)changed;
+                ImGui::PopID();
+            }
+            if (component.removable)
+            {
+                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.45f, 0.4f, 1.0f));
+                if (ImGui::SmallButton("Remove Component")) { RecordUndo(); component.remove(world, m_selected); }
+                ImGui::PopStyleColor();
+            }
+            ImGui::PopID();
         }
-        if (auto* active = world.GetComponent<ActiveComponent>(m_selected)) { bool value = active->active; if (ImGui::Checkbox("Active", &value)) { RecordUndo(); active->active = value; } }
-        if (auto* transform = world.GetComponent<TransformComponent>(m_selected))
-        {
-            ImGui::SeparatorText("Transform");
-            ImGui::DragFloat3("Position", &transform->position.x, 0.05f); if (ImGui::IsItemActivated()) RecordUndo();
-            ImGui::DragFloat3("Rotation", &transform->rotation.x, 0.25f); if (ImGui::IsItemActivated()) RecordUndo();
-            ImGui::DragFloat3("Scale", &transform->scale.x, 0.02f, 0.001f, 1000.0f); if (ImGui::IsItemActivated()) RecordUndo();
-        }
-        if (auto* tag = world.GetComponent<TagComponent>(m_selected))
-        {
-            char buffer[128]{}; std::strncpy(buffer, tag->tag.c_str(), sizeof(buffer) - 1);
-            if (ImGui::InputText("Tag", buffer, sizeof(buffer), ImGuiInputTextFlags_EnterReturnsTrue)) { RecordUndo(); tag->tag = buffer; }
-        }
-        if (auto* layer = world.GetComponent<LayerComponent>(m_selected)) { int value = static_cast<int>(layer->layer); if (ImGui::InputInt("Layer", &value)) { RecordUndo(); layer->layer = static_cast<std::uint32_t>(std::max(0, value)); } }
-        if (auto* mesh = world.GetComponent<MeshComponent>(m_selected))
-        {
-            ImGui::SeparatorText("Mesh Renderer");
-            char meshPath[512]{}; char materialPath[512]{};
-            std::strncpy(meshPath, mesh->meshPath.c_str(), sizeof(meshPath) - 1); std::strncpy(materialPath, mesh->materialPath.c_str(), sizeof(materialPath) - 1);
-            if (ImGui::InputText("Mesh", meshPath, sizeof(meshPath), ImGuiInputTextFlags_EnterReturnsTrue)) { RecordUndo(); mesh->meshPath = meshPath; }
-            if (ImGui::InputText("Material", materialPath, sizeof(materialPath), ImGuiInputTextFlags_EnterReturnsTrue)) { RecordUndo(); mesh->materialPath = materialPath; }
-        }
-        if (auto* camera = world.GetComponent<CameraComponent>(m_selected)) { ImGui::SeparatorText("Camera"); ImGui::DragFloat("FOV", &camera->fov, 0.25f, 1.0f, 179.0f); if (ImGui::IsItemActivated()) RecordUndo(); ImGui::Checkbox("Primary", &camera->primary); }
-        if (auto* light = world.GetComponent<LightComponent>(m_selected)) { ImGui::SeparatorText("Light"); ImGui::ColorEdit3("Color", &light->color.x); if (ImGui::IsItemActivated()) RecordUndo(); ImGui::DragFloat("Intensity", &light->intensity, 0.05f, 0.0f, 1000.0f); if (ImGui::IsItemActivated()) RecordUndo(); }
         if (ImGui::Button("Add Component")) ImGui::OpenPopup("AddComponentPopup");
         if (ImGui::BeginPopup("AddComponentPopup"))
         {
-            if (!world.HasComponent<MeshComponent>(m_selected) && ImGui::MenuItem("Mesh")) { RecordUndo(); world.AddComponent(m_selected, MeshComponent{}); }
-            if (!world.HasComponent<CameraComponent>(m_selected) && ImGui::MenuItem("Camera")) { RecordUndo(); world.AddComponent(m_selected, CameraComponent{}); }
-            if (!world.HasComponent<LightComponent>(m_selected) && ImGui::MenuItem("Light")) { RecordUndo(); world.AddComponent(m_selected, LightComponent{}); }
-            if (!world.HasComponent<RigidBodyComponent>(m_selected) && ImGui::MenuItem("Rigid Body")) { RecordUndo(); world.AddComponent(m_selected, RigidBodyComponent{}); }
-            if (!world.HasComponent<ColliderComponent>(m_selected) && ImGui::MenuItem("Collider")) { RecordUndo(); world.AddComponent(m_selected, ColliderComponent{}); }
-            if (!world.HasComponent<AudioSourceComponent>(m_selected) && ImGui::MenuItem("Audio Source")) { RecordUndo(); world.AddComponent(m_selected, AudioSourceComponent{}); }
+            for (const auto& component : registry.GetComponents())
+                if (component.removable && !component.has(world, m_selected) && ImGui::MenuItem(component.name.c_str()))
+                { RecordUndo(); component.add(world, m_selected); }
             ImGui::EndPopup();
         }
         ImGui::EndDisabled(); ImGui::End();
@@ -490,13 +567,53 @@ namespace MiniEngine
         ImGui::End();
     }
 
-    void EditorApp::RecordUndo() { if (m_engine.IsPlaying()) return; m_undo.push_back(m_engine.GetSceneManager().CreateSnapshot()); if (m_undo.size() > 64) m_undo.erase(m_undo.begin()); m_redo.clear(); }
-    void EditorApp::Undo() { if (m_engine.IsPlaying() || m_undo.empty()) return; m_redo.push_back(m_engine.GetSceneManager().CreateSnapshot()); m_engine.GetSceneManager().RestoreSnapshot(m_undo.back()); m_undo.pop_back(); m_selected = InvalidEntity; }
-    void EditorApp::Redo() { if (m_engine.IsPlaying() || m_redo.empty()) return; m_undo.push_back(m_engine.GetSceneManager().CreateSnapshot()); m_engine.GetSceneManager().RestoreSnapshot(m_redo.back()); m_redo.pop_back(); m_selected = InvalidEntity; }
+    void EditorApp::RecordUndo() { if (m_engine.IsPlaying()) return; m_undo.push_back(m_engine.GetSceneManager().CreateSnapshot()); if (m_undo.size() > 64) m_undo.erase(m_undo.begin()); m_redo.clear(); m_sceneDirty = true; }
+    void EditorApp::Undo() { if (m_engine.IsPlaying() || m_undo.empty()) return; m_redo.push_back(m_engine.GetSceneManager().CreateSnapshot()); m_engine.GetSceneManager().RestoreSnapshot(m_undo.back()); m_undo.pop_back(); m_selected = InvalidEntity; m_sceneDirty = true; }
+    void EditorApp::Redo() { if (m_engine.IsPlaying() || m_redo.empty()) return; m_undo.push_back(m_engine.GetSceneManager().CreateSnapshot()); m_engine.GetSceneManager().RestoreSnapshot(m_redo.back()); m_redo.pop_back(); m_selected = InvalidEntity; m_sceneDirty = true; }
     bool EditorApp::SaveCurrentScene()
     {
         auto path = m_engine.GetSceneManager().GetCurrentScene();
         if (path.empty()) path = m_engine.GetProjectSettings().Resolve(m_engine.GetProjectSettings().startupScene);
-        const bool saved = m_engine.SaveScene(path); m_messages.emplace_back(saved ? "Scene saved: " + path.generic_string() : "Scene save failed"); return saved;
+        const bool saved = m_engine.SaveScene(path);
+        if (saved)
+        {
+            m_sceneDirty = false;
+            std::error_code error; std::filesystem::remove(GetAutosavePath(), error);
+        }
+        m_messages.emplace_back(saved ? "Scene saved: " + path.generic_string() : "Scene save failed"); return saved;
+    }
+
+    std::filesystem::path EditorApp::GetAutosavePath()
+    {
+        return m_engine.GetProjectSettings().Resolve("Saved/EditorAutosave.scene");
+    }
+
+    bool EditorApp::Autosave()
+    {
+        m_lastAutosaveTime = ImGui::GetCurrentContext() ? ImGui::GetTime() : 0.0;
+        const auto path = GetAutosavePath();
+        const bool saved = SceneSerializer::Save(*m_engine.GetContext().world, path);
+        if (saved) m_messages.emplace_back("Autosaved recovery scene: " + path.generic_string());
+        else m_messages.emplace_back("Autosave failed: " + path.generic_string());
+        return saved;
+    }
+
+    bool EditorApp::RestoreAutosave()
+    {
+        if (m_engine.IsPlaying() || !std::filesystem::is_regular_file(GetAutosavePath())) return false;
+        RecordUndo();
+        const bool loaded = SceneSerializer::Load(*m_engine.GetContext().world, GetAutosavePath());
+        if (loaded) { m_selected = InvalidEntity; m_sceneDirty = true; }
+        m_messages.emplace_back(loaded ? "Restored editor autosave" : "Failed to restore editor autosave");
+        return loaded;
+    }
+
+    void EditorApp::UpdateWindowTitle()
+    {
+        if (!m_device || (m_titleInitialized && m_lastTitleDirty == m_sceneDirty)) return;
+        const std::string title = "TinyEngine Editor - " + m_engine.GetProjectSettings().name + (m_sceneDirty ? " *" : "");
+        SDL_SetWindowTitle(static_cast<SDL_Window*>(m_device->GetNativeWindow()), title.c_str());
+        m_lastTitleDirty = m_sceneDirty;
+        m_titleInitialized = true;
     }
 }

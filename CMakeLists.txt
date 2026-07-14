@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(TinyEngine VERSION 0.8.0 LANGUAGES C CXX)
+project(TinyEngine VERSION 0.9.0 LANGUAGES C CXX)
 
 option(TINYENGINE_BUILD_TESTS "Build TinyEngine tests" ON)
 option(TINYENGINE_BUILD_DEMO "Build TinyEngine demo" ON)
@@ -64,6 +64,7 @@ add_library(tinyengine STATIC
     src/Resource/PakArchive.cpp
     src/Resource/ResourceManager.cpp
     src/ECS/ECS.cpp
+    src/ECS/Reflection.cpp
     src/ECS/SceneSerializer.cpp
     src/ECS/Systems.cpp
     src/Project/Project.cpp

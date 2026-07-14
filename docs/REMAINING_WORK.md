@@ -11,7 +11,7 @@
 3. 资产：DDS/KTX2/BCn、后台导入 worker、进度/取消、增量 Cook、缩略图、丢失依赖修复和平台资产配置。
 4. Runtime UI：Unicode/TTF 字体资产、滚动容器、DPI、多语言排版和手柄导航；ASCII Atlas、文本/图片、锚点、父子布局、裁剪和键盘导航已完成。
 5. 物理：Jolt 后端、Convex/TriangleMesh、准确窄相位、CCD、Joint、完整 CharacterController、Sweep/Slide 和调试绘制。
-6. 编辑器：属性反射、自动 Inspector、场景脏标记/自动恢复、多场景标签、多选/框选、Local Gizmo、Inspector 拖放、Material/Shader 编辑器。
+6. 编辑器：多场景标签、多选/框选、Local Gizmo、Material/Shader 编辑器；属性反射、自动 Inspector、场景脏标记/自动恢复和 Inspector 类型校验拖放已完成。
 
 ## P1 未完成
 

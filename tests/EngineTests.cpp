@@ -1,6 +1,7 @@
 #include "MiniEngine/Core/Config.hpp"
 #include "MiniEngine/ECS/Components.hpp"
 #include "MiniEngine/ECS/ECS.hpp"
+#include "MiniEngine/ECS/Reflection.hpp"
 #include "MiniEngine/ECS/SceneSerializer.hpp"
 #include "MiniEngine/Math/Math.hpp"
 #include "MiniEngine/Physics/PhysicsWorld.hpp"
@@ -56,6 +57,19 @@ int main()
     const Entity replacement = world.CreateEntity("Replacement");
     CHECK(EntityIndex(first) == EntityIndex(replacement));
     CHECK(first != replacement);
+    const auto& reflection = ReflectionRegistry::Get();
+    const auto* reflectedTransform = reflection.FindComponent("Transform");
+    const auto* reflectedRigidBody = reflection.FindComponent("Rigid Body");
+    CHECK(reflectedTransform != nullptr && !reflectedTransform->removable && reflectedTransform->properties.size() == 3);
+    CHECK(reflectedRigidBody != nullptr && reflectedRigidBody->removable && !reflectedRigidBody->has(world, replacement));
+    reflectedRigidBody->add(world, replacement);
+    CHECK(reflectedRigidBody->has(world, replacement) && reflectedRigidBody->properties.front().enumNames.size() == 3);
+    const auto massProperty = std::find_if(reflectedRigidBody->properties.begin(), reflectedRigidBody->properties.end(), [](const ReflectedProperty& property) { return property.name == "Mass"; });
+    CHECK(massProperty != reflectedRigidBody->properties.end());
+    if (massProperty != reflectedRigidBody->properties.end()) *static_cast<float*>(massProperty->access(world, replacement)) = 4.5f;
+    CHECK(std::abs(world.GetComponent<RigidBodyComponent>(replacement)->mass - 4.5f) < 0.001f);
+    reflectedRigidBody->remove(world, replacement);
+    CHECK(!reflectedRigidBody->has(world, replacement));
 
     const Entity child = world.CreateEntity("Child");
     CHECK(world.SetParent(child, replacement));

@@ -2,7 +2,7 @@
 
 本文记录本轮开发对 TinyEngine 做过的主要更新，以及各功能采用的简要实现方式。内容按 Git 提交顺序整理，方便以后定位代码、回溯设计和继续开发。
 
-当前引擎版本：0.6.0
+当前引擎版本：0.9.0
 
 参考源码：Unreal Engine 5.3.2
 
@@ -160,7 +160,22 @@
 - 资产浏览器通过 ImGui Drag/Drop Payload 传递资源路径，Scene View 根据类型实例化 Prefab、添加 Mesh 或设置 Material。
 - Gizmo 累积鼠标移动后按 Translate/Rotate/Scale 各自步长量化，避免单帧增量小于吸附步长时操作失效。
 
-## 10. 验证与文档维护
+## 10. 反射 Inspector 与场景恢复
+
+更新内容：
+
+- 新增运行时 `ReflectionRegistry`，登记全部可编辑 ECS 组件的字段、类型、范围、枚举和资产约束。
+- Editor Inspector 改为反射驱动，可自动绘制、添加和删除组件。
+- Mesh、Material、Animation、Audio 字段支持从资产浏览器拖入，并在写入前校验类型。
+- 增加未保存星号、Ctrl+S、30 秒自动恢复快照、关闭前快照和 File > Restore Autosave。
+
+实现方式：
+
+- 反射使用普通 C++ 元数据和成员指针访问器，不引入代码生成器或 UObject 体系。
+- 编辑器控件先编辑局部副本，在 ImGui 项目激活时记录原始场景快照，再将值写回组件，保持一次拖动对应一次 Undo 起点。
+- 恢复快照独立于正式场景文件；正式保存成功后清除恢复文件。
+
+## 11. 验证与文档维护
 
 持续更新内容：
 
@@ -176,7 +191,7 @@
 - Shader include/variant、磁盘缓存和完整错误面板。
 - Jolt、Mesh Collider、CCD、Joint 和物理调试绘制。
 - 骨骼动画、空间音频、字体 Atlas 和完整 UI 布局。
-- 属性反射、场景标签页、Gizmo local/world 和资源拖入 Inspector。
+- 场景标签页、多选/框选、Gizmo local/world 和 Material/Shader 专用编辑器；反射 Inspector、资源拖放和场景恢复已完成。
 - CI、崩溃报告、许可证清单和发布包冒烟测试。
 
 继续开发时，应同时更新本文、`README.md`、`设计.md` 和 `docs/ARCHITECTURE.md`。
