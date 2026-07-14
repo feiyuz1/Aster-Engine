@@ -1,4 +1,5 @@
 #include "MiniEngine/Core/Config.hpp"
+#include "MiniEngine/Core/CrashReporter.hpp"
 #include "MiniEngine/Audio/AudioEngine.hpp"
 #include "MiniEngine/ECS/Components.hpp"
 #include "MiniEngine/ECS/ECS.hpp"
@@ -254,6 +255,7 @@ int main()
     CHECK(loadedConfig.Load("Saved/Test.ini"));
     CHECK(loadedConfig.GetBool("render.vsync"));
     CHECK(loadedConfig.GetInt("physics.fixedRate") == 60);
+    CrashReporter::Install("TinyEngineTest", "Saved/Crashes"); CHECK(!CrashReporter::WriteReport("automated test", "Saved/Crashes").empty());
     AudioEngine audioMixer; audioMixer.SetBusVolume("Music", 0.35f); CHECK(std::abs(audioMixer.GetBusVolume("Music") - 0.35f) < 0.001f);
 
     InputSystem mappedInput;

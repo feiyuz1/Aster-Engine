@@ -27,6 +27,7 @@ namespace MiniEngine
         void DrawSceneView();
         void DrawAssets();
         void DrawConsole();
+        void DrawSceneTabs();
         void RecordUndo();
         void Undo();
         void Redo();
@@ -35,6 +36,9 @@ namespace MiniEngine
         bool RestoreAutosave();
         std::filesystem::path GetAutosavePath();
         void UpdateWindowTitle();
+        bool OpenSceneDocument(const std::filesystem::path& path);
+        void NewSceneDocument();
+        bool SwitchSceneDocument(std::size_t index);
         Entity PickEntity(float normalizedX, float normalizedY) const;
         bool DrawGizmo(float minimumX, float minimumY, float width, float height);
 
@@ -63,6 +67,9 @@ namespace MiniEngine
         double m_lastAutosaveTime = 0.0;
         bool m_lastTitleDirty = false;
         bool m_titleInitialized = false;
+        struct SceneDocument { std::filesystem::path path; std::string snapshot; bool dirty = false; };
+        std::vector<SceneDocument> m_sceneDocuments;
+        std::size_t m_activeSceneDocument = 0;
 #ifdef TINYENGINE_HAS_ASSIMP
         AssetImportQueue m_importQueue;
         std::uint64_t m_activeImportTask = 0;

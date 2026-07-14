@@ -1,0 +1,24 @@
+name: Windows CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build-test-package:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure core build
+        run: cmake -S . -B build-ci -DTINYENGINE_BUILD_EDITOR=OFF -DTINYENGINE_BUILD_IMPORTERS=OFF -DTINYENGINE_BUILD_TESTS=ON -DTINYENGINE_BUILD_GAME=ON
+      - name: Build
+        run: cmake --build build-ci --config Release --parallel 4
+      - name: Test
+        run: ctest --test-dir build-ci -C Release --output-on-failure
+      - name: Package
+        run: cmake --build build-ci --config Release --target package_game
+      - name: Upload package
+        uses: actions/upload-artifact@v4
+        with:
+          name: TinyEngineDemo-Windows
+          path: build-ci/Package/TinyEngineDemo

@@ -5,6 +5,7 @@
 #include <iomanip>
 #include <iostream>
 #include <sstream>
+#include <fstream>
 
 namespace MiniEngine
 {
@@ -51,6 +52,13 @@ namespace MiniEngine
         std::cout << "[" << CurrentTimeString() << "]"
                   << "[" << ToString(level) << "] "
                   << message << std::endl;
+        if (!m_structuredOutput.empty())
+        {
+            if (m_structuredOutput.has_parent_path()) std::filesystem::create_directories(m_structuredOutput.parent_path());
+            std::ofstream output(m_structuredOutput, std::ios::app | std::ios::binary);
+            std::string escaped; for (const char character : message) { if (character == '\\' || character == '"') escaped += '\\'; if (character == '\n') escaped += "\\n"; else if (character != '\r') escaped += character; }
+            output << "{\"time\":\"" << CurrentTimeString() << "\",\"level\":\"" << ToString(level) << "\",\"message\":\"" << escaped << "\"}\n";
+        }
     }
 
     void Logger::Debug(const std::string& message)
@@ -72,4 +80,6 @@ namespace MiniEngine
     {
         Log(LogLevel::Error, message);
     }
+
+    void Logger::SetStructuredOutput(std::filesystem::path path) { std::lock_guard<std::mutex> lock(m_mutex); m_structuredOutput = std::move(path); }
 }

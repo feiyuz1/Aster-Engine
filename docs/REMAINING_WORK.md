@@ -11,7 +11,7 @@
 3. 资产：DDS/KTX2/BCn、缩略图、丢失依赖修复和平台资产配置；后台导入 worker、进度/取消与清单增量 Cook 已完成。
 4. Runtime UI：Unicode/TTF 字体资产和多语言复杂排版；ASCII Atlas、文本/图片、锚点、父子布局、祖先裁剪、滚动、DPI、键盘和手柄导航已完成。
 5. 物理：精确 Convex/TriangleMesh 窄相位、完整 CharacterController Sweep/Slide 与可选 Jolt 后端；连续子步、Mesh 包围体、Joint、冲量响应和调试数据已完成。
-6. 编辑器：多场景标签、多选/框选、Local Gizmo、Material/Shader 编辑器；属性反射、自动 Inspector、场景脏标记/自动恢复和 Inspector 类型校验拖放已完成。
+6. 编辑器：多选/框选、Local Gizmo 和 Shader 文本编辑器；多场景标签、Material 编辑器、属性反射、自动 Inspector、场景脏标记/自动恢复和 Inspector 类型校验拖放已完成。
 
 ## P1 未完成
 
@@ -24,6 +24,5 @@
 
 ## 发布工程未完成
 
-- Windows CI、格式检查、编辑器自动化与打包冒烟测试。
-- Crash Dump、结构化日志、CPU/内存/GPU Profiler。
-- 许可证清单、示例项目、API 文档和数据版本迁移工具。
+- 格式检查、无界面编辑器自动化、内存采样和数据版本迁移工具；Windows CI、打包冒烟、Crash Dump、结构化日志、CPU/GPU Profiler 和许可证清单已完成。
+- 更完整的示例项目、API 文档和发行说明生成。

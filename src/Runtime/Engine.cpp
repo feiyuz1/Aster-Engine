@@ -16,6 +16,7 @@ namespace MiniEngine
         if (m_initialized) return true;
         m_logger.Info("Engine initialize begin.");
         const bool projectLoaded = !projectFile.empty() && m_projectSettings.Load(projectFile);
+        m_logger.SetStructuredOutput(projectLoaded ? m_projectSettings.Resolve("Logs/TinyEngine.jsonl") : std::filesystem::path{"Logs/TinyEngine.jsonl"});
         if (projectLoaded && !m_projectSettings.packageArchive.empty())
         {
             PlatformFile::ClearMounts();

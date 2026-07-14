@@ -1,6 +1,6 @@
 # TinyEngine 架构说明
 
-本文对应 TinyEngine 0.12.0，最后同步于 2026-07-14。
+本文对应 TinyEngine 0.13.0，最后同步于 2026-07-14。
 
 ## 依赖方向
 
@@ -67,6 +67,10 @@ SDL events -> semantic input / ImGui
 ```
 
 编辑态由 Renderer 的 camera override 使用编辑器相机；Play 时恢复场景 Primary Camera。Scene View 显示 Tonemap 后的颜色纹理，拾取在 CPU 侧将屏幕坐标转为射线并检测 Mesh/Collider AABB；Gizmo 修改 Transform、支持步长吸附并接入 Undo。资产浏览器通过 ImGui payload 将 Prefab、Mesh 或 Material 拖入 Scene View。
+
+编辑器的场景标签保存各自的序列化快照、路径和脏状态；切换标签时捕获当前 World，再恢复目标 World，不让多个 World 同时占用运行时系统。Material 资产在 Inspector 直接编辑 PBR 因子、混合模式、Shader 与贴图路径，保存后通过 ResourceManager 原位 Reload。
+
+Logger 可同时输出控制台和逐行 JSON；CrashReporter 在 Windows 注册 Structured Exception Filter 并写 MiniDump/文本上下文，在 `std::terminate` 路径至少写文本报告。CI 使用无 Editor/Assimp 的最小运行时配置验证公共核心，完整本地发布通过 `tools/ReleaseSmoke.ps1` 构建、CTest、打包并运行三帧。
 
 默认 PBR Shader 是独立 `.vert/.frag` 资产。RenderDevice 监测修改时间并尝试原子替换 OpenGL program；编译或链接失败时继续使用上一份有效 program。每帧最多收集四盏方向光，第一盏灯使用固定 2048² 深度图和 3×3 PCF；其余灯只计算直接 PBR 光照。Tonemap Pass 在无几何覆盖的像素绘制程序化天空渐变，并为物体提供半球环境近似。
 

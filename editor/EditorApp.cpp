@@ -5,6 +5,7 @@
 #include "MiniEngine/ECS/SceneSerializer.hpp"
 #include "MiniEngine/Project/Project.hpp"
 #include "MiniEngine/Project/ProjectPackager.hpp"
+#include "MiniEngine/Platform/Platform.hpp"
 #include "MiniEngine/Render/SdlGlRenderDevice.hpp"
 #ifdef TINYENGINE_HAS_ASSIMP
 #include "MiniEngine/Import/AssimpImporter.hpp"
@@ -20,6 +21,7 @@
 #include <optional>
 #include <cmath>
 #include <limits>
+#include <sstream>
 
 namespace MiniEngine
 {
@@ -100,6 +102,7 @@ namespace MiniEngine
         m_device->SetEventCallback([](const void* event) { ImGui_ImplSDL2_ProcessEvent(static_cast<const SDL_Event*>(event)); });
         m_engine.GetContext().renderer->SetOverlayCallback([this]() { Draw(); });
         m_messages.emplace_back("Editor initialized. Scene changes are isolated from Play mode.");
+        m_sceneDocuments.push_back({m_engine.GetSceneManager().GetCurrentScene(), m_engine.GetSceneManager().CreateSnapshot(), false});
 #ifdef TINYENGINE_HAS_ASSIMP
         m_importQueue.Initialize(m_engine.GetContext().jobSystem);
 #endif
@@ -143,7 +146,7 @@ namespace MiniEngine
         if (ImGui::BeginMenu("File"))
         {
             if (ImGui::MenuItem("Save Scene", "Ctrl+S")) SaveCurrentScene();
-            if (ImGui::MenuItem("New Scene")) { RecordUndo(); m_engine.GetSceneManager().NewScene(); m_selected = InvalidEntity; }
+            if (ImGui::MenuItem("New Scene")) NewSceneDocument();
             const auto autosavePath = GetAutosavePath();
             ImGui::BeginDisabled(!std::filesystem::is_regular_file(autosavePath) || m_engine.IsPlaying());
             if (ImGui::MenuItem("Restore Autosave")) RestoreAutosave();
@@ -217,7 +220,39 @@ namespace MiniEngine
         ImGui::SetNextWindowPos({viewport->WorkPos.x + viewport->WorkSize.x - width, viewport->WorkPos.y}, ImGuiCond_Always);
         ImGui::SetNextWindowSize({width, upperHeight}, ImGuiCond_Always);
         ImGui::Begin("Inspector"); World& world = *m_engine.GetContext().world;
-        if (!world.IsAlive(m_selected)) { ImGui::TextDisabled("Select an entity"); ImGui::End(); return; }
+        if (!world.IsAlive(m_selected))
+        {
+            const auto asset = m_selectedAsset.empty() ? std::optional<AssetInfo>{} : m_engine.GetContext().resourceManager->GetAssetRegistry().Find(m_selectedAsset);
+            if (asset && asset->type == "Material")
+            {
+                if (auto material = m_engine.GetContext().resourceManager->Load<MaterialResource>(asset->path))
+                {
+                    ImGui::SeparatorText("Material Asset"); ImGui::TextWrapped("%s", asset->path.c_str());
+                    Vec4 color = material->GetBaseColor(); float metallic = material->GetMetallic(), roughness = material->GetRoughness(); Vec3 emissive = material->GetEmissive(); bool transparent = material->IsTransparent(); bool changed = false;
+                    changed = ImGui::ColorEdit4("Base Color", &color.x) || changed; changed = ImGui::SliderFloat("Metallic", &metallic, 0.0f, 1.0f) || changed;
+                    changed = ImGui::SliderFloat("Roughness", &roughness, 0.04f, 1.0f) || changed; changed = ImGui::ColorEdit3("Emissive", &emissive.x) || changed; changed = ImGui::Checkbox("Transparent", &transparent) || changed;
+                    std::string shader = material->GetShaderPath(), albedo = material->GetTexturePath(), normal = material->GetNormalTexturePath(), metallicMap = material->GetMetallicTexturePath();
+                    std::string roughnessMap = material->GetRoughnessTexturePath(), ao = material->GetAoTexturePath(), emissiveMap = material->GetEmissiveTexturePath();
+                    auto editPath = [&](const char* label, std::string& path)
+                    {
+                        char buffer[512]{}; std::strncpy(buffer, path.c_str(), sizeof(buffer) - 1);
+                        if (ImGui::InputText(label, buffer, sizeof(buffer), ImGuiInputTextFlags_EnterReturnsTrue)) { path = buffer; changed = true; }
+                    };
+                    editPath("Shader", shader); editPath("Albedo", albedo); editPath("Normal", normal); editPath("Metallic Map", metallicMap); editPath("Roughness Map", roughnessMap); editPath("AO Map", ao); editPath("Emissive Map", emissiveMap);
+                    if (changed)
+                    {
+                        std::ostringstream output; output << "color " << color.x << ' ' << color.y << ' ' << color.z << ' ' << color.w << "\nmetallic " << metallic << "\nroughness " << roughness << "\nemissive " << emissive.x << ' ' << emissive.y << ' ' << emissive.z << '\n';
+                        if (!shader.empty()) output << "shader " << shader << '\n'; if (!albedo.empty()) output << "texture " << albedo << '\n'; if (!normal.empty()) output << "normalTexture " << normal << '\n';
+                        if (!metallicMap.empty()) output << "metallicTexture " << metallicMap << '\n'; if (!roughnessMap.empty()) output << "roughnessTexture " << roughnessMap << '\n'; if (!ao.empty()) output << "aoTexture " << ao << '\n'; if (!emissiveMap.empty()) output << "emissiveTexture " << emissiveMap << '\n';
+                        output << "blend " << (transparent ? "alpha" : "opaque") << '\n';
+                        if (PlatformFile::WriteAllText(asset->path, output.str()) && m_engine.GetContext().resourceManager->Reload(asset->path)) m_messages.emplace_back("Material saved: " + asset->path);
+                        else m_messages.emplace_back("Material save failed: " + asset->path);
+                    }
+                }
+            }
+            else ImGui::TextDisabled("Select an entity or material asset");
+            ImGui::End(); return;
+        }
         const bool editable = !m_engine.IsPlaying(); ImGui::BeginDisabled(!editable);
         const auto& registry = ReflectionRegistry::Get();
         for (const auto& component : registry.GetComponents())
@@ -341,6 +376,7 @@ namespace MiniEngine
         const float width = std::max(160.0f, viewport->WorkSize.x - 610.0f), height = viewport->WorkSize.y * 0.67f;
         ImGui::SetNextWindowPos({left, top}, ImGuiCond_Always); ImGui::SetNextWindowSize({width, height}, ImGuiCond_Always);
         ImGui::Begin("Scene View", nullptr, ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse);
+        DrawSceneTabs();
         if (ImGui::Button("W Translate")) m_gizmoMode = GizmoMode::Translate; ImGui::SameLine();
         if (ImGui::Button("E Rotate")) m_gizmoMode = GizmoMode::Rotate; ImGui::SameLine();
         if (ImGui::Button("R Scale")) m_gizmoMode = GizmoMode::Scale; ImGui::SameLine();
@@ -577,6 +613,7 @@ namespace MiniEngine
                 RecordUndo(); const auto roots = Prefab::Instantiate(*m_engine.GetContext().world, asset.path);
                 if (!roots.empty()) { m_selected = roots.front(); m_messages.emplace_back("Instantiated prefab: " + asset.path); }
             }
+            if (!m_engine.IsPlaying() && asset.extension == ".scene" && ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) OpenSceneDocument(asset.path);
             ImGui::PopID();
         }
         ImGui::End();
@@ -598,17 +635,63 @@ namespace MiniEngine
         ImGui::End();
     }
 
+    void EditorApp::DrawSceneTabs()
+    {
+        if (!ImGui::BeginTabBar("SceneDocuments")) return;
+        for (std::size_t index = 0; index < m_sceneDocuments.size(); ++index)
+        {
+            const auto& document = m_sceneDocuments[index];
+            const std::string label = (document.path.empty() ? "Untitled" : document.path.filename().string()) + "##Scene" + std::to_string(index);
+            ImGuiTabItemFlags flags = (index == m_activeSceneDocument ? m_sceneDirty : document.dirty) ? ImGuiTabItemFlags_UnsavedDocument : ImGuiTabItemFlags_None;
+            if (ImGui::BeginTabItem(label.c_str(), nullptr, flags))
+            {
+                if (index != m_activeSceneDocument) SwitchSceneDocument(index);
+                ImGui::EndTabItem();
+            }
+        }
+        ImGui::EndTabBar();
+    }
+
+    bool EditorApp::SwitchSceneDocument(const std::size_t index)
+    {
+        if (m_engine.IsPlaying() || index >= m_sceneDocuments.size() || index == m_activeSceneDocument) return false;
+        auto& current = m_sceneDocuments[m_activeSceneDocument]; current.snapshot = m_engine.GetSceneManager().CreateSnapshot(); current.dirty = m_sceneDirty;
+        if (!m_engine.GetSceneManager().RestoreSnapshot(m_sceneDocuments[index].snapshot)) return false;
+        m_activeSceneDocument = index; m_sceneDirty = m_sceneDocuments[index].dirty; m_selected = InvalidEntity; m_undo.clear(); m_redo.clear();
+        return true;
+    }
+
+    bool EditorApp::OpenSceneDocument(const std::filesystem::path& path)
+    {
+        const auto normalized = std::filesystem::path(path).lexically_normal();
+        for (std::size_t index = 0; index < m_sceneDocuments.size(); ++index) if (m_sceneDocuments[index].path.lexically_normal() == normalized) return index == m_activeSceneDocument || SwitchSceneDocument(index);
+        auto& current = m_sceneDocuments[m_activeSceneDocument]; current.snapshot = m_engine.GetSceneManager().CreateSnapshot(); current.dirty = m_sceneDirty;
+        if (!SceneSerializer::Load(*m_engine.GetContext().world, normalized)) { m_engine.GetSceneManager().RestoreSnapshot(current.snapshot); m_messages.emplace_back("Scene open failed: " + normalized.generic_string()); return false; }
+        m_sceneDocuments.push_back({normalized, m_engine.GetSceneManager().CreateSnapshot(), false}); m_activeSceneDocument = m_sceneDocuments.size() - 1;
+        m_sceneDirty = false; m_selected = InvalidEntity; m_undo.clear(); m_redo.clear(); m_messages.emplace_back("Opened scene tab: " + normalized.generic_string()); return true;
+    }
+
+    void EditorApp::NewSceneDocument()
+    {
+        if (m_engine.IsPlaying()) return;
+        auto& current = m_sceneDocuments[m_activeSceneDocument]; current.snapshot = m_engine.GetSceneManager().CreateSnapshot(); current.dirty = m_sceneDirty;
+        m_engine.GetSceneManager().NewScene(); m_sceneDocuments.push_back({{}, m_engine.GetSceneManager().CreateSnapshot(), true}); m_activeSceneDocument = m_sceneDocuments.size() - 1;
+        m_sceneDirty = true; m_selected = InvalidEntity; m_undo.clear(); m_redo.clear();
+    }
+
     void EditorApp::RecordUndo() { if (m_engine.IsPlaying()) return; m_undo.push_back(m_engine.GetSceneManager().CreateSnapshot()); if (m_undo.size() > 64) m_undo.erase(m_undo.begin()); m_redo.clear(); m_sceneDirty = true; }
     void EditorApp::Undo() { if (m_engine.IsPlaying() || m_undo.empty()) return; m_redo.push_back(m_engine.GetSceneManager().CreateSnapshot()); m_engine.GetSceneManager().RestoreSnapshot(m_undo.back()); m_undo.pop_back(); m_selected = InvalidEntity; m_sceneDirty = true; }
     void EditorApp::Redo() { if (m_engine.IsPlaying() || m_redo.empty()) return; m_undo.push_back(m_engine.GetSceneManager().CreateSnapshot()); m_engine.GetSceneManager().RestoreSnapshot(m_redo.back()); m_redo.pop_back(); m_selected = InvalidEntity; m_sceneDirty = true; }
     bool EditorApp::SaveCurrentScene()
     {
-        auto path = m_engine.GetSceneManager().GetCurrentScene();
+        auto path = m_activeSceneDocument < m_sceneDocuments.size() ? m_sceneDocuments[m_activeSceneDocument].path : std::filesystem::path{};
+        if (path.empty()) path = m_engine.GetSceneManager().GetCurrentScene();
         if (path.empty()) path = m_engine.GetProjectSettings().Resolve(m_engine.GetProjectSettings().startupScene);
         const bool saved = m_engine.SaveScene(path);
         if (saved)
         {
             m_sceneDirty = false;
+            if (m_activeSceneDocument < m_sceneDocuments.size()) { auto& document = m_sceneDocuments[m_activeSceneDocument]; document.path = path; document.snapshot = m_engine.GetSceneManager().CreateSnapshot(); document.dirty = false; }
             std::error_code error; std::filesystem::remove(GetAutosavePath(), error);
         }
         m_messages.emplace_back(saved ? "Scene saved: " + path.generic_string() : "Scene save failed"); return saved;

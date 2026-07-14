@@ -2,7 +2,7 @@
 
 本文记录本轮开发对 TinyEngine 做过的主要更新，以及各功能采用的简要实现方式。内容按 Git 提交顺序整理，方便以后定位代码、回溯设计和继续开发。
 
-当前引擎版本：0.12.0
+当前引擎版本：0.13.0
 
 参考源码：Unreal Engine 5.3.2
 
@@ -222,7 +222,22 @@
 - 增量 Cook 比较源文件时间戳与大小，删除只限清单记录的 Cook 相对路径，避免越界清理。
 - UI 先在逻辑坐标完成布局和滚动，再整体乘 DPI，最终沿父链求裁剪交集交给 OpenGL scissor。
 
-## 14. 验证与文档维护
+## 14. 多场景/材质编辑与发布工程
+
+更新内容：
+
+- Editor 增加多场景文档标签，每个标签保留路径、序列化快照和脏状态；Scene 资产可双击打开。
+- Inspector 增加 Material 资产编辑，可修改 PBR 因子、透明模式、Shader 与六类贴图路径并热重载。
+- Logger 增加 JSONL 结构化输出；CrashReporter 在 Windows 写 MiniDump 与文本报告，并覆盖 `std::terminate`。
+- 增加 Windows GitHub Actions、`ReleaseSmoke.ps1`、第三方许可清单。
+
+实现方式：
+
+- 场景标签切换继续复用单个 ECS World，通过快照捕获/恢复避免运行时系统多实例化。
+- Material 编辑保存仍使用稳定的文本 `.mat` 格式，写入成功后让现有缓存 Resource 原位 Reload。
+- CI 使用无本地 Assimp/ImGui 依赖的 Runtime 配置；本地脚本额外验证完整发布包三帧启动。
+
+## 15. 验证与文档维护
 
 持续更新内容：
 
@@ -238,7 +253,7 @@
 - Shader include/variant、磁盘缓存和完整错误面板。
 - 精确 Mesh 窄相位/可选 Jolt、完整 Sweep/Slide CharacterController。
 - 骨骼蒙皮与状态机、OGG 流式音频、Unicode 字体和高级 UI 排版。
-- 场景标签页、多选/框选、Gizmo local/world 和 Material/Shader 专用编辑器；反射 Inspector、资源拖放和场景恢复已完成。
-- CI、崩溃报告、许可证清单和发布包冒烟测试。
+- 多选/框选、Gizmo local/world 和 Shader 文本编辑器；多场景与 Material 编辑已完成。
+- 格式检查、无界面编辑器自动化和数据迁移；CI、崩溃报告、许可证清单和发布包冒烟已完成。
 
 继续开发时，应同时更新本文、`README.md`、`设计.md` 和 `docs/ARCHITECTURE.md`。

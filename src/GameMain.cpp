@@ -1,4 +1,5 @@
 #include "MiniEngine/Runtime/Engine.hpp"
+#include "MiniEngine/Core/CrashReporter.hpp"
 
 #include <cstdint>
 #include <cstdlib>
@@ -20,6 +21,7 @@ namespace
 
 int main(int argc, char** argv)
 {
+    MiniEngine::CrashReporter::Install("TinyEngineGame");
     const auto launchDirectory = std::filesystem::current_path();
     const auto executableDirectory = std::filesystem::absolute(argv[0]).parent_path().lexically_normal();
     std::filesystem::path projectFile;

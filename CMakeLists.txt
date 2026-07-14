@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(TinyEngine VERSION 0.12.0 LANGUAGES C CXX)
+project(TinyEngine VERSION 0.13.0 LANGUAGES C CXX)
 
 option(TINYENGINE_BUILD_TESTS "Build TinyEngine tests" ON)
 option(TINYENGINE_BUILD_DEMO "Build TinyEngine demo" ON)
@@ -53,6 +53,7 @@ find_package(OpenGL REQUIRED)
 
 add_library(tinyengine STATIC
     src/Core/Logger.cpp
+    src/Core/CrashReporter.cpp
     src/Core/Config.cpp
     src/Core/Module.cpp
     src/Platform/Platform.cpp
@@ -91,7 +92,7 @@ else()
     message(FATAL_ERROR "SDL2 target not found")
 endif()
 if(WIN32)
-    target_link_libraries(tinyengine PUBLIC windowscodecs ole32 gdi32)
+    target_link_libraries(tinyengine PUBLIC windowscodecs ole32 gdi32 dbghelp)
 endif()
 
 if(MSVC)
