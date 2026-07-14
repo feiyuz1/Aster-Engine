@@ -2,6 +2,7 @@
 
 #include "MiniEngine/ECS/Components.hpp"
 #include "MiniEngine/Project/Project.hpp"
+#include "MiniEngine/Project/ProjectPackager.hpp"
 #include "MiniEngine/Render/SdlGlRenderDevice.hpp"
 #ifdef TINYENGINE_HAS_ASSIMP
 #include "MiniEngine/Import/AssimpImporter.hpp"
@@ -132,6 +133,25 @@ namespace MiniEngine
         {
             if (ImGui::MenuItem("Save Scene", "Ctrl+S")) SaveCurrentScene();
             if (ImGui::MenuItem("New Scene")) { RecordUndo(); m_engine.GetSceneManager().NewScene(); m_selected = InvalidEntity; }
+            const bool canPackage = !m_engine.IsPlaying() && !m_engine.GetProjectSettings().projectFile.empty();
+            ImGui::BeginDisabled(!canPackage);
+            if (ImGui::MenuItem("Package Project"))
+            {
+                SaveCurrentScene();
+                char* basePath = SDL_GetBasePath();
+                const std::filesystem::path executableDirectory = basePath ? std::filesystem::path(basePath) : std::filesystem::current_path();
+                if (basePath) SDL_free(basePath);
+#ifdef _WIN32
+                const auto gameExecutable = executableDirectory / "tinyengine_game.exe";
+#else
+                const auto gameExecutable = executableDirectory / "tinyengine_game";
+#endif
+                const auto output = m_engine.GetProjectSettings().Resolve(std::filesystem::path("Dist") / m_engine.GetProjectSettings().name);
+                const auto result = ProjectPackager::Package({m_engine.GetProjectSettings().projectFile, output, gameExecutable});
+                if (result.success) m_messages.emplace_back("Packaged project: " + result.outputDirectory.generic_string());
+                else for (const auto& error : result.errors) m_messages.emplace_back("Package error: " + error);
+            }
+            ImGui::EndDisabled();
             ImGui::EndMenu();
         }
         if (ImGui::BeginMenu("Edit"))

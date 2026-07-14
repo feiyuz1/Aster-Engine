@@ -1,8 +1,9 @@
 cmake_minimum_required(VERSION 3.20)
-project(TinyEngine VERSION 0.6.0 LANGUAGES C CXX)
+project(TinyEngine VERSION 0.7.0 LANGUAGES C CXX)
 
 option(TINYENGINE_BUILD_TESTS "Build TinyEngine tests" ON)
 option(TINYENGINE_BUILD_DEMO "Build TinyEngine demo" ON)
+option(TINYENGINE_BUILD_GAME "Build standalone TinyEngine game runtime" ON)
 option(TINYENGINE_BUILD_EDITOR "Build TinyEngine editor" ON)
 option(TINYENGINE_BUILD_IMPORTERS "Build Assimp based asset importers" ON)
 
@@ -66,6 +67,7 @@ add_library(tinyengine STATIC
     src/ECS/SceneSerializer.cpp
     src/ECS/Systems.cpp
     src/Project/Project.cpp
+    src/Project/ProjectPackager.cpp
     src/Render/Renderer.cpp
     src/Render/SdlGlRenderDevice.cpp
     src/Physics/PhysicsWorld.cpp
@@ -99,6 +101,12 @@ endif()
 if(TINYENGINE_BUILD_DEMO)
     add_executable(tinyengine_demo src/main.cpp)
     target_link_libraries(tinyengine_demo PRIVATE tinyengine)
+endif()
+
+if(TINYENGINE_BUILD_GAME)
+    add_executable(tinyengine_game src/GameMain.cpp)
+    target_link_libraries(tinyengine_game PRIVATE tinyengine)
+    target_compile_definitions(tinyengine_game PRIVATE TINYENGINE_SHIPPING=1)
 endif()
 
 if(TINYENGINE_BUILD_IMPORTERS)
@@ -140,6 +148,18 @@ if(TINYENGINE_BUILD_IMPORTERS)
 endif()
 add_executable(tinyengine_scene_tool tools/SceneTool.cpp)
 target_link_libraries(tinyengine_scene_tool PRIVATE tinyengine)
+add_executable(tinyengine_package_tool tools/PackageTool.cpp)
+target_link_libraries(tinyengine_package_tool PRIVATE tinyengine)
+
+if(TINYENGINE_BUILD_GAME)
+    add_custom_target(package_game
+        COMMAND $<TARGET_FILE:tinyengine_package_tool> "${CMAKE_CURRENT_SOURCE_DIR}/TinyEngine.tinyproject" "${CMAKE_BINARY_DIR}/Package/TinyEngineDemo" "$<TARGET_FILE:tinyengine_game>"
+        DEPENDS tinyengine_package_tool tinyengine_game
+        WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+        COMMENT "Packaging standalone TinyEngineDemo"
+        VERBATIM
+    )
+endif()
 
 if(TINYENGINE_BUILD_TESTS)
     enable_testing()
@@ -158,11 +178,15 @@ install(TARGETS tinyengine ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR})
 if(TINYENGINE_BUILD_DEMO)
     install(TARGETS tinyengine_demo RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 endif()
+if(TINYENGINE_BUILD_GAME)
+    install(TARGETS tinyengine_game RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+endif()
 if(TINYENGINE_BUILD_EDITOR)
     install(TARGETS tinyengine_editor RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 endif()
 install(TARGETS tinyengine_asset_tool RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 install(TARGETS tinyengine_scene_tool RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+install(TARGETS tinyengine_package_tool RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 install(DIRECTORY include/ DESTINATION ${CMAKE_INSTALL_INCLUDEDIR} PATTERN "Import" EXCLUDE)
 install(DIRECTORY assets/ DESTINATION ${CMAKE_INSTALL_DATADIR}/tinyengine/assets)
 install(FILES TinyEngine.tinyproject DESTINATION .)

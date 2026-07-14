@@ -20,6 +20,7 @@ namespace MiniEngine
         assetDirectory = config.GetString("project.assets", assetDirectory.string());
         startupScene = config.GetString("project.startupScene", startupScene.string());
         cookedDirectory = config.GetString("project.cooked", cookedDirectory.string());
+        packageArchive = config.GetString("project.package", "");
         fixedStep = std::max(0.001f, config.GetFloat("physics.fixedStep", fixedStep));
         return true;
     }
@@ -31,6 +32,7 @@ namespace MiniEngine
         config.Set("project.assets", assetDirectory.generic_string());
         config.Set("project.startupScene", startupScene.generic_string());
         config.Set("project.cooked", cookedDirectory.generic_string());
+        if (!packageArchive.empty()) config.Set("project.package", packageArchive.generic_string());
         config.Set("physics.fixedStep", std::to_string(fixedStep));
         return config.Save(path.string());
     }

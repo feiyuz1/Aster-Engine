@@ -18,6 +18,7 @@ namespace MiniEngine
         std::filesystem::path assetDirectory = "assets";
         std::filesystem::path startupScene = "Saved/Demo.scene";
         std::filesystem::path cookedDirectory = "Saved/Cooked";
+        std::filesystem::path packageArchive;
         float fixedStep = 1.0f / 60.0f;
 
         bool Load(const std::filesystem::path& path);

@@ -6,6 +6,7 @@
 #include "MiniEngine/Physics/PhysicsWorld.hpp"
 #include "MiniEngine/Platform/Platform.hpp"
 #include "MiniEngine/Project/Project.hpp"
+#include "MiniEngine/Project/ProjectPackager.hpp"
 #include "MiniEngine/Render/Renderer.hpp"
 #include "MiniEngine/Resource/Resource.hpp"
 #include "MiniEngine/Resource/AssetCooker.hpp"
@@ -159,6 +160,10 @@ int main()
     CHECK(PakArchive::List("Saved/Test.tpak").size() >= 4);
     const auto packedMesh = PakArchive::ReadFile("Saved/Test.tpak", "player.mesh");
     CHECK(packedMesh.has_value() && !packedMesh->empty());
+    CHECK(PlatformFile::WriteAllBytes("Saved/FakeGame.exe", {0x4d, 0x5a, 0x00, 0x00}));
+    const auto package = ProjectPackager::Package({"TinyEngine.tinyproject", "Saved/TestPackage", "Saved/FakeGame.exe"});
+    CHECK(package.success && std::filesystem::is_regular_file(package.archive) && std::filesystem::is_regular_file(package.projectFile));
+    CHECK(!PakArchive::List(package.archive).empty() && PlatformFile::ReadAllText("Saved/TestPackage/Package.manifest").find("package.version=1") != std::string::npos);
     AssetRegistry registry;
     registry.Scan("assets");
     const auto meshInfo = registry.Find("assets/player.mesh");

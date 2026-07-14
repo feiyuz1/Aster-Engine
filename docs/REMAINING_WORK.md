@@ -2,7 +2,7 @@
 
 记录日期：2026-07-14
 
-本停止点已经完成：线性 Radiance HDR、颜色/数据纹理色彩空间、Mipmap、运行时 Tangent、六类 PBR 贴图、最多四盏方向光、程序化天空环境，以及 Assimp 对应贴图导入。
+当前已完成：线性 Radiance HDR、颜色/数据纹理色彩空间、Mipmap、运行时 Tangent、六类 PBR 贴图、最多四盏方向光、程序化天空环境、Assimp 对应贴图导入，以及 standalone game/TPAK 项目打包发布闭环。
 
 ## P0 未完成
 
@@ -27,4 +27,3 @@
 - Windows CI、格式检查、编辑器自动化与打包冒烟测试。
 - Crash Dump、结构化日志、CPU/内存/GPU Profiler。
 - 许可证清单、示例项目、API 文档和数据版本迁移工具。
-- 当前工作区另有一组尚未提交的 standalone game/package pipeline 改动，需要独立完成测试和 Git 提交，不能与本次渲染提交混合。

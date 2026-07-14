@@ -16,6 +16,16 @@ namespace MiniEngine
         if (m_initialized) return true;
         m_logger.Info("Engine initialize begin.");
         const bool projectLoaded = !projectFile.empty() && m_projectSettings.Load(projectFile);
+        if (projectLoaded && !m_projectSettings.packageArchive.empty())
+        {
+            PlatformFile::ClearMounts();
+            m_projectPakMounted = PlatformFile::MountPak(m_projectSettings.Resolve(m_projectSettings.packageArchive), 100);
+            if (!m_projectPakMounted)
+            {
+                m_logger.Error("Cannot mount project package: " + m_projectSettings.packageArchive.generic_string());
+                return false;
+            }
+        }
         m_memoryManager.Initialize();
         const auto hardwareCount = std::thread::hardware_concurrency();
         m_jobSystem.Initialize(std::max(1u, hardwareCount > 1 ? hardwareCount - 1 : 1u));
@@ -27,7 +37,7 @@ namespace MiniEngine
         m_renderer.SetLogger(&m_logger);
         m_renderer.SetResourceManager(&m_resourceManager);
         m_renderer.SetUISystem(&m_uiSystem);
-        if (!m_renderer.Initialize(std::make_unique<SdlGlRenderDevice>()))
+        if (!m_renderer.Initialize(std::make_unique<SdlGlRenderDevice>(1280, 720, projectLoaded ? m_projectSettings.name : "TinyEngine SDL2 + OpenGL")))
         {
             m_logger.Error("Renderer initialize failed.");
             Shutdown();
@@ -38,7 +48,7 @@ namespace MiniEngine
         m_context = {&m_logger, &m_memoryManager, &m_jobSystem, &m_resourceManager, &m_world, &m_renderer, &m_inputSystem, &m_physicsWorld, &m_audioEngine, &m_scriptEngine, &m_sceneManager, &m_projectSettings, &m_uiSystem};
         bool sceneLoaded = false;
         if (projectLoaded)
-            sceneLoaded = m_sceneManager.LoadScene(m_projectSettings.Resolve(m_projectSettings.startupScene));
+            sceneLoaded = m_sceneManager.LoadScene(m_projectPakMounted ? m_projectSettings.startupScene : m_projectSettings.Resolve(m_projectSettings.startupScene));
         if (!sceneLoaded) SetupDemoScene();
         if (m_gameInstance) m_gameInstance->OnInitialize();
         m_initialized = true;
@@ -80,6 +90,7 @@ namespace MiniEngine
         m_resourceManager.Shutdown();
         m_jobSystem.Shutdown();
         m_memoryManager.Shutdown();
+        if (m_projectPakMounted) { PlatformFile::ClearMounts(); m_projectPakMounted = false; }
         m_context = {};
         if (m_initialized) m_logger.Info("Engine shutdown complete.");
         m_initialized = false;

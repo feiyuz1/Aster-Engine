@@ -85,6 +85,7 @@ namespace MiniEngine
         std::uint32_t m_frameIndex = 0;
         Entity m_playerEntity = InvalidEntity;
         bool m_playing = false;
+        bool m_projectPakMounted = false;
         std::string m_editSnapshot;
     };
 }

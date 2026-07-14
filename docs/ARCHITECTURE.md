@@ -1,6 +1,6 @@
 # TinyEngine 架构说明
 
-本文对应 TinyEngine 0.6.0，最后同步于 2026-07-14。
+本文对应 TinyEngine 0.7.0，最后同步于 2026-07-14。
 
 ## 依赖方向
 
@@ -41,6 +41,15 @@ FBX/glTF/OBJ/... -> AssimpImporter
   -> .mesh/.mat/.prefab + .meta
   -> ResourceManager -> GPU upload
   -> Cooked directory -> TPAK -> VFS mount
+```
+
+发布流程：
+
+```text
+.tinyproject + assets + startup scene + tinyengine_game
+-> ProjectPackager safety validation
+-> Content/Game.tpak + renamed game executable + shipping .tinyproject + manifest
+-> game mounts TPAK at startup -> bounded or interactive Engine loop
 ```
 
 材质导入保留 base color、opacity、metallic、roughness、emissive，以及 base-color/normal/metallic/roughness/AO/emissive 贴图。MeshResource 从三角形 UV 生成正交 Tangent。PNG/JPG/BMP/TIFF 由 Windows WIC 解码；Radiance HDR 保持线性 float RGBA，上传为 RGBA16F。颜色贴图使用 sRGB，数据贴图保持线性，全部生成 Mipmap。
