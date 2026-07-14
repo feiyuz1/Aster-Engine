@@ -2,7 +2,7 @@
 
 本文记录本轮开发对 TinyEngine 做过的主要更新，以及各功能采用的简要实现方式。内容按 Git 提交顺序整理，方便以后定位代码、回溯设计和继续开发。
 
-当前引擎版本：0.9.0
+当前引擎版本：0.10.0
 
 参考源码：Unreal Engine 5.3.2
 
@@ -175,7 +175,23 @@
 - 编辑器控件先编辑局部副本，在 ImGui 项目激活时记录原始场景快照，再将值写回组件，保持一次拖动对应一次 Undo 起点。
 - 恢复快照独立于正式场景文件；正式保存成功后清除恢复文件。
 
-## 11. 验证与文档维护
+## 11. 输入、空间音频、动画与轻量物理增强
+
+更新内容：
+
+- 新增 `TINYINPUT 1` 输入映射资产、运行时绑定/重绑定/存取，以及 SDL GameController 热插拔、摇杆死区和 UI 导航。
+- 音频从顺序 Queue 升级为回调式多 Voice 混音器，支持循环、Bus 音量、距离衰减、左右声像和场景 AudioSource 生命周期。
+- Transform Animation Clip 增加下一 Clip 交叉淡化、反向/循环时间处理和 Root Motion。
+- 物理增加连续子步、线性阻尼/弹性、三轴最小穿透冲量响应、Convex/TriangleMesh 包围体、Fixed/Distance Joint、查询法线和调试包围体。
+- 场景格式升级到 `TINYSCENE 5`，保留旧版读取并正确重映射 Prefab Joint 实体引用。
+
+实现方式：
+
+- 输入逻辑名可组合多个物理通道，GameController 数据在进入 InputSystem 前与键鼠值合并。
+- 音频回调以 44.1 kHz 双声道 S16 混合所有 Voice，并在锁保护下实时更新实体声源增益、Bus、循环和声像。
+- 轻量物理仍保持无第三方运行时依赖；Mesh Collider 当前使用资源包围体，精确三角形窄相位保留为后续可选后端。
+
+## 12. 验证与文档维护
 
 持续更新内容：
 
@@ -189,8 +205,8 @@
 
 - Skybox、IBL、sRGB Texture、多灯、级联阴影和 GPU profiler。
 - Shader include/variant、磁盘缓存和完整错误面板。
-- Jolt、Mesh Collider、CCD、Joint 和物理调试绘制。
-- 骨骼动画、空间音频、字体 Atlas 和完整 UI 布局。
+- 精确 Mesh 窄相位/可选 Jolt、完整 Sweep/Slide CharacterController。
+- 骨骼蒙皮与状态机、OGG 流式音频、Unicode 字体和高级 UI 排版。
 - 场景标签页、多选/框选、Gizmo local/world 和 Material/Shader 专用编辑器；反射 Inspector、资源拖放和场景恢复已完成。
 - CI、崩溃报告、许可证清单和发布包冒烟测试。
 

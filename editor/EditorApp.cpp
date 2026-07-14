@@ -243,6 +243,13 @@ namespace MiniEngine
                     if (changed) { RecordUndo(); *static_cast<std::uint32_t*>(value) = edited; }
                     break;
                 }
+                case ReflectedPropertyType::Entity:
+                {
+                    Entity edited = value ? *static_cast<Entity*>(value) : InvalidEntity;
+                    changed = value && ImGui::InputScalar(property.name.c_str(), ImGuiDataType_U64, &edited);
+                    if (changed && (edited == InvalidEntity || world.IsAlive(edited))) { RecordUndo(); *static_cast<Entity*>(value) = edited; }
+                    break;
+                }
                 case ReflectedPropertyType::Float:
                 {
                     float edited = value ? *static_cast<float*>(value) : 0.0f;

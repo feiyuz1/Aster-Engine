@@ -31,6 +31,7 @@ namespace MiniEngine
             if (extension == ".prefab") return "Prefab";
             if (extension == ".wav" || extension == ".ogg") return "Audio";
             if (extension == ".anim") return "Animation";
+            if (extension == ".input") return "Input";
             if (extension == ".ttf" || extension == ".otf") return "Font";
             return "Binary";
         }

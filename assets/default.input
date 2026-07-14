@@ -1,0 +1,15 @@
+TINYINPUT 1
+axis "MoveX" "MoveX" 1
+axis "MoveY" "MoveY" 1
+axis "MoveZ" "MoveZ" 1
+axis "LookX" "RotateY" 1
+axis "LookX" "MouseX" 1
+axis "LookY" "RotateX" 1
+axis "LookY" "MouseY" 1
+axis "RotateZ" "RotateZ" 1
+axis "Scale" "Scale" 1
+action "Primary" "Primary"
+action "Sprint" "Sprint"
+action "Quit" "Quit"
+action "UINext" "UINext"
+action "UIAccept" "UIAccept"

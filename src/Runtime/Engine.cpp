@@ -30,6 +30,12 @@ namespace MiniEngine
         const auto hardwareCount = std::thread::hardware_concurrency();
         m_jobSystem.Initialize(std::max(1u, hardwareCount > 1 ? hardwareCount - 1 : 1u));
         m_resourceManager.Initialize(&m_jobSystem, projectLoaded ? m_projectSettings.Resolve(m_projectSettings.assetDirectory) : std::filesystem::path{"assets"});
+        if (projectLoaded && !m_projectSettings.inputBindings.empty())
+        {
+            const auto inputPath = m_projectPakMounted ? m_projectSettings.inputBindings : m_projectSettings.Resolve(m_projectSettings.inputBindings);
+            if (!m_inputSystem.LoadBindings(inputPath.generic_string())) m_inputSystem.ResetDefaultBindings();
+        }
+        else m_inputSystem.ResetDefaultBindings();
         m_world.GetSystemManager().RegisterSystem<MovementSystem>();
         m_world.GetSystemManager().RegisterSystem<AnimationSystem>();
         m_world.AddListener(this);
@@ -165,6 +171,7 @@ namespace MiniEngine
                 m_physicsWorld.Step(m_world, fixedStep);
                 m_fixedAccumulator -= fixedStep;
             }
+            m_audioEngine.UpdateWorld(m_world);
         }
         m_renderer.RenderFrame(m_world);
         m_memoryManager.ResetFrame();
@@ -207,5 +214,5 @@ namespace MiniEngine
     }
 
     void Engine::OnEntityDestroying(World&, const Entity entity) { m_scriptEngine.DestroyEntity(entity); }
-    void Engine::OnWorldCleared(World&) { m_scriptEngine.ClearInstances(); m_playerEntity = InvalidEntity; }
+    void Engine::OnWorldCleared(World&) { m_scriptEngine.ClearInstances(); m_audioEngine.ClearWorldState(); m_playerEntity = InvalidEntity; }
 }

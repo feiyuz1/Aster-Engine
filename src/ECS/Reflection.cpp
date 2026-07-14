@@ -128,10 +128,15 @@ namespace MiniEngine
         Range(rigidBody.properties.back(), 0.0f, 100000.0f, 0.1f);
         rigidBody.properties.push_back(MakeProperty("Velocity", ReflectedPropertyType::Vec3, &RigidBodyComponent::velocity));
         rigidBody.properties.push_back(MakeProperty("Use Gravity", ReflectedPropertyType::Bool, &RigidBodyComponent::useGravity));
+        rigidBody.properties.push_back(MakeProperty("Linear Damping", ReflectedPropertyType::Float, &RigidBodyComponent::linearDamping));
+        Range(rigidBody.properties.back(), 0.0f, 100.0f, 0.01f);
+        rigidBody.properties.push_back(MakeProperty("Restitution", ReflectedPropertyType::Float, &RigidBodyComponent::restitution));
+        Range(rigidBody.properties.back(), 0.0f, 1.0f, 0.01f);
+        rigidBody.properties.push_back(MakeProperty("Continuous", ReflectedPropertyType::Bool, &RigidBodyComponent::continuous));
         m_components.push_back(std::move(rigidBody));
 
         auto collider = MakeComponent<ColliderComponent>("Collider");
-        collider.properties.push_back(MakeEnumProperty("Shape", &ColliderComponent::shape, {"Box", "Sphere", "Capsule"}));
+        collider.properties.push_back(MakeEnumProperty("Shape", &ColliderComponent::shape, {"Box", "Sphere", "Capsule", "Convex Hull", "Triangle Mesh"}));
         collider.properties.push_back(MakeProperty("Half Extents", ReflectedPropertyType::Vec3, &ColliderComponent::halfExtents));
         Range(collider.properties.back(), 0.001f, 100000.0f, 0.02f);
         collider.properties.push_back(MakeProperty("Radius", ReflectedPropertyType::Float, &ColliderComponent::radius));
@@ -141,7 +146,20 @@ namespace MiniEngine
         collider.properties.push_back(MakeProperty("Trigger", ReflectedPropertyType::Bool, &ColliderComponent::trigger));
         collider.properties.push_back(MakeProperty("Layer", ReflectedPropertyType::UInt, &ColliderComponent::layer));
         collider.properties.push_back(MakeProperty("Mask", ReflectedPropertyType::UInt, &ColliderComponent::mask));
+        collider.properties.push_back(MakeProperty("Mesh", ReflectedPropertyType::String, &ColliderComponent::meshPath));
+        collider.properties.back().assetType = "Mesh";
         m_components.push_back(std::move(collider));
+
+        auto joint = MakeComponent<JointComponent>("Joint");
+        joint.properties.push_back(MakeEnumProperty("Type", &JointComponent::type, {"Fixed", "Distance"}));
+        joint.properties.push_back(MakeProperty("Connected Entity", ReflectedPropertyType::Entity, &JointComponent::connectedEntity));
+        joint.properties.push_back(MakeProperty("Rest Length", ReflectedPropertyType::Float, &JointComponent::restLength));
+        Range(joint.properties.back(), 0.0f, 100000.0f, 0.05f);
+        joint.properties.push_back(MakeProperty("Stiffness", ReflectedPropertyType::Float, &JointComponent::stiffness));
+        Range(joint.properties.back(), 0.0f, 1.0f, 0.01f);
+        joint.properties.push_back(MakeProperty("Fixed Offset", ReflectedPropertyType::Vec3, &JointComponent::fixedOffset));
+        joint.properties.push_back(MakeProperty("Collide Connected", ReflectedPropertyType::Bool, &JointComponent::collideConnected));
+        m_components.push_back(std::move(joint));
 
         auto animation = MakeComponent<AnimationComponent>("Animation");
         animation.properties.push_back(MakeProperty("Clip", ReflectedPropertyType::String, &AnimationComponent::clipPath));
@@ -152,6 +170,11 @@ namespace MiniEngine
         Range(animation.properties.back(), -100.0f, 100.0f, 0.05f);
         animation.properties.push_back(MakeProperty("Loop", ReflectedPropertyType::Bool, &AnimationComponent::loop));
         animation.properties.push_back(MakeProperty("Playing", ReflectedPropertyType::Bool, &AnimationComponent::playing));
+        animation.properties.push_back(MakeProperty("Next Clip", ReflectedPropertyType::String, &AnimationComponent::nextClipPath));
+        animation.properties.back().assetType = "Animation";
+        animation.properties.push_back(MakeProperty("Blend Duration", ReflectedPropertyType::Float, &AnimationComponent::blendDuration));
+        Range(animation.properties.back(), 0.0f, 60.0f, 0.05f);
+        animation.properties.push_back(MakeProperty("Root Motion", ReflectedPropertyType::Bool, &AnimationComponent::rootMotion));
         m_components.push_back(std::move(animation));
 
         auto audio = MakeComponent<AudioSourceComponent>("Audio Source");
@@ -161,6 +184,12 @@ namespace MiniEngine
         Range(audio.properties.back(), 0.0f, 1.0f, 0.01f);
         audio.properties.push_back(MakeProperty("Loop", ReflectedPropertyType::Bool, &AudioSourceComponent::loop));
         audio.properties.push_back(MakeProperty("Play On Start", ReflectedPropertyType::Bool, &AudioSourceComponent::playOnStart));
+        audio.properties.push_back(MakeProperty("Spatial", ReflectedPropertyType::Bool, &AudioSourceComponent::spatial));
+        audio.properties.push_back(MakeProperty("Minimum Distance", ReflectedPropertyType::Float, &AudioSourceComponent::minimumDistance));
+        Range(audio.properties.back(), 0.0f, 100000.0f, 0.1f);
+        audio.properties.push_back(MakeProperty("Maximum Distance", ReflectedPropertyType::Float, &AudioSourceComponent::maximumDistance));
+        Range(audio.properties.back(), 0.01f, 100000.0f, 0.1f);
+        audio.properties.push_back(MakeProperty("Bus", ReflectedPropertyType::String, &AudioSourceComponent::bus));
         m_components.push_back(std::move(audio));
     }
 

@@ -12,6 +12,7 @@ namespace MiniEngine
     {
         Bool,
         UInt,
+        Entity,
         Float,
         Vec3,
         String,

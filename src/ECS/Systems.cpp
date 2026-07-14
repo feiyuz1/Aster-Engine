@@ -56,18 +56,53 @@ namespace MiniEngine
             if (!animation.playing || animation.clipPath.empty()) return;
             const Clip* clip = LoadClip(animation.clipPath);
             if (!clip || clip->keys.empty() || clip->duration <= 0.0f) return;
+            const auto sample = [](const Clip& value, const float time)
+            {
+                const auto upper = std::upper_bound(value.keys.begin(), value.keys.end(), time, [](const float keyTime, const Keyframe& key) { return keyTime < key.time; });
+                const Keyframe& next = upper == value.keys.end() ? value.keys.back() : *upper;
+                const Keyframe& previous = upper == value.keys.begin() ? value.keys.front() : *(upper - 1);
+                const float span = next.time - previous.time;
+                const float alpha = span > 0.0001f ? std::clamp((time - previous.time) / span, 0.0f, 1.0f) : 0.0f;
+                Keyframe result; result.time = time;
+                result.position = previous.position + (next.position - previous.position) * alpha;
+                result.rotation = previous.rotation + (next.rotation - previous.rotation) * alpha;
+                result.scale = previous.scale + (next.scale - previous.scale) * alpha;
+                return result;
+            };
+            const float previousTime = animation.time;
             animation.time += deltaTime * animation.speed;
-            if (animation.loop) animation.time = std::fmod(std::max(0.0f, animation.time), clip->duration);
-            else if (animation.time >= clip->duration) { animation.time = clip->duration; animation.playing = false; }
-            const auto upper = std::upper_bound(clip->keys.begin(), clip->keys.end(), animation.time, [](float time, const Keyframe& key) { return time < key.time; });
-            const Keyframe& next = upper == clip->keys.end() ? clip->keys.back() : *upper;
-            const Keyframe& previous = upper == clip->keys.begin() ? clip->keys.front() : *(upper - 1);
-            const float span = next.time - previous.time;
-            const float alpha = span > 0.0001f ? std::clamp((animation.time - previous.time) / span, 0.0f, 1.0f) : 0.0f;
-            const auto lerp = [alpha](const Vec3& a, const Vec3& b) { return a + (b - a) * alpha; };
-            transform.position = lerp(previous.position, next.position);
-            transform.rotation = lerp(previous.rotation, next.rotation);
-            transform.scale = lerp(previous.scale, next.scale);
+            bool wrapped = false;
+            if (animation.loop)
+            {
+                while (animation.time >= clip->duration) { animation.time -= clip->duration; wrapped = true; }
+                while (animation.time < 0.0f) { animation.time += clip->duration; wrapped = true; }
+            }
+            else
+            {
+                if (animation.time >= clip->duration) { animation.time = clip->duration; animation.playing = false; }
+                if (animation.time < 0.0f) { animation.time = 0.0f; animation.playing = false; }
+            }
+            Keyframe pose = sample(*clip, animation.time);
+            if (!animation.nextClipPath.empty() && animation.blendDuration > 0.0f)
+            {
+                if (const Clip* nextClip = LoadClip(animation.nextClipPath); nextClip && !nextClip->keys.empty() && nextClip->duration > 0.0f)
+                {
+                    animation.blendTime += std::abs(deltaTime);
+                    const float nextTime = std::fmod(std::max(0.0f, animation.time), nextClip->duration);
+                    const Keyframe nextPose = sample(*nextClip, nextTime);
+                    const float alpha = std::clamp(animation.blendTime / animation.blendDuration, 0.0f, 1.0f);
+                    pose.position += (nextPose.position - pose.position) * alpha; pose.rotation += (nextPose.rotation - pose.rotation) * alpha; pose.scale += (nextPose.scale - pose.scale) * alpha;
+                    if (alpha >= 1.0f) { animation.clipPath = animation.nextClipPath; animation.nextClipPath.clear(); animation.time = nextTime; animation.blendTime = 0.0f; animation.blendDuration = 0.0f; }
+                }
+            }
+            if (animation.rootMotion)
+            {
+                const Keyframe previousPose = sample(*clip, std::clamp(previousTime, 0.0f, clip->duration));
+                Vec3 motion = pose.position - previousPose.position;
+                if (wrapped && animation.speed >= 0.0f) motion = (sample(*clip, clip->duration).position - previousPose.position) + (pose.position - sample(*clip, 0.0f).position);
+                transform.position += motion; transform.rotation = pose.rotation; transform.scale = pose.scale;
+            }
+            else { transform.position = pose.position; transform.rotation = pose.rotation; transform.scale = pose.scale; }
         });
     }
 }

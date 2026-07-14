@@ -59,9 +59,12 @@ namespace MiniEngine
         float mass = 1.0f;
         Vec3 velocity{};
         bool useGravity = true;
+        float linearDamping = 0.05f;
+        float restitution = 0.0f;
+        bool continuous = false;
     };
 
-    enum class ColliderShape { Box, Sphere, Capsule };
+    enum class ColliderShape { Box, Sphere, Capsule, ConvexHull, TriangleMesh };
     struct ColliderComponent
     {
         ColliderShape shape = ColliderShape::Box;
@@ -71,6 +74,18 @@ namespace MiniEngine
         bool trigger = false;
         std::uint32_t layer = 1;
         std::uint32_t mask = 0xffffffffu;
+        std::string meshPath;
+    };
+
+    enum class JointType { Fixed, Distance };
+    struct JointComponent
+    {
+        JointType type = JointType::Distance;
+        Entity connectedEntity = InvalidEntity;
+        float restLength = 1.0f;
+        float stiffness = 1.0f;
+        Vec3 fixedOffset{};
+        bool collideConnected = false;
     };
 
     struct AnimationComponent
@@ -80,6 +95,10 @@ namespace MiniEngine
         float speed = 1.0f;
         bool loop = true;
         bool playing = true;
+        std::string nextClipPath;
+        float blendDuration = 0.0f;
+        float blendTime = 0.0f;
+        bool rootMotion = false;
     };
 
     struct AudioSourceComponent
@@ -88,5 +107,9 @@ namespace MiniEngine
         float volume = 1.0f;
         bool loop = false;
         bool playOnStart = false;
+        bool spatial = true;
+        float minimumDistance = 1.0f;
+        float maximumDistance = 25.0f;
+        std::string bus = "SFX";
     };
 }

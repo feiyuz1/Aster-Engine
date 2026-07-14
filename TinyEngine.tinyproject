@@ -2,4 +2,5 @@ project.name=TinyEngineDemo
 project.assets=assets
 project.startupScene=Saved/Demo.scene
 project.cooked=Saved/Cooked
+input.bindings=assets/default.input
 physics.fixedStep=0.016666667

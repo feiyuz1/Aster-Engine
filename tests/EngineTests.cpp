@@ -1,9 +1,12 @@
 #include "MiniEngine/Core/Config.hpp"
+#include "MiniEngine/Audio/AudioEngine.hpp"
 #include "MiniEngine/ECS/Components.hpp"
 #include "MiniEngine/ECS/ECS.hpp"
 #include "MiniEngine/ECS/Reflection.hpp"
 #include "MiniEngine/ECS/SceneSerializer.hpp"
+#include "MiniEngine/ECS/Systems.hpp"
 #include "MiniEngine/Math/Math.hpp"
+#include "MiniEngine/Input/InputSystem.hpp"
 #include "MiniEngine/Physics/PhysicsWorld.hpp"
 #include "MiniEngine/Platform/Platform.hpp"
 #include "MiniEngine/Project/Project.hpp"
@@ -74,10 +77,14 @@ int main()
     const Entity child = world.CreateEntity("Child");
     CHECK(world.SetParent(child, replacement));
     CHECK(!world.SetParent(replacement, child));
+    world.AddComponent(replacement, JointComponent{JointType::Distance, child, 2.0f, 0.75f});
     CHECK(SceneSerializer::Save(world, "Saved/Test.scene"));
     World loaded;
     CHECK(SceneSerializer::Load(loaded, "Saved/Test.scene"));
     CHECK(loaded.GetEntityManager().GetAliveEntities().size() == 2);
+    bool loadedJointValid = false;
+    for (const Entity entity : loaded.GetEntityManager().GetAliveEntities()) if (const auto* joint = loaded.GetComponent<JointComponent>(entity)) loadedJointValid = loaded.IsAlive(joint->connectedEntity) && std::abs(joint->restLength - 2.0f) < 0.001f;
+    CHECK(loadedJointValid);
     const std::string snapshot = SceneSerializer::Serialize(loaded);
     loaded.CreateEntity("Temporary");
     CHECK(SceneSerializer::Deserialize(loaded, snapshot));
@@ -210,6 +217,18 @@ int main()
     RaycastHit queryHit;
     CHECK(physics.SphereCast(physicsScene, {{0.0f, 3.0f, 0.0f}, {0.0f, -1.0f, 0.0f}}, 0.25f, 10.0f, queryHit));
     CHECK(!physics.Overlap(physicsScene, {{-1.0f, -1.0f, -1.0f}, {1.0f, 1.0f, 1.0f}}).empty());
+    CHECK(physics.GetDebugBoxes().size() == 2 && Length(queryHit.normal) > 0.9f);
+    World jointWorld; const Entity jointFirst = jointWorld.CreateEntity("JointFirst"), jointSecond = jointWorld.CreateEntity("JointSecond");
+    jointWorld.GetComponent<TransformComponent>(jointFirst)->position = {0.0f, 0.0f, 0.0f}; jointWorld.GetComponent<TransformComponent>(jointSecond)->position = {4.0f, 0.0f, 0.0f};
+    jointWorld.AddComponent(jointFirst, RigidBodyComponent{BodyType::Dynamic, 1.0f, {}, false}); jointWorld.AddComponent(jointSecond, RigidBodyComponent{BodyType::Dynamic, 1.0f, {}, false});
+    jointWorld.AddComponent(jointFirst, JointComponent{JointType::Distance, jointSecond, 2.0f, 1.0f}); physics.Step(jointWorld, 1.0f / 60.0f);
+    CHECK(std::abs(Length(jointWorld.GetComponent<TransformComponent>(jointFirst)->position - jointWorld.GetComponent<TransformComponent>(jointSecond)->position) - 2.0f) < 0.01f);
+
+    CHECK(PlatformFile::WriteAllText("Saved/Idle.anim", "duration 1\nkey 0 0 0 0 0 0 0 1 1 1\nkey 1 0 0 0 0 0 0 1 1 1\n"));
+    CHECK(PlatformFile::WriteAllText("Saved/Run.anim", "duration 1\nkey 0 10 0 0 0 0 0 1 1 1\nkey 1 10 0 0 0 0 0 1 1 1\n"));
+    World animationWorld; animationWorld.GetSystemManager().RegisterSystem<AnimationSystem>(); const Entity animatedEntity = animationWorld.CreateEntity("Blend");
+    animationWorld.AddComponent(animatedEntity, AnimationComponent{"Saved/Idle.anim", 0.0f, 1.0f, true, true, "Saved/Run.anim", 1.0f}); animationWorld.Initialize(); animationWorld.Update(0.5f);
+    CHECK(std::abs(animationWorld.GetComponent<TransformComponent>(animatedEntity)->position.x - 5.0f) < 0.01f); animationWorld.Shutdown();
 
     Config config;
     config.Set("render.vsync", "true");
@@ -219,6 +238,16 @@ int main()
     CHECK(loadedConfig.Load("Saved/Test.ini"));
     CHECK(loadedConfig.GetBool("render.vsync"));
     CHECK(loadedConfig.GetInt("physics.fixedRate") == 60);
+    AudioEngine audioMixer; audioMixer.SetBusVolume("Music", 0.35f); CHECK(std::abs(audioMixer.GetBusVolume("Music") - 0.35f) < 0.001f);
+
+    InputSystem mappedInput;
+    mappedInput.ClearBindings(); mappedInput.BindAxis("Horizontal", "MoveX", 2.0f); mappedInput.BindAction("Fire", "Primary");
+    InputState mappedState; mappedState.moveX = 0.25f; mappedState.primaryAction = true;
+    mappedInput.Update(mappedState);
+    CHECK(std::abs(mappedInput.GetAxis("Horizontal") - 0.5f) < 0.001f && mappedInput.WasPressed("Fire"));
+    CHECK(mappedInput.SaveBindings("Saved/Test.input"));
+    InputSystem loadedInput; CHECK(loadedInput.LoadBindings("Saved/Test.input")); loadedInput.Update(mappedState);
+    CHECK(std::abs(loadedInput.GetAxis("Horizontal") - 0.5f) < 0.001f && loadedInput.IsDown("Fire"));
 
     UISystem ui;
     bool clicked = false;

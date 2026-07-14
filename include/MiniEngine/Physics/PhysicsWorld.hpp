@@ -11,6 +11,7 @@ namespace MiniEngine
     enum class CollisionEventType { Enter, Stay, Exit };
     struct CollisionEvent { Entity first = InvalidEntity; Entity second = InvalidEntity; CollisionEventType type = CollisionEventType::Enter; bool trigger = false; };
     struct RaycastHit { Entity entity = InvalidEntity; Vec3 point; Vec3 normal; float distance = 0.0f; };
+    struct PhysicsDebugBox { Entity entity = InvalidEntity; Aabb bounds; bool colliding = false; bool trigger = false; };
     struct PhysicsQuery
     {
         std::uint32_t layerMask = 0xffffffffu;
@@ -27,10 +28,12 @@ namespace MiniEngine
         std::vector<Entity> Overlap(const World& world, const Aabb& bounds, const PhysicsQuery& query = {}) const;
         Vec3 MoveCharacter(World& world, Entity entity, const Vec3& displacement, float skinWidth = 0.02f) const;
         const std::vector<CollisionEvent>& GetEvents() const;
+        const std::vector<PhysicsDebugBox>& GetDebugBoxes() const;
         void Clear();
     private:
         static Aabb ComputeBounds(const World& world, Entity entity);
         std::vector<CollisionEvent> m_events;
         std::vector<std::pair<Entity, Entity>> m_previousPairs;
+        std::vector<PhysicsDebugBox> m_debugBoxes;
     };
 }

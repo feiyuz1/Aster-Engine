@@ -21,6 +21,7 @@ namespace MiniEngine
         startupScene = config.GetString("project.startupScene", startupScene.string());
         cookedDirectory = config.GetString("project.cooked", cookedDirectory.string());
         packageArchive = config.GetString("project.package", "");
+        inputBindings = config.GetString("input.bindings", inputBindings.string());
         fixedStep = std::max(0.001f, config.GetFloat("physics.fixedStep", fixedStep));
         return true;
     }
@@ -33,6 +34,7 @@ namespace MiniEngine
         config.Set("project.startupScene", startupScene.generic_string());
         config.Set("project.cooked", cookedDirectory.generic_string());
         if (!packageArchive.empty()) config.Set("project.package", packageArchive.generic_string());
+        if (!inputBindings.empty()) config.Set("input.bindings", inputBindings.generic_string());
         config.Set("physics.fixedStep", std::to_string(fixedStep));
         return config.Save(path.string());
     }
@@ -85,6 +87,7 @@ namespace MiniEngine
             CopyComponent<ScriptComponent>(source, from, destination, to);
             CopyComponent<RigidBodyComponent>(source, from, destination, to);
             CopyComponent<ColliderComponent>(source, from, destination, to);
+            CopyComponent<JointComponent>(source, from, destination, to);
             CopyComponent<AnimationComponent>(source, from, destination, to);
             CopyComponent<AudioSourceComponent>(source, from, destination, to);
             return to;
@@ -107,6 +110,7 @@ namespace MiniEngine
         for (const Entity entity : included) CopyEntity(world, entity, prefabWorld, mapping);
         for (const Entity entity : included)
             if (const auto* relation = world.GetComponent<RelationshipComponent>(entity); relation && included.count(relation->parent)) prefabWorld.SetParent(mapping[entity], mapping[relation->parent]);
+        for (const auto& pair : mapping) if (auto* joint = prefabWorld.GetComponent<JointComponent>(pair.second)) joint->connectedEntity = mapping.count(joint->connectedEntity) ? mapping[joint->connectedEntity] : InvalidEntity;
         return SceneSerializer::Save(prefabWorld, path);
     }
 
@@ -123,6 +127,7 @@ namespace MiniEngine
             if (relation && mapping.count(relation->parent)) world.SetParent(pair.second, mapping[relation->parent]);
             else { roots.push_back(pair.second); if (parent != InvalidEntity) world.SetParent(pair.second, parent); }
         }
+        for (const auto& pair : mapping) if (auto* joint = world.GetComponent<JointComponent>(pair.second)) joint->connectedEntity = mapping.count(joint->connectedEntity) ? mapping[joint->connectedEntity] : InvalidEntity;
         return roots;
     }
 

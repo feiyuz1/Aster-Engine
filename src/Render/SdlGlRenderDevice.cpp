@@ -237,6 +237,7 @@ namespace MiniEngine
         int sceneWidth = 0, sceneHeight = 0;
         bool sceneTargetEnabled = false;
         bool previousUiNext = false, previousUiAccept = false;
+        SDL_GameController* controller = nullptr;
         GLint mvpLocation = -1, modelLocation = -1, lightViewProjectionLocation = -1, baseColorLocation = -1;
         GLint metallicLocation = -1, roughnessLocation = -1, emissiveLocation = -1, cameraPositionLocation = -1;
         GLint lightDirectionLocation = -1, lightColorLocation = -1, lightIntensityLocation = -1;
@@ -628,6 +629,7 @@ namespace MiniEngine
             if (m_impl->uiVao) { m_impl->DeleteVertexArrays(1, &m_impl->uiVao); m_impl->uiVao = 0; }
             SDL_GL_DeleteContext(m_impl->context); m_impl->context = nullptr;
         }
+        if (m_impl->controller) { SDL_GameControllerClose(m_impl->controller); m_impl->controller = nullptr; }
         if (m_impl->window) { SDL_DestroyWindow(m_impl->window); m_impl->window = nullptr; }
         SDL_Quit();
     }
@@ -647,6 +649,9 @@ namespace MiniEngine
                 if (event.window.data2 > 0) m_aspect = static_cast<float>(event.window.data1) / static_cast<float>(event.window.data2);
             }
             if (event.type == SDL_MOUSEMOTION) { m_impl->input.mouseX += static_cast<float>(event.motion.xrel); m_impl->input.mouseY += static_cast<float>(event.motion.yrel); }
+            if (event.type == SDL_CONTROLLERDEVICEADDED && !m_impl->controller) m_impl->controller = SDL_GameControllerOpen(event.cdevice.which);
+            if (event.type == SDL_CONTROLLERDEVICEREMOVED && m_impl->controller && SDL_JoystickInstanceID(SDL_GameControllerGetJoystick(m_impl->controller)) == event.cdevice.which)
+            { SDL_GameControllerClose(m_impl->controller); m_impl->controller = nullptr; }
         }
         const Uint8* keys = SDL_GetKeyboardState(nullptr);
         const auto axis = [keys](SDL_Scancode negative, SDL_Scancode positive) { return (keys[positive] ? 1.0f : 0.0f) - (keys[negative] ? 1.0f : 0.0f); };
@@ -656,7 +661,29 @@ namespace MiniEngine
         m_impl->input.primaryAction = (SDL_GetMouseState(nullptr, nullptr) & SDL_BUTTON(SDL_BUTTON_LEFT)) != 0;
         int cursorX = 0, cursorY = 0; SDL_GetMouseState(&cursorX, &cursorY); m_impl->input.cursorX = static_cast<float>(cursorX); m_impl->input.cursorY = static_cast<float>(cursorY);
         m_impl->input.quitRequested = keys[SDL_SCANCODE_ESCAPE] != 0;
-        const bool uiNext = keys[SDL_SCANCODE_TAB] != 0, uiAccept = keys[SDL_SCANCODE_RETURN] != 0 || keys[SDL_SCANCODE_SPACE] != 0;
+        if (!m_impl->controller)
+            for (int index = 0; index < SDL_NumJoysticks(); ++index) if (SDL_IsGameController(index)) { m_impl->controller = SDL_GameControllerOpen(index); if (m_impl->controller) break; }
+        bool controllerNext = false, controllerAccept = false;
+        if (m_impl->controller)
+        {
+            const auto stick = [this](const SDL_GameControllerAxis axisValue)
+            {
+                constexpr float deadZone = 8000.0f;
+                const float value = static_cast<float>(SDL_GameControllerGetAxis(m_impl->controller, axisValue));
+                if (std::abs(value) < deadZone) return 0.0f;
+                return std::clamp((value - std::copysign(deadZone, value)) / (32767.0f - deadZone), -1.0f, 1.0f);
+            };
+            const float gamepadMoveX = stick(SDL_CONTROLLER_AXIS_LEFTX), gamepadMoveZ = -stick(SDL_CONTROLLER_AXIS_LEFTY);
+            const float gamepadLookX = stick(SDL_CONTROLLER_AXIS_RIGHTX), gamepadLookY = stick(SDL_CONTROLLER_AXIS_RIGHTY);
+            if (std::abs(gamepadMoveX) > std::abs(m_impl->input.moveX)) m_impl->input.moveX = gamepadMoveX;
+            if (std::abs(gamepadMoveZ) > std::abs(m_impl->input.moveZ)) m_impl->input.moveZ = gamepadMoveZ;
+            m_impl->input.rotateY += gamepadLookX * 2.0f; m_impl->input.rotateX += gamepadLookY * 2.0f;
+            m_impl->input.primaryAction = m_impl->input.primaryAction || SDL_GameControllerGetButton(m_impl->controller, SDL_CONTROLLER_BUTTON_A);
+            m_impl->input.sprint = m_impl->input.sprint || SDL_GameControllerGetButton(m_impl->controller, SDL_CONTROLLER_BUTTON_LEFTSHOULDER);
+            controllerNext = SDL_GameControllerGetButton(m_impl->controller, SDL_CONTROLLER_BUTTON_DPAD_DOWN);
+            controllerAccept = SDL_GameControllerGetButton(m_impl->controller, SDL_CONTROLLER_BUTTON_A);
+        }
+        const bool uiNext = keys[SDL_SCANCODE_TAB] != 0 || controllerNext, uiAccept = keys[SDL_SCANCODE_RETURN] != 0 || keys[SDL_SCANCODE_SPACE] != 0 || controllerAccept;
         m_impl->input.uiNavigateNext = uiNext && !m_impl->previousUiNext; m_impl->input.uiAccept = uiAccept && !m_impl->previousUiAccept;
         m_impl->previousUiNext = uiNext; m_impl->previousUiAccept = uiAccept;
         return !m_impl->input.quitRequested;
