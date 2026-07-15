@@ -28,6 +28,23 @@ class FontFace
     std::vector<std::uint8_t> m_data;
 };
 
+struct RasterizedGlyph
+{
+    std::vector<std::uint8_t> pixels;
+    int width = 0;
+    int height = 0;
+    int bearingX = 0;
+    int bearingY = 0;
+    int advance = 0;
+};
+
+class FontRasterizer
+{
+  public:
+    static bool RasterizeSystemGlyph(std::uint32_t codepoint, int pixelHeight, RasterizedGlyph &glyph,
+                                     const std::wstring &fontName = L"Microsoft YaHei UI");
+};
+
 class StringTable
 {
   public:

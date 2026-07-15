@@ -2,7 +2,7 @@
 
 TinyEngine 是参考 Unreal Engine 5.3.2 模块职责、以 C++17 实现的轻量 3D 引擎。目标不是复制 UE 的 UObject/UHT、完整 RHI 或大型编辑器，而是形成“项目—资产—场景—运行时—渲染—打包—编辑器”的最小可用闭环。
 
-当前版本：0.19.0（P0 材质实例与粒子 Billboard 渲染闭环）。
+当前版本：0.20.0（Unicode 字形、坡度判定与编辑器多选）。
 
 ## 已实现
 
@@ -12,7 +12,7 @@ TinyEngine 是参考 Unreal Engine 5.3.2 模块职责、以 C++17 实现的轻�
 - 图片：PPM，以及 Windows WIC 的 PNG/JPG/BMP/TIFF；Radiance HDR 保持线性浮点数据，GPU 使用 RGBA16F。
 - 渲染：SDL2 + OpenGL 3.3、RGBA16F Scene RenderTarget、ACES Tonemap/曝光、FXAA、2048² 方向光 PCF 阴影、最多四盏方向光、程序化天空与 HDR equirect 环境 IBL、完整 PBR 贴图、sRGB/Mipmap、距离 LOD、粗裁剪和透明队列。
 - 材质：文本 PBR 材质、六类贴图、透明模式，以及通过 `parent` 稀疏覆盖参数的材质实例；循环父级会在加载期拒绝。
-- 物理：固定步长、SAP、Box/Sphere/Capsule、Convex/TriangleMesh 包围体、层过滤、Trigger、Raycast/SphereCast/Overlap、连续子步、三轴冲量响应、Distance/Fixed Joint、带接地/碰顶/台阶尝试的轻量 CharacterController 和调试包围体。
+- 物理：固定步长、SAP、Box/Sphere/Capsule、Convex/TriangleMesh 包围体、层过滤、Trigger、Raycast/SphereCast/Overlap、连续子步、三轴冲量响应、Distance/Fixed Joint、带接地/碰顶/台阶/地面法线和最大坡度判定的轻量 CharacterController。
 - 动画与音频：Transform Clip 插值、Clip 交叉淡化与 Root Motion；Skeleton/Bone、关键帧采样、蒙皮矩阵计算和条件状态机；多 Voice 实时混音、Master/SFX/Music/UI Bus、循环播放、距离衰减和左右声像。
 - 内容系统：严格 UTF-8 编解码、本地化字符串表/语言回退/参数替换、TTF/OTF 容器校验，以及带发射率、Burst、重力、生命周期曲线和 OpenGL 世界空间 Billboard 的粒子系统。
 - 导航与 AI：可配置代价/障碍的网格 A*、斜向防穿角、Blackboard、Sequence/Selector、Condition/Action 和跨帧 Wait 行为节点。
@@ -20,7 +20,7 @@ TinyEngine 是参考 Unreal Engine 5.3.2 模块职责、以 C++17 实现的轻�
 - 联网与回放：版本化网络快照编解码、generation Entity 保留、按时间排序的状态缓冲、Transform 插值和二进制 Replay 保存/加载。
 - 影视与场景：Transform Sequencer Track、事件时间线、播放/暂停/循环；高度场双线性采样、法线和网格生成；可播放/Seek/循环的图片序列。
 - 输入：`.input` 映射资产、运行时重绑定、键鼠与 SDL GameController 热插拔和死区处理。
-- 编辑器：Dear ImGui、独立 Scene View、多场景文档标签、材质资产编辑、编辑器飞行相机、鼠标拾取、带 snapping 的 Translate/Rotate/Scale Gizmo、资源拖入视口和 Inspector、反射自动 Inspector、组件增删、Shader/曝光控制、Hierarchy、Play/Stop、Undo/Redo、场景脏标记与自动恢复。
+- 编辑器：Dear ImGui、独立 Scene View、多场景文档标签、材质资产编辑、编辑器飞行相机、鼠标拾取、Ctrl 多选/批量删除、带 snapping 的 Translate/Rotate/Scale Gizmo、资源拖入视口和 Inspector、反射自动 Inspector、Undo/Redo 与自动恢复。
 - Shader：`#include`、`#pragma variant`、宏组合、依赖热重载、预处理磁盘缓存和完整编译/链接错误；失败时保留上一份有效程序。
 - 分析：CPU Queue/Shadow/Scene 分段耗时、OpenGL `GL_TIME_ELAPSED` GPU 帧耗时、Draw/Cull/LOD 计数在编辑器实时展示。
 - Runtime UI：Panel/Label/Button/Image、ASCII 字体 Atlas、真实文本/图片采样、父子容器、锚点、横向/纵向布局、祖先裁剪、滚动偏移、DPI 缩放、鼠标与 Tab/Enter 导航。

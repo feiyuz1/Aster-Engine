@@ -329,7 +329,8 @@ Vec3 PhysicsWorld::MoveCharacter(World &world, const Entity entity, const Vec3 &
 }
 
 CharacterMoveResult PhysicsWorld::MoveCharacterController(World &world, const Entity entity, const Vec3 &displacement,
-                                                          const float stepHeight, const float skinWidth) const
+                                                          const float stepHeight, const float skinWidth,
+                                                          const float maximumSlopeDegrees) const
 {
     CharacterMoveResult result;
     auto *transform = world.GetComponent<TransformComponent>(entity);
@@ -380,6 +381,13 @@ CharacterMoveResult PhysicsWorld::MoveCharacterController(World &world, const En
     RaycastHit groundHit;
     result.grounded = SphereCast(world, {probeOrigin, {0.0f, -1.0f, 0.0f}}, probeRadius * 0.9f, std::max(0.08f, skinWidth * 4.0f),
                                  groundHit, {0xffffffffu, false, entity});
+    if (result.grounded)
+    {
+        result.groundNormal = groundHit.normal;
+        const float minimumWalkableY = std::cos(DegreesToRadians(std::clamp(maximumSlopeDegrees, 0.0f, 89.0f)));
+        if (result.groundNormal.y < minimumWalkableY)
+            result.grounded = false;
+    }
     if (displacement.y < 0.0f && verticalApplied.y > displacement.y + 0.0001f)
         result.grounded = true;
     return result;

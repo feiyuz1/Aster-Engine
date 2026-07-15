@@ -6,6 +6,13 @@
 #include <iomanip>
 #include <sstream>
 
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <Windows.h>
+#endif
+
 namespace MiniEngine
 {
 bool Utf8::Decode(const std::string &text, std::vector<std::uint32_t> &codepoints)
@@ -111,6 +118,51 @@ const std::vector<std::uint8_t> &FontFace::GetData() const
 const std::filesystem::path &FontFace::GetPath() const
 {
     return m_path;
+}
+
+bool FontRasterizer::RasterizeSystemGlyph(const std::uint32_t codepoint, const int pixelHeight, RasterizedGlyph &glyph,
+                                          const std::wstring &fontName)
+{
+    glyph = {};
+#ifdef _WIN32
+    if (codepoint > 0xffff || (codepoint >= 0xd800 && codepoint <= 0xdfff) || pixelHeight <= 0)
+        return false;
+    HDC device = CreateCompatibleDC(nullptr);
+    HFONT font = CreateFontW(-pixelHeight, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_TT_PRECIS, CLIP_DEFAULT_PRECIS,
+                             ANTIALIASED_QUALITY, DEFAULT_PITCH, fontName.c_str());
+    if (!device || !font)
+    {
+        if (font)
+            DeleteObject(font);
+        if (device)
+            DeleteDC(device);
+        return false;
+    }
+    const HGDIOBJ previous = SelectObject(device, font);
+    MAT2 transform{{0, 1}, {0, 0}, {0, 0}, {0, 1}};
+    GLYPHMETRICS metrics{};
+    const DWORD size = GetGlyphOutlineW(device, codepoint, GGO_GRAY8_BITMAP, &metrics, 0, nullptr, &transform);
+    if (size != GDI_ERROR)
+    {
+        glyph.pixels.resize(size);
+        if (size > 0)
+            GetGlyphOutlineW(device, codepoint, GGO_GRAY8_BITMAP, &metrics, size, glyph.pixels.data(), &transform);
+        glyph.width = static_cast<int>(metrics.gmBlackBoxX);
+        glyph.height = static_cast<int>(metrics.gmBlackBoxY);
+        glyph.bearingX = metrics.gmptGlyphOrigin.x;
+        glyph.bearingY = metrics.gmptGlyphOrigin.y;
+        glyph.advance = metrics.gmCellIncX;
+    }
+    SelectObject(device, previous);
+    DeleteObject(font);
+    DeleteDC(device);
+    return size != GDI_ERROR;
+#else
+    (void)codepoint;
+    (void)pixelHeight;
+    (void)fontName;
+    return false;
+#endif
 }
 
 bool StringTable::Load(const std::filesystem::path &path)

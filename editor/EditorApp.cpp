@@ -282,6 +282,7 @@ void EditorApp::DrawHierarchy()
     {
         RecordUndo();
         m_selected = world.CreateEntity();
+        m_selection = {m_selected};
     }
     std::vector<Entity> entities(world.GetEntityManager().GetAliveEntities().begin(), world.GetEntityManager().GetAliveEntities().end());
     std::sort(entities.begin(), entities.end());
@@ -294,12 +295,27 @@ void EditorApp::DrawHierarchy()
         ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_SpanAvailWidth;
         if (children.empty())
             flags |= ImGuiTreeNodeFlags_Leaf;
-        if (m_selected == entity)
+        if (std::find(m_selection.begin(), m_selection.end(), entity) != m_selection.end() || m_selected == entity)
             flags |= ImGuiTreeNodeFlags_Selected;
         const bool open = ImGui::TreeNodeEx(reinterpret_cast<void *>(static_cast<std::uintptr_t>(entity)), flags, "%s",
                                             name ? name->name.c_str() : "Entity");
         if (ImGui::IsItemClicked())
-            m_selected = entity;
+        {
+            if (ImGui::GetIO().KeyCtrl)
+            {
+                const auto selected = std::find(m_selection.begin(), m_selection.end(), entity);
+                if (selected == m_selection.end())
+                    m_selection.push_back(entity);
+                else
+                    m_selection.erase(selected);
+                m_selected = m_selection.empty() ? InvalidEntity : m_selection.back();
+            }
+            else
+            {
+                m_selected = entity;
+                m_selection = {entity};
+            }
+        }
         if (open)
         {
             for (const Entity child : children)
@@ -316,7 +332,12 @@ void EditorApp::DrawHierarchy()
     if (!m_engine.IsPlaying() && m_selected != InvalidEntity && ImGui::IsKeyPressed(ImGuiKey_Delete))
     {
         RecordUndo();
-        world.DestroyEntity(m_selected);
+        if (m_selection.empty())
+            m_selection.push_back(m_selected);
+        for (const Entity selected : m_selection)
+            if (world.IsAlive(selected))
+                world.DestroyEntity(selected);
+        m_selection.clear();
         m_selected = InvalidEntity;
     }
     ImGui::End();
@@ -330,6 +351,8 @@ void EditorApp::DrawInspector()
     ImGui::SetNextWindowPos({viewport->WorkPos.x + viewport->WorkSize.x - width, viewport->WorkPos.y}, ImGuiCond_Always);
     ImGui::SetNextWindowSize({width, upperHeight}, ImGuiCond_Always);
     ImGui::Begin("Inspector");
+    if (m_selection.size() > 1)
+        ImGui::TextDisabled("%zu entities selected; editing primary", m_selection.size());
     World &world = *m_engine.GetContext().world;
     if (!world.IsAlive(m_selected))
     {
@@ -651,7 +674,21 @@ void EditorApp::DrawSceneView()
         const ImVec2 mouse = ImGui::GetMousePos();
         const float normalizedX = (mouse.x - imageMinimum.x) / std::max(1.0f, available.x);
         const float normalizedY = (mouse.y - imageMinimum.y) / std::max(1.0f, available.y);
-        m_selected = PickEntity(normalizedX, normalizedY);
+        const Entity picked = PickEntity(normalizedX, normalizedY);
+        if (ImGui::GetIO().KeyCtrl && picked != InvalidEntity)
+        {
+            const auto selected = std::find(m_selection.begin(), m_selection.end(), picked);
+            if (selected == m_selection.end())
+                m_selection.push_back(picked);
+            else
+                m_selection.erase(selected);
+            m_selected = m_selection.empty() ? InvalidEntity : m_selection.back();
+        }
+        else
+        {
+            m_selected = picked;
+            m_selection = picked == InvalidEntity ? std::vector<Entity>{} : std::vector<Entity>{picked};
+        }
     }
     if (!m_engine.IsPlaying() && ImGui::BeginDragDropTarget())
     {

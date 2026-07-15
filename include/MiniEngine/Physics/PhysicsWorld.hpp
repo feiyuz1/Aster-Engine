@@ -44,6 +44,7 @@ struct PhysicsQuery
 struct CharacterMoveResult
 {
     Vec3 appliedDisplacement{};
+    Vec3 groundNormal{0.0f, 1.0f, 0.0f};
     bool grounded = false;
     bool hitCeiling = false;
     bool stepped = false;
@@ -59,7 +60,7 @@ class PhysicsWorld
     std::vector<Entity> Overlap(const World &world, const Aabb &bounds, const PhysicsQuery &query = {}) const;
     Vec3 MoveCharacter(World &world, Entity entity, const Vec3 &displacement, float skinWidth = 0.02f) const;
     CharacterMoveResult MoveCharacterController(World &world, Entity entity, const Vec3 &displacement, float stepHeight = 0.3f,
-                                                float skinWidth = 0.02f) const;
+                                                float skinWidth = 0.02f, float maximumSlopeDegrees = 50.0f) const;
     const std::vector<CollisionEvent> &GetEvents() const;
     const std::vector<PhysicsDebugBox> &GetDebugBoxes() const;
     void Clear();

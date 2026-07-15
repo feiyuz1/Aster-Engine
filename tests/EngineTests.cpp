@@ -552,6 +552,10 @@ int main()
     std::vector<std::uint32_t> codepoints;
     const std::string unicodeText = "Tiny引擎";
     CHECK(Utf8::Decode(unicodeText, codepoints) && codepoints.size() == 6 && Utf8::Encode(codepoints) == unicodeText);
+#ifdef _WIN32
+    RasterizedGlyph chineseGlyph;
+    CHECK(FontRasterizer::RasterizeSystemGlyph(0x5f15, 24, chineseGlyph) && chineseGlyph.advance > 0 && !chineseGlyph.pixels.empty());
+#endif
     StringTable strings;
     strings.Set("en", "welcome", "Hello {0}");
     strings.Set("zh-CN", "welcome", "你好，{0}");

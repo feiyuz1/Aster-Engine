@@ -2,7 +2,7 @@
 
 本文记录本轮开发对 TinyEngine 做过的主要更新，以及各功能采用的简要实现方式。内容按 Git 提交顺序整理，方便以后定位代码、回溯设计和继续开发。
 
-当前引擎版本：0.19.0
+当前引擎版本：0.20.0
 
 参考源码：Unreal Engine 5.3.2
 
@@ -341,6 +341,13 @@
 - OpenGL 增加世界空间 Billboard Shader：由 View Matrix 反推相机 Right/Up，按粒子位置和尺寸生成六顶点 Quad。
 - Fragment Shader 提供圆形裁剪和软边 Alpha；绘制阶段保留深度测试、关闭深度写入并使用 Alpha Blend。
 - Demo 场景增加火花发射器，测试验证三粒子会形成三次后端绘制计数。
+
+## 22. Unicode 字形、坡度判定与编辑器多选
+
+- `FontRasterizer` 在 Windows 使用 GDI TrueType 灰度轮廓生成中文 BMP 字形像素、Bearing 和 Advance。
+- CharacterController 返回 GroundNormal，并按可配置最大坡度角拒绝不可行走表面。
+- Hierarchy 与 Scene View 支持 Ctrl 增删选择集，Inspector 标识主实体，Delete 对选择集批量删除。
+- 测试覆盖微软雅黑中文“引”字栅格化；Editor 和 Tests 构建通过。
 
 ## 当前仍未完成
 

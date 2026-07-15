@@ -54,6 +54,7 @@ class EditorApp
     Engine m_engine;
     SdlGlRenderDevice *m_device = nullptr;
     Entity m_selected = InvalidEntity;
+    std::vector<Entity> m_selection;
     std::vector<std::string> m_undo;
     std::vector<std::string> m_redo;
     std::vector<std::string> m_messages;
