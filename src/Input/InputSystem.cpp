@@ -1,6 +1,7 @@
 #include "MiniEngine/Input/InputSystem.hpp"
 #include "MiniEngine/Platform/Platform.hpp"
 
+#include <algorithm>
 #include <iomanip>
 #include <sstream>
 
@@ -131,5 +132,50 @@ bool InputSystem::SaveBindings(const std::string &path) const
         for (const auto &source : pair.second)
             output << "action " << std::quoted(pair.first) << ' ' << std::quoted(source) << '\n';
     return PlatformFile::WriteAllText(path, output.str());
+}
+
+std::string InputSystem::GetGlyph(const std::string &source, const InputGlyphSet set)
+{
+    static const std::unordered_map<std::string, std::string> keyboard = {
+        {"Primary", "Mouse Left"}, {"Sprint", "Shift"}, {"Jump", "Space"},     {"UINext", "Tab"},    {"UIAccept", "Enter"},
+        {"MoveX", "A / D"},        {"MoveY", "W / S"},  {"MouseX", "Mouse X"}, {"MouseY", "Mouse Y"}};
+    static const std::unordered_map<std::string, std::string> xbox = {{"Primary", "A"},
+                                                                      {"Sprint", "LB"},
+                                                                      {"Jump", "A"},
+                                                                      {"UINext", "D-Pad Down"},
+                                                                      {"UIAccept", "A"},
+                                                                      {"MoveX", "Left Stick X"},
+                                                                      {"MoveY", "Left Stick Y"},
+                                                                      {"RotateX", "Right Stick Y"},
+                                                                      {"RotateY", "Right Stick X"}};
+    static const std::unordered_map<std::string, std::string> playStation = {
+        {"Primary", "Cross"}, {"Sprint", "L1"}, {"Jump", "Cross"}, {"UINext", "D-Pad Down"}, {"UIAccept", "Cross"}};
+    static const std::unordered_map<std::string, std::string> nintendo = {
+        {"Primary", "B"}, {"Sprint", "L"}, {"Jump", "B"}, {"UINext", "D-Pad Down"}, {"UIAccept", "A"}};
+    const auto &glyphs = set == InputGlyphSet::KeyboardMouse ? keyboard
+                         : set == InputGlyphSet::PlayStation ? playStation
+                         : set == InputGlyphSet::Nintendo    ? nintendo
+                                                             : xbox;
+    const auto found = glyphs.find(source);
+    if (found != glyphs.end())
+        return found->second;
+    if (set != InputGlyphSet::KeyboardMouse)
+    {
+        const auto fallback = xbox.find(source);
+        if (fallback != xbox.end())
+            return fallback->second;
+    }
+    return source;
+}
+
+void InputSystem::SetHapticCallback(std::function<bool(float, float, std::uint32_t)> callback)
+{
+    m_hapticCallback = std::move(callback);
+}
+
+bool InputSystem::Rumble(const float lowFrequency, const float highFrequency, const std::uint32_t durationMilliseconds) const
+{
+    return m_hapticCallback &&
+           m_hapticCallback(std::clamp(lowFrequency, 0.0f, 1.0f), std::clamp(highFrequency, 0.0f, 1.0f), durationMilliseconds);
 }
 } // namespace MiniEngine

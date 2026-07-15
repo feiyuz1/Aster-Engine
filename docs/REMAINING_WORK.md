@@ -1,9 +1,9 @@
 # TinyEngine 后续工作记录
 
 记录日期：2026-07-16
-当前版本：0.25.0
+当前版本：0.26.0
 
-用户在 0.25 批次指定的渲染、Shader/材质、资产管线、物理、Runtime UI/文字和编辑器核心功能均已进入可编译、可测试、可运行的代码路径。完成范围和实现边界见 `ENGINE_COMPLETION_025.md`。
+0.25 的渲染/资产/物理/UI 与 0.26 的动画/VFX/音频/插件/导航 AI/联网能力均已进入可编译、可测试、可运行的代码路径。完成范围和实现边界见 `ENGINE_COMPLETION_025.md` 与 `ENGINE_COMPLETION_026.md`。
 
 以下内容不是本轮遗漏，而是从“轻量可用引擎”继续向生产级大型引擎提升时的后续项。
 
@@ -18,10 +18,11 @@
 
 ## 其他引擎模块
 
-- 动画：骨骼重定向、IK、2D Blend Space、分层混合和动画调试视图。
-- 音频：OGG/Opus 长音频流式解码、效果器和可视化 Mixer。
-- 导航/AI：Recast NavMesh、动态障碍、Crowd、EQS 和行为树编辑器。
-- 网络：UDP/可靠通道、RPC、Ownership、客户端预测、服务器纠错与安全边界。
+- 动画：IK Rig/Retarget Pose、Full Body IK、Motion Warping、蒙太奇和动画性能分析器。
+- VFX：GPU Burst、深度碰撞、透明排序、Ribbon、Sub-emitter 和事件回读。
+- 音频：Opus、效果器链、可视化 Mixer、音频资源 Cook 和平台硬件解码。
+- 导航/AI：正式 Recast 体素烘焙、Detour Funnel/Tile Cache、复杂 Crowd 避障与异步查询。
+- 网络：连接握手、加密认证、NAT 穿透、会话/匹配、分片、大规模 Replication Graph 和反作弊。
 - World Partition：异步 Scene Cell 合并、HLOD 和编辑器分区烘焙。
 - Sequencer/地形/媒体：属性绑定与音轨、地形 Chunk LOD/植被/虚拟纹理、视频解码与音画同步。
 

@@ -2,12 +2,21 @@
 
 #include "MiniEngine/Render/Renderer.hpp"
 
+#include <functional>
 #include <string>
 #include <unordered_map>
 #include <vector>
 
 namespace MiniEngine
 {
+enum class InputGlyphSet
+{
+    KeyboardMouse,
+    Xbox,
+    PlayStation,
+    Nintendo
+};
+
 class InputSystem
 {
   public:
@@ -21,6 +30,9 @@ class InputSystem
     void ResetDefaultBindings();
     bool LoadBindings(const std::string &path);
     bool SaveBindings(const std::string &path) const;
+    static std::string GetGlyph(const std::string &source, InputGlyphSet set);
+    void SetHapticCallback(std::function<bool(float, float, std::uint32_t)> callback);
+    bool Rumble(float lowFrequency, float highFrequency, std::uint32_t durationMilliseconds) const;
 
   private:
     struct AxisBinding
@@ -34,5 +46,6 @@ class InputSystem
     std::unordered_map<std::string, std::vector<AxisBinding>> m_axisBindings;
     std::unordered_map<std::string, std::vector<std::string>> m_actionBindings;
     bool m_defaultsInitialized = false;
+    std::function<bool(float, float, std::uint32_t)> m_hapticCallback;
 };
 } // namespace MiniEngine

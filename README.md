@@ -2,7 +2,7 @@
 
 TinyEngine 是参考 Unreal Engine 5.3.2 模块职责、以 C++17 实现的轻量 3D 引擎。目标不是复制 UE 的 UObject/UHT、完整 RHI 或大型编辑器，而是形成“项目—资产—场景—运行时—渲染—打包—编辑器”的最小可用闭环。
 
-当前版本：0.25.0（完成渲染、材质、资产、物理、Unicode UI 与编辑器核心增强批次）。
+当前版本：0.26.0（完成动画增强、Flipbook/GPU 粒子、OGG 流式音频、原生插件 ABI、多边形导航 AI 与联网基础批次）。
 
 ## 已实现
 
@@ -13,19 +13,19 @@ TinyEngine 是参考 Unreal Engine 5.3.2 模块职责、以 C++17 实现的轻�
 - 渲染：SDL2 + OpenGL 3.3、离线 Cubemap 六面 IBL/BRDF LUT、三段 CSM、透明覆盖率阴影、正确法线矩阵、GPU 实例化、保守遮挡剔除、Bloom/SSAO/TAA/FXAA/ACES、各向异性过滤、LOD 和 GPU Profiler。
 - 材质：显式实例 Override、六类独立贴图与 ORM/RMA、Shader 参数反射、可视化 Material Graph、Shader 源码编辑和实时错误行定位。
 - 物理：固定步长、SAP、Convex GJK、Triangle Mesh 三角形 Ray/Narrowphase、通用 Shape Sweep、摩擦/角速度/惯量/旋转锁、Fixed/Distance/Hinge/Spring Joint、Character Slide/Step/Slope，以及可选 Jolt 构建入口。
-- 动画与音频：Assimp 四骨骼权重、层级/Inverse Bind、30 Hz Clip 重采样、逐通道误差压缩、动画事件、1D Blend Tree、Animation Graph 状态机/交叉淡化、Prefab 自动绑定和逐实体 GPU Skinning；多 Voice 混音与空间音频。
-- 内容系统：严格 UTF-8 编解码、本地化字符串表/语言回退/参数替换、TTF/OTF 容器校验，以及带发射率、Burst、重力、生命周期曲线和 OpenGL 世界空间 Billboard 的粒子系统。
-- 导航与 AI：可配置代价/障碍的网格 A*、斜向防穿角、Blackboard、Sequence/Selector、Condition/Action 和跨帧 Wait 行为节点。
+- 动画与音频：Assimp 四骨骼权重、层级/Inverse Bind、误差压缩、事件、1D/2D Blend、Animation Graph、重定向、双骨骼 IK、Root Motion、分层混合、调试快照和 GPU Skinning；多 Voice、空间音频与 OGG 长音频分块流。
+- 内容系统：严格 UTF-8、本地化、动态字形，以及带纹理 Flipbook、CPU/顶点 Shader GPU 仿真、实例合批和 `.vfx` 编辑器的粒子系统。
+- 导航与 AI：网格 A*、多边形 NavMesh、动态障碍、Crowd、EQS、Blackboard、运行时行为树和可视化行为树图编辑器。
 - 大世界与模块：带加载/卸载迟滞距离的 World Cell 流送协调器；模块依赖校验、拓扑启动、失败回滚和逆序关闭，并接入 Engine 生命周期。
-- 联网与回放：版本化网络快照编解码、generation Entity 保留、按时间排序的状态缓冲、Transform 插值和二进制 Replay 保存/加载。
+- 联网与回放：快照/抖动缓冲/Replay、IPv4 UDP、Sequence/Ack 可靠通道、白名单 RPC、Ownership、客户端预测、服务器纠错、包长和限流边界。
 - 影视与场景：Transform Sequencer Track、事件时间线、播放/暂停/循环；高度场双线性采样、法线和网格生成；可播放/Seek/循环的图片序列。
-- 输入：`.input` 映射资产、运行时重绑定、键鼠与 SDL GameController 热插拔和死区处理。
+- 输入：`.input` 映射资产、运行时重绑定、键鼠与 SDL GameController 热插拔/死区、平台 Glyph 和双马达震动。
 - 编辑器：Dear ImGui、独立 Scene View、多场景标签、框选/Ctrl 多选、批量 Gizmo、Local/World 与 Pivot 模式、Shader/Material Graph 编辑、缩略图与依赖修复、反射 Inspector、Undo/Redo 与自动恢复。
 - Shader：`#include`、`#pragma variant`、宏组合、依赖热重载、预处理磁盘缓存和完整编译/链接错误；失败时保留上一份有效程序。
 - 分析：CPU Queue/Shadow/Scene 分段耗时、OpenGL `GL_TIME_ELAPSED` GPU 帧耗时、Draw/Cull/LOD 计数在编辑器实时展示。
 - Runtime UI：动态 Unicode Glyph Atlas、Windows GDI/非 Windows FreeType、BiDi Run、连字、自动断行、富文本，以及 Panel/Label/Button/Image/InputField/List/Dropdown/ProgressBar、布局、裁剪、滚动、DPI 与导航。
 - 工程化：Git、CTest、CPack、AssetTool、SceneTool、PackageTool、Editor 一键打包、Windows CI、JSONL 结构化日志、Windows MiniDump/文本崩溃报告、第三方许可清单和发布包冒烟脚本。
-- 可维护性基础：通用二进制/版本化文本 Archive、顺序数据迁移、异步 AssetHandle、依赖闭包、CPU/GPU 资源驻留预算、Gameplay/Timer/GameMode/CharacterController、CVar/命令控制台/Stat、无头 Commandlet 和 Windows/Linux TargetPlatform Cook Profile。
+- 可维护性基础：稳定 C 原生插件 ABI、通用 Archive/迁移、异步 AssetHandle、依赖闭包、资源预算、Gameplay、CVar/Stat、无头 Commandlet 和 Windows/Linux Cook Profile。
 
 ## 构建和运行
 
@@ -61,4 +61,4 @@ Scene View 操作：按住鼠标右键并使用 WASD/QE 飞行，Shift 加速；
 
 ## 当前边界
 
-0.25 指定功能已进入可运行路径。继续向生产级升级的重点是 GPU HZB/Motion Vector TAA、完整 OpenType/HarfBuzz、引入 Jolt 后的目标平台认证、异步文件 I/O、动画 IK/重定向、Recast、完整网络传输和流式音频。详见[0.25 完成说明](docs/ENGINE_COMPLETION_025.md)与[后续工作](docs/REMAINING_WORK.md)。
+0.26 指定功能已进入可运行路径。继续向生产级升级的重点是 GPU HZB/Motion Vector TAA、完整 OpenType/HarfBuzz、正式 Recast/Detour 烘焙、联网加密/会话服务、GPU 粒子碰撞与目标平台认证。详见[0.26 完成说明](docs/ENGINE_COMPLETION_026.md)与[后续工作](docs/REMAINING_WORK.md)。

@@ -2,7 +2,7 @@
 
 本文记录本轮开发对 TinyEngine 做过的主要更新，以及各功能采用的简要实现方式。内容按 Git 提交顺序整理，方便以后定位代码、回溯设计和继续开发。
 
-当前引擎版本：0.25.0
+当前引擎版本：0.26.0
 
 参考源码：Unreal Engine 5.3.2
 
@@ -398,8 +398,18 @@
 
 - 本轮列出的 0.25 功能已进入可运行路径；质量升级项包括 HZB/Occlusion Query、Motion Vector TAA、分离式 SSAO/Bloom Pass 和真正异步 I/O。
 - Jolt 已有可选源码构建、Backend 选择与可用性边界；在引入 Jolt 源码后仍需按目标平台完成性能/确定性验证。
-- 动画重定向、IK、2D Blend Space、OGG 流式音频与复杂 UI 排版。
+- 0.26 已完成轻量重定向、双骨骼 IK、2D Blend Space 和 OGG 流式音频；生产级后续为 IK Rig/Full Body IK、Opus 和可视化 Mixer。
 - 完整 OpenType Script Shaping 可接 HarfBuzz；当前为内置 BiDi Run、常用连字、富文本和自动断行。
 - 格式 CI 检查、渲染截图对比和逐分配内存追踪；基础无头 Commandlet、数据迁移、CI、崩溃报告、许可证清单和发布包冒烟已完成。
+
+## 28. 0.26 动画、VFX、音频、插件、导航 AI 与联网批次
+
+- 动画增加骨骼重定向、双骨骼 IK、Root Motion 曲线、2D Blend Space、遮罩/叠加层混合和调试骨架快照；Clip 资产升级到 `TINY_SKANIM 3`。
+- 粒子增加纹理 Flipbook、按纹理实例合批、OpenGL 顶点着色器 GPU 弹道仿真和 `.vfx` 编辑器。
+- 音频增加 stb_vorbis OGG 分块解码和长音频循环流；输入增加平台 Glyph 与 SDL GameController 双马达震动。
+- 新增 ABI v1 原生插件接口与跨平台动态库管理，明确隔离 STL/RTTI/异常和内存所有权。
+- 导航增加轻量多边形 NavMesh、动态障碍、Crowd 和 EQS；行为树增加带校验的图资产和可拖拽编辑器。
+- 网络增加 IPv4 UDP、Sequence/Ack 可靠通道、RPC 白名单/限流、Ownership、客户端预测与服务器纠错。
+- 完成范围、执行路径和生产级边界见 `docs/ENGINE_COMPLETION_026.md`。
 
 继续开发时，应同时更新本文、`README.md`、`设计.md` 和 `docs/ARCHITECTURE.md`。

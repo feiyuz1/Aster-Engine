@@ -65,6 +65,10 @@ bool Engine::Initialize(const std::filesystem::path &projectFile, const bool sta
         Shutdown();
         return false;
     }
+    if (auto *device = dynamic_cast<SdlGlRenderDevice *>(m_renderer.GetDevice()))
+        m_inputSystem.SetHapticCallback([device](const float low, const float high, const std::uint32_t milliseconds) {
+            return device->RumbleController(low, high, milliseconds);
+        });
     m_audioEngine.Initialize(&m_logger);
     m_scriptEngine.Initialize(&m_logger);
     auto &console = m_diagnostics.GetConsole();
@@ -92,10 +96,18 @@ bool Engine::Initialize(const std::filesystem::path &projectFile, const bool sta
             device->TrimGpuResources();
         return std::string{"GPU resource caches cleared"};
     });
-    m_context = {&m_logger,       &m_memoryManager,   &m_jobSystem,    &m_resourceManager, &m_world,
-                 &m_renderer,     &m_inputSystem,     &m_physicsWorld, &m_audioEngine,     &m_scriptEngine,
-                 &m_sceneManager, &m_projectSettings, &m_uiSystem,     &m_assetStreaming,  &m_gameplay,
-                 &m_diagnostics,  &m_vfxSystem,       &m_navigation,   &m_worldPartition,  &m_moduleManager};
+    m_context = {&m_logger,         &m_memoryManager,  &m_jobSystem,    &m_resourceManager, &m_world,        &m_renderer,
+                 &m_inputSystem,    &m_physicsWorld,   &m_audioEngine,  &m_scriptEngine,    &m_sceneManager, &m_projectSettings,
+                 &m_uiSystem,       &m_assetStreaming, &m_gameplay,     &m_diagnostics,     &m_vfxSystem,    &m_navigation,
+                 &m_worldPartition, &m_moduleManager,  &m_pluginManager};
+    m_pluginManager.SetLogCallback([this](const TinyPluginLogLevel level, const std::string &message) {
+        if (level == TINY_PLUGIN_LOG_ERROR)
+            m_logger.Error(message);
+        else if (level == TINY_PLUGIN_LOG_WARNING)
+            m_logger.Warning(message);
+        else
+            m_logger.Info(message);
+    });
     if (!m_moduleManager.StartupAll())
     {
         m_logger.Error("Module startup failed because a dependency is missing, cyclic, or failed to initialize.");
@@ -150,6 +162,7 @@ void Engine::Shutdown()
     m_running = false;
     if (m_gameInstance)
         m_gameInstance->OnShutdown();
+    m_pluginManager.UnloadAll();
     m_moduleManager.ShutdownAll();
     m_worldPartition.UnloadAll();
     m_navigation.Clear();
@@ -262,6 +275,11 @@ ModuleManager &Engine::GetModuleManager()
     return m_moduleManager;
 }
 
+PluginManager &Engine::GetPluginManager()
+{
+    return m_pluginManager;
+}
+
 void Engine::Tick(const float rawDeltaTime)
 {
     const float deltaTime = m_paused ? 0.0f : rawDeltaTime * m_timeScale;
@@ -280,6 +298,7 @@ void Engine::Tick(const float rawDeltaTime)
     {
         m_gameplay.Update(deltaTime);
         m_scriptEngine.UpdateAll(deltaTime);
+        m_pluginManager.Tick(deltaTime);
         if (m_gameInstance)
             m_gameInstance->OnUpdate(deltaTime);
         m_world.Update(deltaTime);

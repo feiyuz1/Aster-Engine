@@ -19,6 +19,7 @@ class ResourceManager;
 class World;
 class VfxSystem;
 struct Particle;
+struct GpuParticleEmitter;
 
 struct InputState
 {
@@ -105,6 +106,7 @@ class RenderDevice
     virtual void Draw(const RenderItem &item) = 0;
     virtual void DrawInstanced(const std::vector<RenderItem> &items) = 0;
     virtual void DrawParticles(const std::vector<Particle> &particles) = 0;
+    virtual void DrawGpuParticles(const std::vector<GpuParticleEmitter> &emitters) = 0;
     virtual void EndFrame() = 0;
     virtual void DrawUi(const std::vector<UIDrawCommand> &commands) = 0;
     virtual void Present() = 0;
@@ -130,6 +132,7 @@ class NullRenderDevice final : public RenderDevice
     void Draw(const RenderItem &item) override;
     void DrawInstanced(const std::vector<RenderItem> &items) override;
     void DrawParticles(const std::vector<Particle> &particles) override;
+    void DrawGpuParticles(const std::vector<GpuParticleEmitter> &emitters) override;
     void EndFrame() override;
     void DrawUi(const std::vector<UIDrawCommand> &commands) override;
     void Present() override;

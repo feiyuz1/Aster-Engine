@@ -167,6 +167,8 @@ bool SkeletalClip::IsValid(const std::size_t boneCount) const
     for (const auto &event : events)
         if (event.time < 0.0f || event.time > duration || event.name.empty())
             return false;
+    if (!rootMotion.empty() && !IsCurveValid(rootMotion, duration))
+        return false;
     return true;
 }
 
@@ -286,6 +288,34 @@ std::vector<AnimationEvent> SkeletalClip::GatherEvents(const float previousTime,
     return result;
 }
 
+Vec3 SkeletalClip::SampleRootMotion(float time, const bool shouldLoop) const
+{
+    if (rootMotion.empty() || duration <= 0.0f)
+        return {};
+    if (shouldLoop)
+        time = std::fmod(std::max(0.0f, time), duration);
+    else
+        time = std::clamp(time, 0.0f, duration);
+    return SampleCurve(rootMotion, time);
+}
+
+Vec3 SkeletalClip::ExtractRootMotion(const float previousTime, const float currentTime, const bool shouldLoop) const
+{
+    if (rootMotion.empty() || duration <= 0.0f || previousTime == currentTime)
+        return {};
+    if (!shouldLoop)
+        return SampleRootMotion(currentTime, false) - SampleRootMotion(previousTime, false);
+    const Vec3 cycleDelta = rootMotion.back().value - rootMotion.front().value;
+    const auto sampleUnwrapped = [&](const float time) {
+        const int cycle = static_cast<int>(std::floor(time / duration));
+        float local = time - static_cast<float>(cycle) * duration;
+        if (local < 0.0f)
+            local += duration;
+        return SampleCurve(rootMotion, local) + cycleDelta * static_cast<float>(cycle);
+    };
+    return sampleUnwrapped(currentTime) - sampleUnwrapped(previousTime);
+}
+
 std::vector<Mat4> BuildSkinMatrices(const Skeleton &skeleton, const std::vector<BonePose> &localPose)
 {
     if (!skeleton.IsValid() || localPose.size() != skeleton.bones.size())
@@ -352,10 +382,12 @@ bool SaveSkeletalClipAsset(const SkeletalClip &clip, const std::filesystem::path
     if (!clip.IsValid(boneCount))
         return false;
     std::ostringstream output;
-    output << std::setprecision(9) << "TINY_SKANIM 2\nclip " << std::quoted(clip.name) << ' ' << clip.duration << ' ' << clip.looping << ' '
+    output << std::setprecision(9) << "TINY_SKANIM 3\nclip " << std::quoted(clip.name) << ' ' << clip.duration << ' ' << clip.looping << ' '
            << boneCount << ' ' << (clip.IsCompressed() ? "compressed" : "raw") << '\n';
     for (const auto &event : clip.events)
         output << "event " << event.time << ' ' << std::quoted(event.name) << ' ' << std::quoted(event.payload) << '\n';
+    for (const auto &key : clip.rootMotion)
+        output << "rootmotion " << key.time << ' ' << key.value.x << ' ' << key.value.y << ' ' << key.value.z << '\n';
     if (!clip.IsCompressed())
         for (const auto &key : clip.keyframes)
         {
@@ -391,7 +423,7 @@ bool LoadSkeletalClipAsset(const std::filesystem::path &path, SkeletalClip &clip
     std::size_t boneCount = 0;
     SkeletalClip result;
     if (!(input >> magic >> version >> token >> std::quoted(result.name) >> result.duration >> result.looping >> boneCount) ||
-        magic != "TINY_SKANIM" || (version != 1 && version != 2) || token != "clip" || boneCount > 64)
+        magic != "TINY_SKANIM" || (version < 1 || version > 3) || token != "clip" || boneCount > 256)
         return false;
     std::string storage = "raw";
     if (version >= 2 && !(input >> storage))
@@ -408,6 +440,13 @@ bool LoadSkeletalClipAsset(const std::filesystem::path &path, SkeletalClip &clip
             if (!(input >> event.time >> std::quoted(event.name) >> std::quoted(event.payload)))
                 return false;
             result.events.push_back(std::move(event));
+        }
+        else if (token == "rootmotion" && version >= 3)
+        {
+            Vec3CurveKey key;
+            if (!(input >> key.time >> key.value.x >> key.value.y >> key.value.z))
+                return false;
+            result.rootMotion.push_back(key);
         }
         else if (token == "key" && storage == "raw")
         {
@@ -449,6 +488,8 @@ bool LoadSkeletalClipAsset(const std::filesystem::path &path, SkeletalClip &clip
     }
     std::sort(result.events.begin(), result.events.end(),
               [](const AnimationEvent &left, const AnimationEvent &right) { return left.time < right.time; });
+    if (!result.rootMotion.empty() && !IsCurveValid(result.rootMotion, result.duration))
+        return false;
     if (!result.IsValid(boneCount))
         return false;
     clip = std::move(result);
@@ -545,6 +586,185 @@ bool LoadBlendTreeAsset(const std::filesystem::path &path, BlendTree1D &tree)
         return false;
     tree = std::move(result);
     return true;
+}
+
+bool BlendTree2D::IsValid() const
+{
+    if (parameterX.empty() || parameterY.empty() || samples.empty())
+        return false;
+    for (std::size_t index = 0; index < samples.size(); ++index)
+    {
+        if (samples[index].clipPath.empty())
+            return false;
+        for (std::size_t other = index + 1; other < samples.size(); ++other)
+            if (std::abs(samples[index].position.x - samples[other].position.x) < 0.0001f &&
+                std::abs(samples[index].position.y - samples[other].position.y) < 0.0001f)
+                return false;
+    }
+    return true;
+}
+
+std::vector<float> BlendTree2D::CalculateWeights(const Vec2 &value) const
+{
+    std::vector<float> weights(samples.size());
+    if (!IsValid())
+        return weights;
+    float sum = 0.0f;
+    for (std::size_t index = 0; index < samples.size(); ++index)
+    {
+        const float x = value.x - samples[index].position.x;
+        const float y = value.y - samples[index].position.y;
+        const float distanceSquared = x * x + y * y;
+        if (distanceSquared < 0.000001f)
+        {
+            weights.assign(samples.size(), 0.0f);
+            weights[index] = 1.0f;
+            return weights;
+        }
+        weights[index] = 1.0f / distanceSquared;
+        sum += weights[index];
+    }
+    for (float &weight : weights)
+        weight /= sum;
+    return weights;
+}
+
+std::vector<BonePose> BlendTree2D::Sample(const Vec2 &value, const float time, const std::size_t boneCount,
+                                          const SkeletalClipResolver &resolver) const
+{
+    std::vector<BonePose> result(boneCount);
+    if (!resolver)
+        return result;
+    const auto weights = CalculateWeights(value);
+    float validWeight = 0.0f;
+    for (std::size_t sampleIndex = 0; sampleIndex < samples.size(); ++sampleIndex)
+    {
+        const SkeletalClip *clip = resolver(samples[sampleIndex].clipPath);
+        if (!clip || weights[sampleIndex] <= 0.0f)
+            continue;
+        const auto pose = clip->Sample(time, boneCount);
+        for (std::size_t bone = 0; bone < boneCount; ++bone)
+        {
+            result[bone].position += pose[bone].position * weights[sampleIndex];
+            result[bone].rotation += pose[bone].rotation * weights[sampleIndex];
+            result[bone].scale += (pose[bone].scale - Vec3{1.0f, 1.0f, 1.0f}) * weights[sampleIndex];
+        }
+        validWeight += weights[sampleIndex];
+    }
+    if (validWeight > 0.0f && validWeight < 0.9999f)
+        for (auto &bone : result)
+        {
+            bone.position = bone.position / validWeight;
+            bone.rotation = bone.rotation / validWeight;
+            bone.scale = Vec3{1.0f, 1.0f, 1.0f} + (bone.scale - Vec3{1.0f, 1.0f, 1.0f}) / validWeight;
+        }
+    return result;
+}
+
+bool SkeletonRetargeter::BuildNameMap(const Skeleton &source, const Skeleton &target)
+{
+    if (!source.IsValid() || !target.IsValid())
+        return false;
+    m_mapping.clear();
+    for (std::size_t targetIndex = 0; targetIndex < target.bones.size(); ++targetIndex)
+    {
+        const int sourceIndex = source.FindBone(target.bones[targetIndex].name);
+        if (sourceIndex >= 0)
+            m_mapping.push_back({sourceIndex, static_cast<int>(targetIndex), 1.0f});
+    }
+    return !m_mapping.empty();
+}
+
+void SkeletonRetargeter::SetMap(std::vector<RetargetBoneMap> mapping)
+{
+    m_mapping = std::move(mapping);
+}
+
+std::vector<BonePose> SkeletonRetargeter::Retarget(const std::vector<BonePose> &sourcePose, const std::size_t targetBoneCount) const
+{
+    std::vector<BonePose> result(targetBoneCount);
+    for (const auto &entry : m_mapping)
+        if (entry.sourceBone >= 0 && entry.targetBone >= 0 && static_cast<std::size_t>(entry.sourceBone) < sourcePose.size() &&
+            static_cast<std::size_t>(entry.targetBone) < result.size())
+        {
+            result[entry.targetBone] = sourcePose[entry.sourceBone];
+            result[entry.targetBone].position = result[entry.targetBone].position * entry.translationScale;
+        }
+    return result;
+}
+
+std::vector<BonePose> BlendAnimationLayers(const std::vector<BonePose> &basePose, const std::vector<AnimationLayer> &layers)
+{
+    auto result = basePose;
+    for (const auto &layer : layers)
+        for (std::size_t bone = 0; bone < result.size() && bone < layer.pose.size(); ++bone)
+        {
+            const float mask = bone < layer.boneMask.size() ? layer.boneMask[bone] : 1.0f;
+            const float weight = std::clamp(layer.weight * mask, 0.0f, 1.0f);
+            if (layer.additive)
+            {
+                result[bone].position += layer.pose[bone].position * weight;
+                result[bone].rotation += layer.pose[bone].rotation * weight;
+                result[bone].scale += (layer.pose[bone].scale - Vec3{1.0f, 1.0f, 1.0f}) * weight;
+            }
+            else
+                result[bone] = Lerp(result[bone], layer.pose[bone], weight);
+        }
+    return result;
+}
+
+bool SolveTwoBoneIk(const Skeleton &skeleton, std::vector<BonePose> &localPose, const int rootBone, const int middleBone, const int endBone,
+                    const Vec3 &target, const Vec3 &pole, const float weight)
+{
+    if (!skeleton.IsValid() || localPose.size() != skeleton.bones.size() || rootBone < 0 || middleBone < 0 || endBone < 0 ||
+        static_cast<std::size_t>(endBone) >= localPose.size() || skeleton.bones[middleBone].parent != rootBone ||
+        skeleton.bones[endBone].parent != middleBone)
+        return false;
+    const auto debug = BuildAnimationDebugSnapshot(skeleton, localPose);
+    const Vec3 root = debug.jointPositions[rootBone];
+    const float upper = std::max(0.0001f, Length(localPose[middleBone].position));
+    const float lower = std::max(0.0001f, Length(localPose[endBone].position));
+    Vec3 direction = Normalize(target - root);
+    const float distance = std::clamp(Length(target - root), 0.0001f, upper + lower - 0.0001f);
+    Vec3 bendNormal = Normalize(Cross(direction, pole - root));
+    if (LengthSquared(bendNormal) < 0.0001f)
+        bendNormal = {0.0f, 0.0f, 1.0f};
+    const Vec3 bend = Normalize(Cross(bendNormal, direction));
+    const float projected = (upper * upper + distance * distance - lower * lower) / (2.0f * distance);
+    const float height = std::sqrt(std::max(0.0f, upper * upper - projected * projected));
+    const Vec3 joint = root + direction * projected + bend * height;
+    const Vec3 newUpper = joint - root;
+    const Vec3 newLower = target - joint;
+    const float alpha = std::clamp(weight, 0.0f, 1.0f);
+    const auto eulerFromDirection = [](const Vec3 &value) {
+        const Vec3 normal = Normalize(value);
+        return Vec3{0.0f, -std::asin(std::clamp(normal.z, -1.0f, 1.0f)) * 180.0f / Pi, std::atan2(normal.y, normal.x) * 180.0f / Pi};
+    };
+    localPose[rootBone].rotation = Lerp(localPose[rootBone].rotation, eulerFromDirection(newUpper), alpha);
+    const Vec3 worldLowerRotation = eulerFromDirection(newLower);
+    localPose[middleBone].rotation = Lerp(localPose[middleBone].rotation, worldLowerRotation - eulerFromDirection(newUpper), alpha);
+    return true;
+}
+
+AnimationDebugSnapshot BuildAnimationDebugSnapshot(const Skeleton &skeleton, const std::vector<BonePose> &localPose)
+{
+    AnimationDebugSnapshot result;
+    if (!skeleton.IsValid() || localPose.size() != skeleton.bones.size())
+        return result;
+    std::vector<Mat4> world(skeleton.bones.size());
+    result.jointPositions.resize(skeleton.bones.size());
+    for (std::size_t index = 0; index < skeleton.bones.size(); ++index)
+    {
+        const auto &pose = localPose[index];
+        const Mat4 local = TransformMatrix(pose.position, pose.rotation, pose.scale);
+        const int parent = skeleton.bones[index].parent;
+        world[index] = parent >= 0 ? world[static_cast<std::size_t>(parent)] * local : local;
+        result.jointPositions[index] = {world[index].At(0, 3), world[index].At(1, 3), world[index].At(2, 3)};
+        if (parent >= 0)
+            result.bones.push_back(
+                {result.jointPositions[static_cast<std::size_t>(parent)], result.jointPositions[index], static_cast<int>(index)});
+    }
+    return result;
 }
 
 bool AnimationGraph::IsValid() const

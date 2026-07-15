@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(TinyEngine VERSION 0.25.0 LANGUAGES C CXX)
+project(TinyEngine VERSION 0.26.0 LANGUAGES C CXX)
 
 option(TINYENGINE_BUILD_TESTS "Build TinyEngine tests" ON)
 option(TINYENGINE_BUILD_DEMO "Build TinyEngine demo" ON)
@@ -11,6 +11,7 @@ option(TINYENGINE_ENABLE_JOLT "Enable the optional Jolt Physics backend" OFF)
 set(TINYENGINE_ASSIMP_DIR "D:/OpenSourceProject/assimp-master" CACHE PATH "Path to the Assimp source tree")
 set(TINYENGINE_IMGUI_DIR "D:/OpenSourceProject/imgui-master" CACHE PATH "Path to the Dear ImGui source tree")
 set(TINYENGINE_JOLT_DIR "D:/OpenSourceProject/JoltPhysics" CACHE PATH "Path to the Jolt Physics source tree")
+set(TINYENGINE_STB_DIR "D:/OpenSourceProject/Piccolo/engine/3rdparty/stb" CACHE PATH "Path to stb single-header libraries")
 
 include(FetchContent)
 
@@ -49,6 +50,16 @@ endif()
 
 if(TINYENGINE_BUILD_EDITOR AND NOT EXISTS "${TINYENGINE_IMGUI_DIR}/imgui.cpp")
     message(FATAL_ERROR "Dear ImGui source tree not found: ${TINYENGINE_IMGUI_DIR}")
+endif()
+
+if(NOT EXISTS "${TINYENGINE_STB_DIR}/stb_vorbis.c")
+    FetchContent_Declare(
+        stb
+        URL https://github.com/nothings/stb/archive/refs/heads/master.zip
+        DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+    )
+    FetchContent_MakeAvailable(stb)
+    set(TINYENGINE_STB_DIR "${stb_SOURCE_DIR}")
 endif()
 
 find_package(OpenGL REQUIRED)
@@ -100,6 +111,7 @@ add_library(tinyengine STATIC
     src/Gameplay/Gameplay.cpp
     src/Project/Project.cpp
     src/Project/ProjectPackager.cpp
+    src/Plugin/PluginManager.cpp
     src/Build/TargetPlatform.cpp
     src/Build/AssetCompiler.cpp
     src/Automation/Automation.cpp
@@ -110,6 +122,7 @@ add_library(tinyengine STATIC
     src/Render/SdlGlRenderDevice.cpp
     src/Physics/PhysicsWorld.cpp
     src/Audio/AudioEngine.cpp
+    src/Audio/StbVorbis.cpp
     src/Input/InputSystem.cpp
     src/Script/ScriptEngine.cpp
     src/UI/UISystem.cpp
@@ -118,6 +131,8 @@ add_library(tinyengine STATIC
 )
 
 target_include_directories(tinyengine PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include> $<INSTALL_INTERFACE:include>)
+target_include_directories(tinyengine PRIVATE "${TINYENGINE_STB_DIR}")
+target_compile_definitions(tinyengine PRIVATE TINYENGINE_HAS_STB_VORBIS=1)
 if (TARGET SDL2::SDL2)
     target_link_libraries(tinyengine PUBLIC SDL2::SDL2 OpenGL::GL)
 elseif(TARGET SDL2-static)
@@ -128,7 +143,7 @@ else()
     message(FATAL_ERROR "SDL2 target not found")
 endif()
 if(WIN32)
-    target_link_libraries(tinyengine PUBLIC windowscodecs ole32 gdi32 dbghelp)
+    target_link_libraries(tinyengine PUBLIC windowscodecs ole32 gdi32 dbghelp ws2_32)
 endif()
 if(NOT WIN32)
     target_link_libraries(tinyengine PUBLIC Freetype::Freetype)
@@ -141,8 +156,10 @@ endif()
 
 if(MSVC)
     target_compile_options(tinyengine PRIVATE /W4 /permissive-)
+    set_source_files_properties(src/Audio/StbVorbis.cpp PROPERTIES COMPILE_OPTIONS "/w")
 else()
     target_compile_options(tinyengine PRIVATE -Wall -Wextra -Wpedantic)
+    set_source_files_properties(src/Audio/StbVorbis.cpp PROPERTIES COMPILE_OPTIONS "-w")
 endif()
 
 if(TINYENGINE_BUILD_DEMO)

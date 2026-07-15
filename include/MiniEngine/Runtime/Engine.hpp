@@ -11,6 +11,7 @@
 #include "MiniEngine/Navigation/Navigation.hpp"
 #include "MiniEngine/Physics/PhysicsWorld.hpp"
 #include "MiniEngine/Platform/Platform.hpp"
+#include "MiniEngine/Plugin/PluginManager.hpp"
 #include "MiniEngine/Project/Project.hpp"
 #include "MiniEngine/Render/Renderer.hpp"
 #include "MiniEngine/Resource/AssetStreaming.hpp"
@@ -49,6 +50,7 @@ struct EngineContext
     NavigationGrid *navigation = nullptr;
     WorldPartition *worldPartition = nullptr;
     ModuleManager *moduleManager = nullptr;
+    PluginManager *pluginManager = nullptr;
 };
 
 class Engine : private WorldListener
@@ -70,6 +72,7 @@ class Engine : private WorldListener
     ProjectSettings &GetProjectSettings();
     void SetGameInstance(std::unique_ptr<GameInstance> gameInstance);
     ModuleManager &GetModuleManager();
+    PluginManager &GetPluginManager();
 
   private:
     void Tick(float deltaTime);
@@ -95,6 +98,7 @@ class Engine : private WorldListener
     NavigationGrid m_navigation;
     WorldPartition m_worldPartition;
     ModuleManager m_moduleManager;
+    PluginManager m_pluginManager;
     ProjectSettings m_projectSettings;
     SceneManager m_sceneManager{&m_world};
     std::unique_ptr<GameInstance> m_gameInstance;

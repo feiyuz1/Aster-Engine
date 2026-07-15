@@ -276,32 +276,100 @@ constexpr const char *UiFragmentShaderSource = R"GLSL(
 
 constexpr const char *ParticleVertexShaderSource = R"GLSL(
             #version 330 core
+            layout(location=0) in vec4 aParticlePositionSize;
+            layout(location=1) in vec4 aParticleColor;
+            layout(location=2) in vec4 aParticleUvRect;
             uniform mat4 uParticleView;
             uniform mat4 uParticleProjection;
-            uniform vec3 uParticlePosition;
-            uniform float uParticleSize;
             out vec2 vParticleUv;
+            out vec4 vParticleColor;
             void main()
             {
                 vec2 corners[6] = vec2[6](vec2(-1,-1), vec2(1,-1), vec2(1,1), vec2(-1,-1), vec2(1,1), vec2(-1,1));
                 vec2 corner = corners[gl_VertexID];
                 mat3 cameraRotation = transpose(mat3(uParticleView));
-                vec3 world = uParticlePosition + (cameraRotation[0] * corner.x + cameraRotation[1] * corner.y) * uParticleSize;
+                vec3 world = aParticlePositionSize.xyz + (cameraRotation[0] * corner.x + cameraRotation[1] * corner.y) * aParticlePositionSize.w;
                 gl_Position = uParticleProjection * uParticleView * vec4(world, 1.0);
-                vParticleUv = corner * 0.5 + 0.5;
+                vec2 localUv = corner * 0.5 + 0.5;
+                vParticleUv = mix(aParticleUvRect.xy, aParticleUvRect.zw, localUv);
+                vParticleColor = aParticleColor;
             }
         )GLSL";
 
 constexpr const char *ParticleFragmentShaderSource = R"GLSL(
             #version 330 core
             in vec2 vParticleUv;
-            uniform vec4 uParticleColor;
+            in vec4 vParticleColor;
+            uniform sampler2D uParticleTexture;
+            uniform int uHasParticleTexture;
             out vec4 outColor;
             void main()
             {
+                if (uHasParticleTexture != 0) { outColor = texture(uParticleTexture, vParticleUv) * vParticleColor; return; }
                 float distanceToCenter = length(vParticleUv - vec2(0.5));
                 if (distanceToCenter > 0.5) discard;
-                outColor = vec4(uParticleColor.rgb, uParticleColor.a * smoothstep(0.5, 0.35, distanceToCenter));
+                outColor = vec4(vParticleColor.rgb, vParticleColor.a * smoothstep(0.5, 0.35, distanceToCenter));
+            }
+        )GLSL";
+
+constexpr const char *GpuParticleVertexShaderSource = R"GLSL(
+            #version 330 core
+            uniform mat4 uParticleView;
+            uniform mat4 uParticleProjection;
+            uniform vec3 uEmitterPosition;
+            uniform vec3 uEmitterGravity;
+            uniform vec4 uEmitterStartColor;
+            uniform vec4 uEmitterEndColor;
+            uniform vec4 uEmitterParams;
+            uniform vec4 uEmitterFlipbook;
+            uniform float uEmitterTime;
+            uniform float uEmitterCapacity;
+            uniform float uEmitterFps;
+            out vec2 vParticleUv;
+            out vec4 vParticleColor;
+            float hash(float value) { return fract(sin(value * 91.3458 + 17.17) * 47453.5453); }
+            void main()
+            {
+                vec2 corners[6] = vec2[6](vec2(-1,-1), vec2(1,-1), vec2(1,1), vec2(-1,-1), vec2(1,1), vec2(-1,1));
+                float rate = max(0.001, uEmitterParams.x);
+                float life = max(0.001, uEmitterParams.y);
+                float cycle = max(life, uEmitterCapacity / rate);
+                float firstBirth = float(gl_InstanceID) / rate;
+                float age = mod(max(0.0, uEmitterTime - firstBirth), cycle);
+                bool active = uEmitterTime >= firstBirth && age < life;
+                float seed = float(gl_InstanceID) + 1.0;
+                vec3 direction = normalize(vec3((hash(seed) * 2.0 - 1.0) * uEmitterParams.w, 1.0,
+                                                (hash(seed + 7.0) * 2.0 - 1.0) * uEmitterParams.w));
+                vec3 center = uEmitterPosition + direction * uEmitterParams.z * age + uEmitterGravity * (0.5 * age * age);
+                float alpha = clamp(age / life, 0.0, 1.0);
+                float size = mix(uEmitterFlipbook.z, uEmitterFlipbook.w, alpha);
+                mat3 cameraRotation = transpose(mat3(uParticleView));
+                vec2 corner = corners[gl_VertexID];
+                vec3 world = center + (cameraRotation[0] * corner.x + cameraRotation[1] * corner.y) * size;
+                gl_Position = active ? uParticleProjection * uParticleView * vec4(world, 1.0) : vec4(2.0, 2.0, 2.0, 1.0);
+                float frameCount = max(1.0, uEmitterFlipbook.x * uEmitterFlipbook.y);
+                float rawFrame = floor(age * abs(uEmitterFps));
+                float frame = uEmitterFps >= 0.0 ? mod(rawFrame, frameCount) : min(rawFrame, frameCount - 1.0);
+                vec2 cell = vec2(mod(frame, uEmitterFlipbook.x), floor(frame / uEmitterFlipbook.x));
+                vParticleUv = (cell + corner * 0.5 + 0.5) / uEmitterFlipbook.xy;
+                vParticleColor = active ? mix(uEmitterStartColor, uEmitterEndColor, alpha) : vec4(0.0);
+            }
+        )GLSL";
+
+constexpr const char *GpuParticleFragmentShaderSource = R"GLSL(
+            #version 330 core
+            in vec2 vParticleUv;
+            in vec4 vParticleColor;
+            uniform sampler2D uParticleTexture;
+            uniform int uHasParticleTexture;
+            out vec4 outColor;
+            void main()
+            {
+                if (vParticleColor.a <= 0.0) discard;
+                if (uHasParticleTexture != 0) { outColor = texture(uParticleTexture, vParticleUv) * vParticleColor; return; }
+                float distanceToCenter = length(vParticleUv - vec2(0.5));
+                if (distanceToCenter > 0.5) discard;
+                outColor = vec4(vParticleColor.rgb, vParticleColor.a * smoothstep(0.5, 0.35, distanceToCenter));
             }
         )GLSL";
 } // namespace
@@ -319,6 +387,7 @@ struct SdlGlRenderDevice::Impl
     using EnableVertexAttribArrayProc = void(APIENTRY *)(GLuint);
     using VertexAttribDivisorProc = void(APIENTRY *)(GLuint, GLuint);
     using DrawElementsInstancedProc = void(APIENTRY *)(GLenum, GLsizei, GLenum, const void *, GLsizei);
+    using DrawArraysInstancedProc = void(APIENTRY *)(GLenum, GLint, GLsizei, GLsizei);
     using CreateShaderProc = GLuint(APIENTRY *)(GLenum);
     using ShaderSourceProc = void(APIENTRY *)(GLuint, GLsizei, const GLchar *const *, const GLint *);
     using CompileShaderProc = void(APIENTRY *)(GLuint);
@@ -358,7 +427,8 @@ struct SdlGlRenderDevice::Impl
     SDL_GLContext context = nullptr;
     InputState input;
     FrameView view;
-    GLuint program = 0, shadowProgram = 0, toneProgram = 0, uiProgram = 0, particleProgram = 0, fullScreenVao = 0;
+    GLuint program = 0, shadowProgram = 0, toneProgram = 0, uiProgram = 0, particleProgram = 0, gpuParticleProgram = 0, fullScreenVao = 0,
+           particleInstanceBuffer = 0;
     GLuint uiVao = 0, uiVertexBuffer = 0, uiIndexBuffer = 0, fontAtlas = 0;
     struct Glyph
     {
@@ -409,7 +479,11 @@ struct SdlGlRenderDevice::Impl
           taaEnabledLocation = -1, historyValidLocation = -1;
     GLint uiViewportLocation = -1, uiColorLocation = -1, uiTextureLocation = -1, uiHasTextureLocation = -1;
     GLint particleViewLocation = -1, particleProjectionLocation = -1, particlePositionLocation = -1, particleSizeLocation = -1,
-          particleColorLocation = -1;
+          particleColorLocation = -1, particleTextureLocation = -1, particleHasTextureLocation = -1;
+    GLint gpuParticleViewLocation = -1, gpuParticleProjectionLocation = -1, gpuEmitterPositionLocation = -1, gpuEmitterGravityLocation = -1,
+          gpuEmitterStartColorLocation = -1, gpuEmitterEndColorLocation = -1, gpuEmitterParamsLocation = -1,
+          gpuEmitterFlipbookLocation = -1, gpuEmitterTimeLocation = -1, gpuEmitterCapacityLocation = -1, gpuEmitterFpsLocation = -1,
+          gpuParticleTextureLocation = -1, gpuParticleHasTextureLocation = -1;
     FileWatcher vertexShaderWatcher, fragmentShaderWatcher;
     std::unordered_map<std::string, FileWatcher> shaderDependencyWatchers;
     std::filesystem::path vertexShaderPath{"assets/shaders/default.vert"}, fragmentShaderPath{"assets/shaders/default.frag"};
@@ -426,6 +500,7 @@ struct SdlGlRenderDevice::Impl
     EnableVertexAttribArrayProc EnableVertexAttribArray = nullptr;
     VertexAttribDivisorProc VertexAttribDivisor = nullptr;
     DrawElementsInstancedProc DrawElementsInstanced = nullptr;
+    DrawArraysInstancedProc DrawArraysInstanced = nullptr;
     CreateShaderProc CreateShader = nullptr;
     ShaderSourceProc ShaderSource = nullptr;
     CompileShaderProc CompileShader = nullptr;
@@ -513,8 +588,8 @@ struct SdlGlRenderDevice::Impl
                LoadGl(BindBuffer, "glBindBuffer") && LoadGl(BufferData, "glBufferData") && LoadGl(DeleteBuffers, "glDeleteBuffers") &&
                LoadGl(VertexAttribPointer, "glVertexAttribPointer") && LoadGl(EnableVertexAttribArray, "glEnableVertexAttribArray") &&
                LoadGl(VertexAttribDivisor, "glVertexAttribDivisor") && LoadGl(DrawElementsInstanced, "glDrawElementsInstanced") &&
-               LoadGl(CreateShader, "glCreateShader") && LoadGl(ShaderSource, "glShaderSource") &&
-               LoadGl(CompileShader, "glCompileShader") && LoadGl(GetShaderiv, "glGetShaderiv") &&
+               LoadGl(DrawArraysInstanced, "glDrawArraysInstanced") && LoadGl(CreateShader, "glCreateShader") &&
+               LoadGl(ShaderSource, "glShaderSource") && LoadGl(CompileShader, "glCompileShader") && LoadGl(GetShaderiv, "glGetShaderiv") &&
                LoadGl(GetShaderInfoLog, "glGetShaderInfoLog") && LoadGl(DeleteShader, "glDeleteShader") &&
                LoadGl(CreateProgram, "glCreateProgram") && LoadGl(AttachShader, "glAttachShader") && LoadGl(LinkProgram, "glLinkProgram") &&
                LoadGl(GetProgramiv, "glGetProgramiv") && LoadGl(GetProgramInfoLog, "glGetProgramInfoLog") &&
@@ -887,7 +962,8 @@ struct SdlGlRenderDevice::Impl
         toneProgram = CreateLinkedProgram(ToneVertexShaderSource, ToneFragmentShaderSource);
         uiProgram = CreateLinkedProgram(UiVertexShaderSource, UiFragmentShaderSource);
         particleProgram = CreateLinkedProgram(ParticleVertexShaderSource, ParticleFragmentShaderSource);
-        if (!shadowProgram || !toneProgram || !uiProgram || !particleProgram)
+        gpuParticleProgram = CreateLinkedProgram(GpuParticleVertexShaderSource, GpuParticleFragmentShaderSource);
+        if (!shadowProgram || !toneProgram || !uiProgram || !particleProgram || !gpuParticleProgram)
             return false;
         shadowMvpLocation = GetUniformLocation(shadowProgram, "uLightMvp");
         shadowLightViewProjectionLocation = GetUniformLocation(shadowProgram, "uLightViewProjection");
@@ -906,6 +982,18 @@ struct SdlGlRenderDevice::Impl
         taaEnabledLocation = GetUniformLocation(toneProgram, "uTaaEnabled");
         historyValidLocation = GetUniformLocation(toneProgram, "uHistoryValid");
         GenVertexArrays(1, &fullScreenVao);
+        BindVertexArray(fullScreenVao);
+        GenBuffers(1, &particleInstanceBuffer);
+        BindBuffer(GL_ARRAY_BUFFER, particleInstanceBuffer);
+        constexpr GLsizei particleStride = sizeof(float) * 12;
+        for (GLuint attribute = 0; attribute < 3; ++attribute)
+        {
+            VertexAttribPointer(attribute, 4, GL_FLOAT, GL_FALSE, particleStride,
+                                reinterpret_cast<void *>(static_cast<std::uintptr_t>(attribute * sizeof(float) * 4)));
+            EnableVertexAttribArray(attribute);
+            VertexAttribDivisor(attribute, 1);
+        }
+        BindVertexArray(0);
         uiViewportLocation = GetUniformLocation(uiProgram, "uViewport");
         uiColorLocation = GetUniformLocation(uiProgram, "uColor");
         uiTextureLocation = GetUniformLocation(uiProgram, "uUiTexture");
@@ -915,6 +1003,21 @@ struct SdlGlRenderDevice::Impl
         particlePositionLocation = GetUniformLocation(particleProgram, "uParticlePosition");
         particleSizeLocation = GetUniformLocation(particleProgram, "uParticleSize");
         particleColorLocation = GetUniformLocation(particleProgram, "uParticleColor");
+        particleTextureLocation = GetUniformLocation(particleProgram, "uParticleTexture");
+        particleHasTextureLocation = GetUniformLocation(particleProgram, "uHasParticleTexture");
+        gpuParticleViewLocation = GetUniformLocation(gpuParticleProgram, "uParticleView");
+        gpuParticleProjectionLocation = GetUniformLocation(gpuParticleProgram, "uParticleProjection");
+        gpuEmitterPositionLocation = GetUniformLocation(gpuParticleProgram, "uEmitterPosition");
+        gpuEmitterGravityLocation = GetUniformLocation(gpuParticleProgram, "uEmitterGravity");
+        gpuEmitterStartColorLocation = GetUniformLocation(gpuParticleProgram, "uEmitterStartColor");
+        gpuEmitterEndColorLocation = GetUniformLocation(gpuParticleProgram, "uEmitterEndColor");
+        gpuEmitterParamsLocation = GetUniformLocation(gpuParticleProgram, "uEmitterParams");
+        gpuEmitterFlipbookLocation = GetUniformLocation(gpuParticleProgram, "uEmitterFlipbook");
+        gpuEmitterTimeLocation = GetUniformLocation(gpuParticleProgram, "uEmitterTime");
+        gpuEmitterCapacityLocation = GetUniformLocation(gpuParticleProgram, "uEmitterCapacity");
+        gpuEmitterFpsLocation = GetUniformLocation(gpuParticleProgram, "uEmitterFps");
+        gpuParticleTextureLocation = GetUniformLocation(gpuParticleProgram, "uParticleTexture");
+        gpuParticleHasTextureLocation = GetUniformLocation(gpuParticleProgram, "uHasParticleTexture");
         GenVertexArrays(1, &uiVao);
         BindVertexArray(uiVao);
         GenBuffers(1, &uiVertexBuffer);
@@ -1251,10 +1354,20 @@ void SdlGlRenderDevice::Shutdown()
             m_impl->DeleteProgram(m_impl->particleProgram);
             m_impl->particleProgram = 0;
         }
+        if (m_impl->gpuParticleProgram)
+        {
+            m_impl->DeleteProgram(m_impl->gpuParticleProgram);
+            m_impl->gpuParticleProgram = 0;
+        }
         if (m_impl->fullScreenVao)
         {
             m_impl->DeleteVertexArrays(1, &m_impl->fullScreenVao);
             m_impl->fullScreenVao = 0;
+        }
+        if (m_impl->particleInstanceBuffer)
+        {
+            m_impl->DeleteBuffers(1, &m_impl->particleInstanceBuffer);
+            m_impl->particleInstanceBuffer = 0;
         }
         if (m_impl->uiVertexBuffer)
         {
@@ -1674,13 +1787,76 @@ void SdlGlRenderDevice::DrawParticles(const std::vector<Particle> &particles)
     m_impl->UseProgram(m_impl->particleProgram);
     m_impl->UniformMatrix4fv(m_impl->particleViewLocation, 1, GL_FALSE, m_impl->view.view.Data());
     m_impl->UniformMatrix4fv(m_impl->particleProjectionLocation, 1, GL_FALSE, m_impl->view.projection.Data());
-    m_impl->BindVertexArray(m_impl->fullScreenVao);
+    struct GpuParticleInstance
+    {
+        float positionSize[4];
+        float color[4];
+        float uvRect[4];
+    };
+    std::unordered_map<std::string, std::vector<GpuParticleInstance>> batches;
     for (const auto &particle : particles)
     {
-        m_impl->Uniform3f(m_impl->particlePositionLocation, particle.position.x, particle.position.y, particle.position.z);
-        m_impl->Uniform1f(m_impl->particleSizeLocation, std::max(0.001f, particle.size));
-        m_impl->Uniform4f(m_impl->particleColorLocation, particle.color.x, particle.color.y, particle.color.z, particle.color.w);
-        glDrawArrays(GL_TRIANGLES, 0, 6);
+        const float columns = static_cast<float>(std::max<std::uint16_t>(1, particle.flipbookColumns));
+        const float rows = static_cast<float>(std::max<std::uint16_t>(1, particle.flipbookRows));
+        const float column = static_cast<float>(particle.flipbookFrame % std::max<std::uint16_t>(1, particle.flipbookColumns));
+        const float row = static_cast<float>(particle.flipbookFrame / std::max<std::uint16_t>(1, particle.flipbookColumns));
+        batches[particle.texturePath].push_back(
+            {{particle.position.x, particle.position.y, particle.position.z, std::max(0.001f, particle.size)},
+             {particle.color.x, particle.color.y, particle.color.z, particle.color.w},
+             {column / columns, row / rows, (column + 1.0f) / columns, (row + 1.0f) / rows}});
+    }
+    m_impl->BindVertexArray(m_impl->fullScreenVao);
+    for (const auto &batch : batches)
+    {
+        const GLuint texture = batch.first.empty() ? 0 : m_impl->GetOrCreateUiTexture(batch.first);
+        m_impl->ActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, texture);
+        m_impl->Uniform1i(m_impl->particleTextureLocation, 0);
+        m_impl->Uniform1i(m_impl->particleHasTextureLocation, texture ? 1 : 0);
+        m_impl->BindBuffer(GL_ARRAY_BUFFER, m_impl->particleInstanceBuffer);
+        m_impl->BufferData(GL_ARRAY_BUFFER, static_cast<GLsizeiptr>(batch.second.size() * sizeof(GpuParticleInstance)), batch.second.data(),
+                           GL_STREAM_DRAW);
+        m_impl->DrawArraysInstanced(GL_TRIANGLES, 0, 6, static_cast<GLsizei>(batch.second.size()));
+    }
+    m_impl->BindVertexArray(0);
+    glDepthMask(GL_TRUE);
+    glDisable(GL_BLEND);
+}
+
+void SdlGlRenderDevice::DrawGpuParticles(const std::vector<GpuParticleEmitter> &emitters)
+{
+    if (!m_impl || emitters.empty())
+        return;
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    glDepthMask(GL_FALSE);
+    m_impl->UseProgram(m_impl->gpuParticleProgram);
+    m_impl->UniformMatrix4fv(m_impl->gpuParticleViewLocation, 1, GL_FALSE, m_impl->view.view.Data());
+    m_impl->UniformMatrix4fv(m_impl->gpuParticleProjectionLocation, 1, GL_FALSE, m_impl->view.projection.Data());
+    m_impl->BindVertexArray(m_impl->fullScreenVao);
+    for (const auto &emitter : emitters)
+    {
+        const auto &settings = emitter.settings;
+        if (settings.maximumParticles == 0 || settings.emissionRate <= 0.0f)
+            continue;
+        m_impl->Uniform3f(m_impl->gpuEmitterPositionLocation, emitter.position.x, emitter.position.y, emitter.position.z);
+        m_impl->Uniform3f(m_impl->gpuEmitterGravityLocation, settings.gravity.x, settings.gravity.y, settings.gravity.z);
+        m_impl->Uniform4f(m_impl->gpuEmitterStartColorLocation, settings.startColor.x, settings.startColor.y, settings.startColor.z,
+                          settings.startColor.w);
+        m_impl->Uniform4f(m_impl->gpuEmitterEndColorLocation, settings.endColor.x, settings.endColor.y, settings.endColor.z,
+                          settings.endColor.w);
+        m_impl->Uniform4f(m_impl->gpuEmitterParamsLocation, settings.emissionRate, settings.lifetime, settings.speed, settings.spread);
+        m_impl->Uniform4f(m_impl->gpuEmitterFlipbookLocation, static_cast<float>(std::max<std::uint16_t>(1, settings.flipbookColumns)),
+                          static_cast<float>(std::max<std::uint16_t>(1, settings.flipbookRows)), settings.startSize, settings.endSize);
+        m_impl->Uniform1f(m_impl->gpuEmitterTimeLocation, emitter.elapsedTime);
+        m_impl->Uniform1f(m_impl->gpuEmitterCapacityLocation, static_cast<float>(settings.maximumParticles));
+        m_impl->Uniform1f(m_impl->gpuEmitterFpsLocation, settings.flipbookFramesPerSecond * (settings.flipbookLooping ? 1.0f : -1.0f));
+        const GLuint texture = settings.texturePath.empty() ? 0 : m_impl->GetOrCreateUiTexture(settings.texturePath);
+        m_impl->ActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, texture);
+        m_impl->Uniform1i(m_impl->gpuParticleTextureLocation, 0);
+        m_impl->Uniform1i(m_impl->gpuParticleHasTextureLocation, texture ? 1 : 0);
+        m_impl->DrawArraysInstanced(GL_TRIANGLES, 0, 6, static_cast<GLsizei>(std::min<std::size_t>(settings.maximumParticles, 1'000'000)));
     }
     m_impl->BindVertexArray(0);
     glDepthMask(GL_TRUE);
@@ -1978,5 +2154,20 @@ bool SdlGlRenderDevice::IsTaaEnabled() const
 float SdlGlRenderDevice::GetLastGpuFrameMilliseconds() const
 {
     return m_impl ? m_impl->lastGpuFrameMilliseconds : 0.0f;
+}
+
+bool SdlGlRenderDevice::RumbleController(const float lowFrequency, const float highFrequency, const std::uint32_t durationMilliseconds)
+{
+    if (!m_impl || !m_impl->controller)
+        return false;
+    const auto toMotor = [](const float value) {
+        return static_cast<Uint16>(std::clamp(value, 0.0f, 1.0f) * static_cast<float>(std::numeric_limits<Uint16>::max()));
+    };
+    return SDL_GameControllerRumble(m_impl->controller, toMotor(lowFrequency), toMotor(highFrequency), durationMilliseconds) == 0;
+}
+
+bool SdlGlRenderDevice::IsControllerConnected() const
+{
+    return m_impl && m_impl->controller && SDL_GameControllerGetAttached(m_impl->controller) == SDL_TRUE;
 }
 } // namespace MiniEngine

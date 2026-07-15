@@ -23,6 +23,7 @@
 #include "MiniEngine/Network/Replication.hpp"
 #include "MiniEngine/Physics/PhysicsWorld.hpp"
 #include "MiniEngine/Platform/Platform.hpp"
+#include "MiniEngine/Plugin/PluginManager.hpp"
 #include "MiniEngine/Project/Project.hpp"
 #include "MiniEngine/Project/ProjectPackager.hpp"
 #include "MiniEngine/Render/EnvironmentBaker.hpp"
@@ -59,6 +60,22 @@
 namespace
 {
 int failures = 0;
+bool pluginStarted = false;
+int pluginTicks = 0;
+
+int TINY_PLUGIN_CALL StartTestPlugin(const TinyPluginHostAPI *host)
+{
+    pluginStarted = host && host->abi_version == TINY_PLUGIN_ABI_VERSION;
+    return pluginStarted ? 1 : 0;
+}
+void TINY_PLUGIN_CALL StopTestPlugin()
+{
+    pluginStarted = false;
+}
+void TINY_PLUGIN_CALL TickTestPlugin(double)
+{
+    ++pluginTicks;
+}
 
 class TestModule final : public MiniEngine::IModule
 {
@@ -591,6 +608,24 @@ int main()
         return found == blendClips.end() ? nullptr : found->second.get();
     });
     CHECK(std::abs(blendedPose.front().position.x - 5.5f) < 0.001f && loadedBlendTree.DominantClip(9.0f) == "Saved/BlendRun.skanim");
+    BlendTree2D blend2d;
+    blend2d.samples = {{{0.0f, 0.0f}, "Saved/BlendIdle.skanim"}, {{1.0f, 0.0f}, "Saved/BlendRun.skanim"}};
+    const auto blend2dPose = blend2d.Sample({1.0f, 0.0f}, 0.5f, 2, [&blendClips](const std::string &path) {
+        const auto found = blendClips.find(path);
+        return found == blendClips.end() ? nullptr : found->second.get();
+    });
+    CHECK(std::abs(blend2dPose.front().position.x - 10.5f) < 0.001f);
+    SkeletonRetargeter retargeter;
+    CHECK(retargeter.BuildNameMap(skeleton, skeleton));
+    CHECK(retargeter.Retarget(halfPose, 2).size() == 2);
+    const auto layeredPose = BlendAnimationLayers(halfPose, {{runClip->Sample(0.5f, 2), {1.0f, 0.0f}, 0.5f, false}});
+    CHECK(std::abs(layeredPose.front().position.x - 5.5f) < 0.001f);
+    CHECK(BuildAnimationDebugSnapshot(skeleton, halfPose).bones.size() == 1);
+    compressedClip.rootMotion = {{0.0f, {}}, {1.0f, {2.0f, 0.0f, 0.0f}}};
+    CHECK(std::abs(compressedClip.ExtractRootMotion(0.75f, 1.25f).x - 1.0f) < 0.001f);
+    CHECK(SaveSkeletalClipAsset(compressedClip, "Saved/RootMotion.skanim"));
+    SkeletalClip loadedRootMotion;
+    CHECK(LoadSkeletalClipAsset("Saved/RootMotion.skanim", loadedRootMotion) && loadedRootMotion.rootMotion.size() == 2);
 
     AnimationGraph graph;
     graph.entryState = "Idle";
@@ -669,6 +704,13 @@ int main()
     CHECK(loadedInput.LoadBindings("Saved/Test.input"));
     loadedInput.Update(mappedState);
     CHECK(std::abs(loadedInput.GetAxis("Horizontal") - 0.5f) < 0.001f && loadedInput.IsDown("Fire"));
+    bool hapticCalled = false;
+    loadedInput.SetHapticCallback([&hapticCalled](float low, float high, std::uint32_t milliseconds) {
+        hapticCalled = low == 1.0f && high == 0.0f && milliseconds == 50;
+        return true;
+    });
+    CHECK(loadedInput.Rumble(2.0f, -1.0f, 50) && hapticCalled);
+    CHECK(InputSystem::GetGlyph("Jump", InputGlyphSet::PlayStation) == "Cross");
 
     const std::string layoutUnicode =
         TextLayout::EncodeUtf8({'T', 'i', 'n', 'y', 0x5f15, 0x64ce, ' ', 0x0645, 0x0631, 0x062d, 0x0628, 0x0627});
@@ -772,10 +814,23 @@ int main()
     particleSettings.maximumParticles = 8;
     particleSettings.emissionRate = 0.0f;
     particleSettings.lifetime = 1.0f;
+    particleSettings.flipbookColumns = 4;
+    particleSettings.flipbookRows = 2;
+    particleSettings.flipbookFramesPerSecond = 8.0f;
     ParticleEmitter particles(particleSettings);
     particles.Burst(4);
     particles.Update(0.5f);
-    CHECK(particles.GetParticles().size() == 4 && particles.GetParticles().front().age > 0.49f);
+    CHECK(particles.GetParticles().size() == 4 && particles.GetParticles().front().age > 0.49f &&
+          particles.GetParticles().front().flipbookFrame == 4);
+    CHECK(SaveParticleEffectAsset(particleSettings, "Saved/Test.vfx"));
+    ParticleEmitterSettings loadedEffect;
+    CHECK(LoadParticleEffectAsset("Saved/Test.vfx", loadedEffect) && loadedEffect.flipbookColumns == 4);
+    VfxSystem gpuVfx;
+    loadedEffect.simulationMode = ParticleSimulationMode::Gpu;
+    gpuVfx.CreateEmitter(loadedEffect);
+    gpuVfx.Update(0.25f);
+    CHECK(gpuVfx.BuildParticleList().empty() && gpuVfx.BuildGpuEmitterList().size() == 1 &&
+          gpuVfx.BuildGpuEmitterList().front().elapsedTime > 0.24f);
     particles.Update(0.6f);
     CHECK(particles.GetParticles().empty());
 
@@ -785,6 +840,21 @@ int main()
         CHECK(navigation.SetWalkable(2, z, false));
     const auto path = navigation.FindPath({0.5f, 0.0f, 0.5f}, {4.5f, 0.0f, 0.5f}, false);
     CHECK(!path.empty() && std::any_of(path.begin(), path.end(), [](const Vec3 &point) { return point.z > 4.0f; }));
+    PolygonNavMesh polygonNavigation;
+    CHECK(polygonNavigation.Build({{0, 0, 0}, {2, 0, 0}, {2, 0, 2}, {0, 0, 2}}, {0, 2, 1, 0, 3, 2}));
+    CHECK(!polygonNavigation.FindPath({0.2f, 0.0f, 0.2f}, {1.8f, 0.0f, 1.8f}).empty());
+    const auto obstacle = polygonNavigation.AddDynamicObstacle({{1.2f, -1.0f, 0.2f}, {2.1f, 1.0f, 1.2f}});
+    CHECK(obstacle != 0 && polygonNavigation.IsPolygonBlocked(0));
+    CHECK(polygonNavigation.RemoveDynamicObstacle(obstacle));
+    NavCrowd crowd(&polygonNavigation);
+    const auto agent = crowd.AddAgent({0.2f, 0.0f, 0.2f});
+    CHECK(crowd.SetTarget(agent, {1.8f, 0.0f, 1.8f}));
+    crowd.Update(0.1f);
+    CHECK(Length(crowd.GetAgents().front().velocity) > 0.0f);
+    EnvironmentQuery query;
+    query.GenerateGrid({}, 2.0f, 1.0f);
+    query.AddTest([](const Vec3 &point) { return point.x; });
+    CHECK(query.Execute(2).size() == 2);
 
     BehaviorTree behavior;
     behavior.GetBlackboard().Set("ready", true);
@@ -802,6 +872,12 @@ int main()
     behavior.SetRoot(std::move(sequence));
     CHECK(behavior.Tick(0.05f) == BehaviorStatus::Running);
     CHECK(behavior.Tick(0.05f) == BehaviorStatus::Success && actions == 1);
+    BehaviorTreeGraph behaviorGraph;
+    behaviorGraph.root = 1;
+    behaviorGraph.nodes = {{1, "Sequence", "Root", {}, {2}}, {2, "Action", "Move", {100.0f, 0.0f}, {}}};
+    CHECK(SaveBehaviorTreeGraph(behaviorGraph, "Saved/Test.btgraph"));
+    BehaviorTreeGraph loadedBehaviorGraph;
+    CHECK(LoadBehaviorTreeGraph("Saved/Test.btgraph", loadedBehaviorGraph) && loadedBehaviorGraph.nodes.size() == 2);
 
     WorldPartition partition;
     CHECK(partition.RegisterCell({{0, 0}, {{0, -1, 0}, {10, 1, 10}}, "near.scene"}));
@@ -825,6 +901,14 @@ int main()
     CHECK(modules.StartupAll());
     modules.ShutdownAll();
     CHECK(moduleEvents == std::vector<std::string>({"start:Core", "start:Gameplay", "stop:Gameplay", "stop:Core"}));
+    const TinyPluginAPI testPlugin{TINY_PLUGIN_ABI_VERSION, sizeof(TinyPluginAPI), "TestPlugin",   1,
+                                   &StartTestPlugin,        &StopTestPlugin,       &TickTestPlugin};
+    PluginManager plugins;
+    CHECK(plugins.RegisterStatic(&testPlugin) && pluginStarted);
+    plugins.Tick(0.1);
+    CHECK(pluginTicks == 1 && plugins.GetLoadedNames() == std::vector<std::string>{"TestPlugin"});
+    plugins.UnloadAll();
+    CHECK(!pluginStarted);
 
     NetworkSnapshot firstSnapshot{1, 1.0, {{MakeEntity(7, 2), {0, 0, 0}, {}, {1, 0, 0}}}};
     NetworkSnapshot secondSnapshot{2, 2.0, {{MakeEntity(7, 2), {10, 0, 0}, {}, {1, 0, 0}}}};
@@ -839,6 +923,30 @@ int main()
     CHECK(replay.Save("Saved/Test.replay"));
     ReplayStream loadedReplay;
     CHECK(loadedReplay.Load("Saved/Test.replay") && std::abs(loadedReplay.GetDuration() - 1.0) < 0.001);
+    ReliableChannel reliableA, reliableB;
+    CHECK(reliableA.Queue({1, 2, 3}));
+    const auto packetsA = reliableA.BuildPackets(0.0);
+    std::vector<std::uint8_t> reliablePayload;
+    CHECK(packetsA.size() == 1 && reliableB.ProcessPacket(packetsA.front(), 0.0, reliablePayload) &&
+          reliablePayload == std::vector<std::uint8_t>({1, 2, 3}));
+    CHECK(reliableB.Queue({9}));
+    const auto packetsB = reliableB.BuildPackets(0.01);
+    CHECK(reliableA.ProcessPacket(packetsB.front(), 0.01, reliablePayload) && reliableA.PendingCount() == 0);
+    int rpcCalls = 0;
+    RpcRegistry rpc;
+    CHECK(rpc.Register(7, [&rpcCalls](std::uint32_t client, const std::vector<std::uint8_t> &payload) {
+        if (client == 42 && payload == std::vector<std::uint8_t>{4, 5})
+            ++rpcCalls;
+    }));
+    CHECK(rpc.Dispatch(42, rpc.Encode(7, {4, 5}), 1.0) && rpcCalls == 1);
+    NetworkOwnership ownership;
+    CHECK(ownership.Assign(MakeEntity(9, 1), 42) && ownership.IsOwner(MakeEntity(9, 1), 42) && !ownership.Release(MakeEntity(9, 1), 7));
+    ClientPrediction prediction;
+    prediction.ApplyInput({1, {2.0f, 0.0f, 0.0f}, 0.1f});
+    prediction.ApplyInput({2, {2.0f, 0.0f, 0.0f}, 0.1f});
+    CHECK(prediction.Reconcile(1, {0.2f, 0.0f, 0.0f}).x > 0.2f && prediction.PendingInputCount() == 1);
+    UdpSocket udp;
+    CHECK(udp.Open(0) && udp.GetBoundPort() != 0 && !udp.Send({"not-an-ip", 1}, {1}));
 
     TransformTrack transformTrack;
     transformTrack.AddKey({0.0f, {{0, 0, 0}, {}, {1, 1, 1}}});

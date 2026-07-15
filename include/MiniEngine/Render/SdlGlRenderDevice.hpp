@@ -28,6 +28,7 @@ class SdlGlRenderDevice final : public RenderDevice
     void Draw(const RenderItem &item) override;
     void DrawInstanced(const std::vector<RenderItem> &items) override;
     void DrawParticles(const std::vector<Particle> &particles) override;
+    void DrawGpuParticles(const std::vector<GpuParticleEmitter> &emitters) override;
     void EndFrame() override;
     void DrawUi(const std::vector<UIDrawCommand> &commands) override;
     void Present() override;
@@ -57,6 +58,8 @@ class SdlGlRenderDevice final : public RenderDevice
     void SetTaaEnabled(bool enabled);
     bool IsTaaEnabled() const;
     float GetLastGpuFrameMilliseconds() const;
+    bool RumbleController(float lowFrequency, float highFrequency, std::uint32_t durationMilliseconds);
+    bool IsControllerConnected() const;
 
   private:
     struct Impl;

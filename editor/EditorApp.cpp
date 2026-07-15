@@ -188,6 +188,8 @@ void EditorApp::Draw()
     DrawAnimationEditor();
     DrawShaderEditor();
     DrawMaterialGraphEditor();
+    DrawEffectEditor();
+    DrawBehaviorTreeEditor();
     ImGuiIO &io = ImGui::GetIO();
     if (!io.WantTextInput && io.KeyCtrl)
     {
@@ -1088,6 +1090,29 @@ void EditorApp::DrawAssets()
                 m_selectedAsset = path.generic_string();
             }
         }
+        ImGui::SameLine();
+        if (ImGui::Button("+ VFX"))
+        {
+            const auto path = createUniquePath("NewEffect", ".vfx");
+            if (SaveParticleEffectAsset({}, path))
+            {
+                m_engine.GetContext().resourceManager->GetAssetRegistry().Scan(path.parent_path());
+                m_selectedAsset = path.generic_string();
+            }
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("+ Behavior Tree"))
+        {
+            BehaviorTreeGraph graph;
+            graph.root = 1;
+            graph.nodes = {{1, "Sequence", "Root", {20.0f, 20.0f}, {2}}, {2, "Action", "Action", {220.0f, 20.0f}, {}}};
+            const auto path = createUniquePath("NewBehavior", ".btgraph");
+            if (SaveBehaviorTreeGraph(graph, path))
+            {
+                m_engine.GetContext().resourceManager->GetAssetRegistry().Scan(path.parent_path());
+                m_selectedAsset = path.generic_string();
+            }
+        }
         ImGui::Separator();
     }
 #ifdef TINYENGINE_HAS_ASSIMP
@@ -1366,6 +1391,20 @@ void EditorApp::DrawAnimationEditor()
                     : m_editSkeletalClip.keyframes.empty() ? 0
                                                            : m_editSkeletalClip.keyframes.front().localPose.size());
         ImGui::Text("Storage: %s", m_editSkeletalClip.IsCompressed() ? "compressed curves" : "raw sampled poses");
+        static float debugTime = 0.0f;
+        ImGui::SliderFloat("Debug Time", &debugTime, 0.0f, m_editSkeletalClip.duration);
+        const auto skeletonPath = std::filesystem::path(m_openAnimationAsset).replace_extension(".skeleton");
+        Skeleton debugSkeleton;
+        if (LoadSkeletonAsset(skeletonPath, debugSkeleton))
+        {
+            const auto snapshot =
+                BuildAnimationDebugSnapshot(debugSkeleton, m_editSkeletalClip.Sample(debugTime, debugSkeleton.bones.size(), false));
+            ImGui::Text("Debug pose: %zu joints / %zu links | Root motion %.2f, %.2f, %.2f", snapshot.jointPositions.size(),
+                        snapshot.bones.size(), m_editSkeletalClip.SampleRootMotion(debugTime, false).x,
+                        m_editSkeletalClip.SampleRootMotion(debugTime, false).y, m_editSkeletalClip.SampleRootMotion(debugTime, false).z);
+        }
+        else
+            ImGui::TextDisabled("Place a same-name .skeleton beside this clip for joint debug preview");
         ImGui::BeginDisabled(m_editSkeletalClip.IsCompressed());
         if (ImGui::Button("Compress Curves"))
         {
@@ -1564,6 +1603,146 @@ void EditorApp::DrawAnimationEditor()
             else
                 m_messages.emplace_back("Animation graph has invalid states, parameters, entry, or transitions");
         }
+    }
+    ImGui::End();
+}
+
+void EditorApp::DrawEffectEditor()
+{
+    if (m_selectedAsset.empty() || std::filesystem::path(m_selectedAsset).extension() != ".vfx")
+        return;
+    if (m_openEffectAsset != m_selectedAsset)
+    {
+        if (!LoadParticleEffectAsset(m_selectedAsset, m_editEffect))
+        {
+            m_messages.emplace_back("Cannot open VFX asset: " + m_selectedAsset);
+            return;
+        }
+        m_openEffectAsset = m_selectedAsset;
+    }
+    ImGui::SetNextWindowSize({520.0f, 580.0f}, ImGuiCond_FirstUseEver);
+    if (!ImGui::Begin("VFX Editor"))
+    {
+        ImGui::End();
+        return;
+    }
+    ImGui::TextWrapped("%s", m_openEffectAsset.c_str());
+    int capacity = static_cast<int>(std::min<std::size_t>(m_editEffect.maximumParticles, 1'000'000));
+    if (ImGui::DragInt("Capacity", &capacity, 16.0f, 1, 1'000'000))
+        m_editEffect.maximumParticles = static_cast<std::size_t>(capacity);
+    ImGui::DragFloat("Emission Rate", &m_editEffect.emissionRate, 0.25f, 0.0f, 100000.0f);
+    ImGui::DragFloat("Lifetime", &m_editEffect.lifetime, 0.01f, 0.01f, 600.0f);
+    ImGui::DragFloat("Speed", &m_editEffect.speed, 0.05f, 0.0f, 1000.0f);
+    ImGui::DragFloat("Spread", &m_editEffect.spread, 0.01f, 0.0f, 10.0f);
+    ImGui::DragFloat3("Gravity", &m_editEffect.gravity.x, 0.05f);
+    ImGui::DragFloat2("Size Start / End", &m_editEffect.startSize, 0.01f, 0.0f, 100.0f);
+    ImGui::ColorEdit4("Start Color", &m_editEffect.startColor.x);
+    ImGui::ColorEdit4("End Color", &m_editEffect.endColor.x);
+    InputString("Texture", m_editEffect.texturePath);
+    int columns = m_editEffect.flipbookColumns, rows = m_editEffect.flipbookRows;
+    if (ImGui::DragInt("Flipbook Columns", &columns, 1.0f, 1, 256))
+        m_editEffect.flipbookColumns = static_cast<std::uint16_t>(columns);
+    if (ImGui::DragInt("Flipbook Rows", &rows, 1.0f, 1, 256))
+        m_editEffect.flipbookRows = static_cast<std::uint16_t>(rows);
+    ImGui::DragFloat("Frames / Second", &m_editEffect.flipbookFramesPerSecond, 0.1f, 0.0f, 1000.0f);
+    ImGui::Checkbox("Loop Flipbook", &m_editEffect.flipbookLooping);
+    int mode = static_cast<int>(m_editEffect.simulationMode);
+    if (ImGui::Combo("Simulation", &mode, "CPU\0GPU\0"))
+        m_editEffect.simulationMode = static_cast<ParticleSimulationMode>(mode);
+    if (ImGui::Button("Save Effect"))
+    {
+        if (SaveParticleEffectAsset(m_editEffect, m_openEffectAsset))
+            m_messages.emplace_back("Saved VFX effect: " + m_openEffectAsset);
+        else
+            m_messages.emplace_back("VFX effect contains invalid capacity, lifetime, or flipbook dimensions");
+    }
+    ImGui::End();
+}
+
+void EditorApp::DrawBehaviorTreeEditor()
+{
+    if (m_selectedAsset.empty() || std::filesystem::path(m_selectedAsset).extension() != ".btgraph")
+        return;
+    if (m_openBehaviorAsset != m_selectedAsset)
+    {
+        if (!LoadBehaviorTreeGraph(m_selectedAsset, m_editBehaviorGraph))
+        {
+            m_messages.emplace_back("Cannot open behavior tree: " + m_selectedAsset);
+            return;
+        }
+        m_openBehaviorAsset = m_selectedAsset;
+    }
+    ImGui::SetNextWindowSize({760.0f, 560.0f}, ImGuiCond_FirstUseEver);
+    if (!ImGui::Begin("Behavior Tree Editor"))
+    {
+        ImGui::End();
+        return;
+    }
+    const ImVec2 origin = ImGui::GetCursorScreenPos();
+    ImDrawList *drawList = ImGui::GetWindowDrawList();
+    for (const auto &node : m_editBehaviorGraph.nodes)
+        for (const auto childId : node.children)
+            if (const auto *child = m_editBehaviorGraph.Find(childId))
+                drawList->AddLine({origin.x + node.editorPosition.x + 130.0f, origin.y + node.editorPosition.y + 25.0f},
+                                  {origin.x + child->editorPosition.x, origin.y + child->editorPosition.y + 25.0f},
+                                  IM_COL32(220, 180, 70, 255), 2.0f);
+    for (auto &node : m_editBehaviorGraph.nodes)
+    {
+        ImGui::SetCursorScreenPos({origin.x + node.editorPosition.x, origin.y + node.editorPosition.y});
+        ImGui::PushID(static_cast<int>(node.id));
+        ImGui::Button((node.label + "\n" + node.type).c_str(), {130.0f, 50.0f});
+        if (ImGui::IsItemActive() && ImGui::IsMouseDragging(ImGuiMouseButton_Left))
+        {
+            node.editorPosition.x += ImGui::GetIO().MouseDelta.x;
+            node.editorPosition.y += ImGui::GetIO().MouseDelta.y;
+        }
+        ImGui::PopID();
+    }
+    ImGui::SetCursorScreenPos({origin.x, origin.y + 340.0f});
+    ImGui::Dummy({700.0f, 1.0f});
+    ImGui::SeparatorText("Nodes");
+    int remove = -1;
+    for (std::size_t index = 0; index < m_editBehaviorGraph.nodes.size(); ++index)
+    {
+        auto &node = m_editBehaviorGraph.nodes[index];
+        ImGui::PushID(static_cast<int>(node.id));
+        ImGui::Text("#%u", node.id);
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(130.0f);
+        InputString("Type", node.type, 64);
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(180.0f);
+        InputString("Label", node.label, 128);
+        ImGui::SameLine();
+        if (node.id != m_editBehaviorGraph.root && ImGui::SmallButton("X"))
+            remove = static_cast<int>(index);
+        ImGui::PopID();
+    }
+    if (remove >= 0)
+    {
+        const std::uint32_t removedId = m_editBehaviorGraph.nodes[remove].id;
+        m_editBehaviorGraph.nodes.erase(m_editBehaviorGraph.nodes.begin() + remove);
+        for (auto &node : m_editBehaviorGraph.nodes)
+            node.children.erase(std::remove(node.children.begin(), node.children.end(), removedId), node.children.end());
+    }
+    if (ImGui::Button("+ Action Node"))
+    {
+        std::uint32_t id = 1;
+        for (const auto &node : m_editBehaviorGraph.nodes)
+            id = std::max(id, node.id + 1);
+        m_editBehaviorGraph.nodes.push_back({id, "Action", "Action", {220.0f, 80.0f + id * 35.0f}, {}});
+        if (auto root = std::find_if(m_editBehaviorGraph.nodes.begin(), m_editBehaviorGraph.nodes.end(),
+                                     [this](const BehaviorGraphNode &node) { return node.id == m_editBehaviorGraph.root; });
+            root != m_editBehaviorGraph.nodes.end())
+            root->children.push_back(id);
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Save Behavior Tree"))
+    {
+        if (SaveBehaviorTreeGraph(m_editBehaviorGraph, m_openBehaviorAsset))
+            m_messages.emplace_back("Saved behavior tree: " + m_openBehaviorAsset);
+        else
+            m_messages.emplace_back("Behavior tree contains a cycle, invalid root, or missing child");
     }
     ImGui::End();
 }

@@ -81,6 +81,7 @@ class SkeletalClip
     std::vector<SkeletalKeyframe> keyframes;
     std::vector<CompressedBoneTrack> tracks;
     std::vector<AnimationEvent> events;
+    std::vector<Vec3CurveKey> rootMotion;
 
     bool IsValid(std::size_t boneCount) const;
     std::vector<BonePose> Sample(float time, std::size_t boneCount) const;
@@ -88,6 +89,8 @@ class SkeletalClip
     bool IsCompressed() const;
     SkeletalCompressionStats Compress(const SkeletalCompressionSettings &settings = {});
     std::vector<AnimationEvent> GatherEvents(float previousTime, float currentTime, bool shouldLoop) const;
+    Vec3 SampleRootMotion(float time, bool shouldLoop = true) const;
+    Vec3 ExtractRootMotion(float previousTime, float currentTime, bool shouldLoop = true) const;
 };
 
 std::vector<Mat4> BuildSkinMatrices(const Skeleton &skeleton, const std::vector<BonePose> &localPose);
@@ -117,6 +120,69 @@ class BlendTree1D
 
 bool SaveBlendTreeAsset(const BlendTree1D &tree, const std::filesystem::path &path);
 bool LoadBlendTreeAsset(const std::filesystem::path &path, BlendTree1D &tree);
+
+struct BlendTree2DSample
+{
+    Vec2 position{};
+    std::string clipPath;
+};
+
+class BlendTree2D
+{
+  public:
+    std::string parameterX = "Speed";
+    std::string parameterY = "Direction";
+    std::vector<BlendTree2DSample> samples;
+
+    bool IsValid() const;
+    std::vector<BonePose> Sample(const Vec2 &value, float time, std::size_t boneCount, const SkeletalClipResolver &resolver) const;
+    std::vector<float> CalculateWeights(const Vec2 &value) const;
+};
+
+struct RetargetBoneMap
+{
+    int sourceBone = -1;
+    int targetBone = -1;
+    float translationScale = 1.0f;
+};
+
+class SkeletonRetargeter
+{
+  public:
+    bool BuildNameMap(const Skeleton &source, const Skeleton &target);
+    void SetMap(std::vector<RetargetBoneMap> mapping);
+    std::vector<BonePose> Retarget(const std::vector<BonePose> &sourcePose, std::size_t targetBoneCount) const;
+
+  private:
+    std::vector<RetargetBoneMap> m_mapping;
+};
+
+struct AnimationLayer
+{
+    std::vector<BonePose> pose;
+    std::vector<float> boneMask;
+    float weight = 1.0f;
+    bool additive = false;
+};
+
+std::vector<BonePose> BlendAnimationLayers(const std::vector<BonePose> &basePose, const std::vector<AnimationLayer> &layers);
+bool SolveTwoBoneIk(const Skeleton &skeleton, std::vector<BonePose> &localPose, int rootBone, int middleBone, int endBone,
+                    const Vec3 &target, const Vec3 &pole, float weight = 1.0f);
+
+struct AnimationDebugLine
+{
+    Vec3 from{};
+    Vec3 to{};
+    int bone = -1;
+};
+
+struct AnimationDebugSnapshot
+{
+    std::vector<Vec3> jointPositions;
+    std::vector<AnimationDebugLine> bones;
+};
+
+AnimationDebugSnapshot BuildAnimationDebugSnapshot(const Skeleton &skeleton, const std::vector<BonePose> &localPose);
 
 struct AnimationGraphParameter
 {

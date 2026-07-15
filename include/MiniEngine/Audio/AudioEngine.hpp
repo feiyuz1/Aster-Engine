@@ -4,6 +4,7 @@
 #include "MiniEngine/Types.hpp"
 
 #include <cstdint>
+#include <memory>
 #include <mutex>
 #include <string>
 #include <unordered_map>
@@ -19,6 +20,7 @@ class AudioEngine
     bool Initialize(Logger *logger = nullptr);
     void Shutdown();
     bool PlayOneShot(const std::string &path, float volume = 1.0f, const std::string &bus = "SFX");
+    bool PlayStream(const std::string &path, float volume = 1.0f, bool loop = true, const std::string &bus = "Music");
     bool PlaySpatial(const std::string &path, const Vec3 &source, const Vec3 &listener, float volume = 1.0f, float minimumDistance = 1.0f,
                      float maximumDistance = 25.0f, const std::string &bus = "SFX");
     void UpdateWorld(const World &world);
@@ -34,6 +36,14 @@ class AudioEngine
         std::uint64_t id = 0;
         Entity entity = InvalidEntity;
         std::vector<std::int16_t> samples;
+        std::vector<std::uint8_t> compressedData;
+        std::shared_ptr<void> decoder;
+        std::vector<std::int16_t> streamBuffer;
+        std::size_t streamFrames = 0;
+        std::size_t streamCursor = 0;
+        double streamPhase = 0.0;
+        int streamSampleRate = 44100;
+        bool streaming = false;
         std::size_t cursor = 0;
         float volume = 1.0f;
         float attenuation = 1.0f;

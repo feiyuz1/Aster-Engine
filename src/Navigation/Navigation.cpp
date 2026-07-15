@@ -178,4 +178,315 @@ std::size_t NavigationGrid::Index(const int x, const int z) const
 {
     return static_cast<std::size_t>(z) * static_cast<std::size_t>(m_width) + static_cast<std::size_t>(x);
 }
+
+namespace
+{
+Vec3 PolygonCenter(const NavPolygon &polygon)
+{
+    Vec3 result{};
+    for (const auto &vertex : polygon.vertices)
+        result += vertex;
+    return polygon.vertices.empty() ? result : result / static_cast<float>(polygon.vertices.size());
+}
+
+bool SamePoint(const Vec3 &left, const Vec3 &right)
+{
+    return LengthSquared(left - right) < 0.000001f;
+}
+
+bool PointInPolygonXZ(const Vec3 &point, const NavPolygon &polygon)
+{
+    bool inside = false;
+    for (std::size_t index = 0, previous = polygon.vertices.size() - 1; index < polygon.vertices.size(); previous = index++)
+    {
+        const auto &a = polygon.vertices[index];
+        const auto &b = polygon.vertices[previous];
+        if (((a.z > point.z) != (b.z > point.z)) && point.x < (b.x - a.x) * (point.z - a.z) / (b.z - a.z + 0.0000001f) + a.x)
+            inside = !inside;
+    }
+    return inside;
+}
+} // namespace
+
+bool PolygonNavMesh::Build(const std::vector<Vec3> &vertices, const std::vector<std::uint32_t> &triangleIndices,
+                           const float maximumSlopeDegrees)
+{
+    Clear();
+    if (vertices.empty() || triangleIndices.empty() || triangleIndices.size() % 3 != 0 || triangleIndices.size() > 3'000'000)
+        return false;
+    const float minimumUp = std::cos(DegreesToRadians(std::clamp(maximumSlopeDegrees, 0.0f, 89.0f)));
+    for (std::size_t triangle = 0; triangle < triangleIndices.size(); triangle += 3)
+    {
+        const auto a = triangleIndices[triangle], b = triangleIndices[triangle + 1], c = triangleIndices[triangle + 2];
+        if (a >= vertices.size() || b >= vertices.size() || c >= vertices.size())
+        {
+            Clear();
+            return false;
+        }
+        const Vec3 normal = Normalize(Cross(vertices[b] - vertices[a], vertices[c] - vertices[a]));
+        m_polygons.push_back({{vertices[a], vertices[b], vertices[c]}, {}, 1.0f, std::abs(normal.y) >= minimumUp});
+    }
+    for (std::size_t left = 0; left < m_polygons.size(); ++left)
+        for (std::size_t right = left + 1; right < m_polygons.size(); ++right)
+        {
+            int shared = 0;
+            for (const auto &a : m_polygons[left].vertices)
+                for (const auto &b : m_polygons[right].vertices)
+                    if (SamePoint(a, b))
+                        ++shared;
+            if (shared >= 2)
+            {
+                m_polygons[left].neighbors.push_back(static_cast<std::uint32_t>(right));
+                m_polygons[right].neighbors.push_back(static_cast<std::uint32_t>(left));
+            }
+        }
+    m_dynamicBlocked.assign(m_polygons.size(), false);
+    return !m_polygons.empty();
+}
+
+void PolygonNavMesh::Clear()
+{
+    m_polygons.clear();
+    m_dynamicBlocked.clear();
+    m_obstacles.clear();
+}
+
+int PolygonNavMesh::FindPolygon(const Vec3 &position) const
+{
+    int best = -1;
+    float bestHeight = std::numeric_limits<float>::infinity();
+    for (std::size_t index = 0; index < m_polygons.size(); ++index)
+        if (m_polygons[index].walkable && !IsPolygonBlocked(index) && PointInPolygonXZ(position, m_polygons[index]))
+        {
+            const float height = std::abs(PolygonCenter(m_polygons[index]).y - position.y);
+            if (height < bestHeight)
+            {
+                bestHeight = height;
+                best = static_cast<int>(index);
+            }
+        }
+    return best;
+}
+
+std::vector<Vec3> PolygonNavMesh::FindPath(const Vec3 &start, const Vec3 &goal) const
+{
+    const int startPolygon = FindPolygon(start), goalPolygon = FindPolygon(goal);
+    if (startPolygon < 0 || goalPolygon < 0)
+        return {};
+    const std::size_t count = m_polygons.size();
+    std::vector<float> cost(count, std::numeric_limits<float>::infinity());
+    std::vector<std::size_t> previous(count, count);
+    using Node = std::pair<float, std::size_t>;
+    std::priority_queue<Node, std::vector<Node>, std::greater<Node>> open;
+    cost[startPolygon] = 0.0f;
+    open.push({0.0f, static_cast<std::size_t>(startPolygon)});
+    while (!open.empty())
+    {
+        const std::size_t current = open.top().second;
+        open.pop();
+        if (current == static_cast<std::size_t>(goalPolygon))
+            break;
+        for (const std::uint32_t neighbor : m_polygons[current].neighbors)
+        {
+            if (!m_polygons[neighbor].walkable || IsPolygonBlocked(neighbor))
+                continue;
+            const float nextCost = cost[current] + Length(PolygonCenter(m_polygons[current]) - PolygonCenter(m_polygons[neighbor])) *
+                                                       m_polygons[neighbor].traversalCost;
+            if (nextCost >= cost[neighbor])
+                continue;
+            cost[neighbor] = nextCost;
+            previous[neighbor] = current;
+            open.push({nextCost + Length(PolygonCenter(m_polygons[neighbor]) - goal), neighbor});
+        }
+    }
+    if (startPolygon != goalPolygon && previous[goalPolygon] == count)
+        return {};
+    std::vector<std::size_t> corridor;
+    for (std::size_t current = static_cast<std::size_t>(goalPolygon);; current = previous[current])
+    {
+        corridor.push_back(current);
+        if (current == static_cast<std::size_t>(startPolygon))
+            break;
+    }
+    std::reverse(corridor.begin(), corridor.end());
+    std::vector<Vec3> path{start};
+    for (std::size_t index = 1; index + 1 < corridor.size(); ++index)
+        path.push_back(PolygonCenter(m_polygons[corridor[index]]));
+    path.push_back(goal);
+    return path;
+}
+
+std::uint64_t PolygonNavMesh::AddDynamicObstacle(const Aabb &bounds)
+{
+    const std::uint64_t id = m_nextObstacle++;
+    m_obstacles[id] = bounds;
+    RebuildDynamicObstacles();
+    return id;
+}
+
+bool PolygonNavMesh::UpdateDynamicObstacle(const std::uint64_t id, const Aabb &bounds)
+{
+    const auto found = m_obstacles.find(id);
+    if (found == m_obstacles.end())
+        return false;
+    found->second = bounds;
+    RebuildDynamicObstacles();
+    return true;
+}
+
+bool PolygonNavMesh::RemoveDynamicObstacle(const std::uint64_t id)
+{
+    if (!m_obstacles.erase(id))
+        return false;
+    RebuildDynamicObstacles();
+    return true;
+}
+
+void PolygonNavMesh::RebuildDynamicObstacles()
+{
+    m_dynamicBlocked.assign(m_polygons.size(), false);
+    for (std::size_t index = 0; index < m_polygons.size(); ++index)
+    {
+        const Vec3 center = PolygonCenter(m_polygons[index]);
+        for (const auto &pair : m_obstacles)
+            if (center.x >= pair.second.minimum.x && center.x <= pair.second.maximum.x && center.y >= pair.second.minimum.y &&
+                center.y <= pair.second.maximum.y && center.z >= pair.second.minimum.z && center.z <= pair.second.maximum.z)
+            {
+                m_dynamicBlocked[index] = true;
+                break;
+            }
+    }
+}
+
+const std::vector<NavPolygon> &PolygonNavMesh::GetPolygons() const
+{
+    return m_polygons;
+}
+
+bool PolygonNavMesh::IsPolygonBlocked(const std::size_t polygon) const
+{
+    return polygon >= m_dynamicBlocked.size() || m_dynamicBlocked[polygon];
+}
+
+NavCrowd::NavCrowd(const PolygonNavMesh *navMesh) : m_navMesh(navMesh)
+{
+}
+
+void NavCrowd::SetNavMesh(const PolygonNavMesh *navMesh)
+{
+    m_navMesh = navMesh;
+}
+
+std::uint64_t NavCrowd::AddAgent(const Vec3 &position, const float radius, const float maximumSpeed)
+{
+    const std::uint64_t id = m_nextId++;
+    m_agents.push_back({id, position, {}, position, std::max(0.01f, radius), std::max(0.0f, maximumSpeed), {}, 0});
+    return id;
+}
+
+bool NavCrowd::RemoveAgent(const std::uint64_t id)
+{
+    const auto found = std::find_if(m_agents.begin(), m_agents.end(), [id](const CrowdAgent &agent) { return agent.id == id; });
+    if (found == m_agents.end())
+        return false;
+    m_agents.erase(found);
+    return true;
+}
+
+bool NavCrowd::SetTarget(const std::uint64_t id, const Vec3 &target)
+{
+    const auto found = std::find_if(m_agents.begin(), m_agents.end(), [id](const CrowdAgent &agent) { return agent.id == id; });
+    if (found == m_agents.end() || !m_navMesh)
+        return false;
+    found->path = m_navMesh->FindPath(found->position, target);
+    found->pathPoint = found->path.size() > 1 ? 1 : 0;
+    found->target = target;
+    return !found->path.empty();
+}
+
+void NavCrowd::Update(const float deltaTime)
+{
+    if (deltaTime <= 0.0f)
+        return;
+    for (auto &agent : m_agents)
+    {
+        if (agent.pathPoint >= agent.path.size())
+        {
+            agent.velocity = {};
+            continue;
+        }
+        Vec3 desired = Normalize(agent.path[agent.pathPoint] - agent.position) * agent.maximumSpeed;
+        for (const auto &other : m_agents)
+            if (other.id != agent.id)
+            {
+                const Vec3 offset = agent.position - other.position;
+                const float range = agent.radius + other.radius;
+                const float distance = Length(offset);
+                if (distance > 0.0001f && distance < range * 2.0f)
+                    desired += Normalize(offset) * agent.maximumSpeed * (range * 2.0f - distance) / (range * 2.0f);
+            }
+        const float speed = Length(desired);
+        agent.velocity = speed > agent.maximumSpeed ? desired * (agent.maximumSpeed / speed) : desired;
+        agent.position += agent.velocity * deltaTime;
+        if (Length(agent.path[agent.pathPoint] - agent.position) <= std::max(agent.radius, agent.maximumSpeed * deltaTime))
+            ++agent.pathPoint;
+    }
+}
+
+const std::vector<CrowdAgent> &NavCrowd::GetAgents() const
+{
+    return m_agents;
+}
+
+void EnvironmentQuery::GenerateGrid(const Vec3 &center, const float radius, const float spacing)
+{
+    m_points.clear();
+    if (radius < 0.0f || spacing <= 0.0f)
+        return;
+    const int steps = static_cast<int>(std::floor(radius / spacing));
+    for (int z = -steps; z <= steps; ++z)
+        for (int x = -steps; x <= steps; ++x)
+            if (x * x + z * z <= steps * steps)
+                m_points.push_back(center + Vec3{static_cast<float>(x) * spacing, 0.0f, static_cast<float>(z) * spacing});
+}
+
+void EnvironmentQuery::GeneratePathPoints(const std::vector<Vec3> &path)
+{
+    m_points = path;
+}
+
+void EnvironmentQuery::AddTest(Test test, const float weight, const bool lowerIsBetter)
+{
+    if (test)
+        m_tests.push_back({std::move(test), weight, lowerIsBetter});
+}
+
+std::vector<EnvironmentQueryItem> EnvironmentQuery::Execute(const std::size_t maximumResults) const
+{
+    std::vector<EnvironmentQueryItem> result;
+    result.reserve(m_points.size());
+    for (const auto &point : m_points)
+    {
+        float score = 0.0f;
+        bool valid = true;
+        for (const auto &test : m_tests)
+        {
+            const float value = test.function(point);
+            if (!std::isfinite(value))
+            {
+                valid = false;
+                break;
+            }
+            score += (test.lowerIsBetter ? -value : value) * test.weight;
+        }
+        result.push_back({point, score, !valid});
+    }
+    result.erase(std::remove_if(result.begin(), result.end(), [](const EnvironmentQueryItem &item) { return item.discarded; }),
+                 result.end());
+    std::sort(result.begin(), result.end(),
+              [](const EnvironmentQueryItem &left, const EnvironmentQueryItem &right) { return left.score > right.score; });
+    if (result.size() > maximumResults)
+        result.resize(maximumResults);
+    return result;
+}
 } // namespace MiniEngine

@@ -1,8 +1,10 @@
 #pragma once
 
+#include "MiniEngine/AI/BehaviorTree.hpp"
 #include "MiniEngine/Animation/SkeletalAnimation.hpp"
 #include "MiniEngine/Render/MaterialGraph.hpp"
 #include "MiniEngine/Runtime/Engine.hpp"
+#include "MiniEngine/VFX/ParticleSystem.hpp"
 #ifdef TINYENGINE_HAS_ASSIMP
 #include "MiniEngine/Import/AssimpImporter.hpp"
 #endif
@@ -34,6 +36,8 @@ class EditorApp
     void DrawAnimationEditor();
     void DrawShaderEditor();
     void DrawMaterialGraphEditor();
+    void DrawEffectEditor();
+    void DrawBehaviorTreeEditor();
     void DrawSceneTabs();
     void RecordUndo();
     void Undo();
@@ -102,6 +106,10 @@ class EditorApp
     SkeletalClip m_editSkeletalClip;
     BlendTree1D m_editBlendTree;
     AnimationGraph m_editAnimationGraph;
+    std::string m_openEffectAsset;
+    ParticleEmitterSettings m_editEffect;
+    std::string m_openBehaviorAsset;
+    BehaviorTreeGraph m_editBehaviorGraph;
     bool m_sceneDirty = false;
     double m_lastAutosaveTime = 0.0;
     bool m_lastTitleDirty = false;

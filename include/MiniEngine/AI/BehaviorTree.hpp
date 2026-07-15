@@ -3,6 +3,7 @@
 #include "MiniEngine/Math/Math.hpp"
 #include "MiniEngine/Types.hpp"
 
+#include <filesystem>
 #include <functional>
 #include <memory>
 #include <string>
@@ -121,4 +122,25 @@ class BehaviorTree
     std::unique_ptr<BehaviorNode> m_root;
     Blackboard m_blackboard;
 };
+
+struct BehaviorGraphNode
+{
+    std::uint32_t id = 0;
+    std::string type;
+    std::string label;
+    Vec2 editorPosition{};
+    std::vector<std::uint32_t> children;
+};
+
+class BehaviorTreeGraph
+{
+  public:
+    std::uint32_t root = 0;
+    std::vector<BehaviorGraphNode> nodes;
+    bool IsValid() const;
+    const BehaviorGraphNode *Find(std::uint32_t id) const;
+};
+
+bool SaveBehaviorTreeGraph(const BehaviorTreeGraph &graph, const std::filesystem::path &path);
+bool LoadBehaviorTreeGraph(const std::filesystem::path &path, BehaviorTreeGraph &graph);
 } // namespace MiniEngine

@@ -64,6 +64,9 @@ void NullRenderDevice::DrawInstanced(const std::vector<RenderItem> &)
 void NullRenderDevice::DrawParticles(const std::vector<Particle> &)
 {
 }
+void NullRenderDevice::DrawGpuParticles(const std::vector<GpuParticleEmitter> &)
+{
+}
 void NullRenderDevice::EndFrame()
 {
 }
@@ -414,6 +417,10 @@ void Renderer::RenderFrame(World &world)
         const auto particles = m_vfxSystem->BuildParticleList();
         particleCount = particles.size();
         m_device->DrawParticles(particles);
+        const auto gpuEmitters = m_vfxSystem->BuildGpuEmitterList();
+        for (const auto &emitter : gpuEmitters)
+            particleCount += emitter.settings.maximumParticles;
+        m_device->DrawGpuParticles(gpuEmitters);
     }
     if (m_uiSystem)
     {
