@@ -4,6 +4,7 @@
 #include "MiniEngine/Automation/Automation.hpp"
 #include "MiniEngine/Build/AssetCompiler.hpp"
 #include "MiniEngine/Build/TargetPlatform.hpp"
+#include "MiniEngine/Cinematic/Sequencer.hpp"
 #include "MiniEngine/Core/Config.hpp"
 #include "MiniEngine/Core/CrashReporter.hpp"
 #include "MiniEngine/Core/Module.hpp"
@@ -17,7 +18,9 @@
 #include "MiniEngine/Input/InputSystem.hpp"
 #include "MiniEngine/Localization/Localization.hpp"
 #include "MiniEngine/Math/Math.hpp"
+#include "MiniEngine/Media/ImageSequence.hpp"
 #include "MiniEngine/Navigation/Navigation.hpp"
+#include "MiniEngine/Network/Replication.hpp"
 #include "MiniEngine/Physics/PhysicsWorld.hpp"
 #include "MiniEngine/Platform/Platform.hpp"
 #include "MiniEngine/Project/Project.hpp"
@@ -32,6 +35,7 @@
 #include "MiniEngine/Resource/ResourceManager.hpp"
 #include "MiniEngine/Serialization/Archive.hpp"
 #include "MiniEngine/Task/JobSystem.hpp"
+#include "MiniEngine/Terrain/HeightField.hpp"
 #include "MiniEngine/UI/UISystem.hpp"
 #include "MiniEngine/VFX/ParticleSystem.hpp"
 #include "MiniEngine/World/WorldPartition.hpp"
@@ -597,6 +601,44 @@ int main()
     CHECK(modules.StartupAll());
     modules.ShutdownAll();
     CHECK(moduleEvents == std::vector<std::string>({"start:Core", "start:Gameplay", "stop:Gameplay", "stop:Core"}));
+
+    NetworkSnapshot firstSnapshot{1, 1.0, {{MakeEntity(7, 2), {0, 0, 0}, {}, {1, 0, 0}}}};
+    NetworkSnapshot secondSnapshot{2, 2.0, {{MakeEntity(7, 2), {10, 0, 0}, {}, {1, 0, 0}}}};
+    NetworkSnapshot decodedSnapshot;
+    CHECK(SnapshotCodec::Decode(SnapshotCodec::Encode(firstSnapshot), decodedSnapshot));
+    CHECK(decodedSnapshot.entities.size() == 1 && decodedSnapshot.entities[0].entity == MakeEntity(7, 2));
+    ReplayStream replay;
+    replay.Record(firstSnapshot);
+    replay.Record(secondSnapshot);
+    std::vector<ReplicatedEntityState> sampledStates;
+    CHECK(replay.Sample(1.5, sampledStates) && sampledStates.size() == 1 && std::abs(sampledStates[0].position.x - 5.0f) < 0.001f);
+    CHECK(replay.Save("Saved/Test.replay"));
+    ReplayStream loadedReplay;
+    CHECK(loadedReplay.Load("Saved/Test.replay") && std::abs(loadedReplay.GetDuration() - 1.0) < 0.001);
+
+    TransformTrack transformTrack;
+    transformTrack.AddKey({0.0f, {{0, 0, 0}, {}, {1, 1, 1}}});
+    transformTrack.AddKey({1.0f, {{4, 0, 0}, {}, {1, 1, 1}}});
+    CHECK(std::abs(transformTrack.Sample(0.25f).position.x - 1.0f) < 0.001f);
+    SequencePlayer sequencePlayer;
+    std::vector<std::string> sequenceEvents;
+    sequencePlayer.SetDuration(1.0f);
+    sequencePlayer.SetEvents({{0.5f, "Half"}});
+    sequencePlayer.SetEventCallback([&sequenceEvents](const std::string &name) { sequenceEvents.push_back(name); });
+    sequencePlayer.Play();
+    sequencePlayer.Update(0.75f);
+    CHECK(sequenceEvents == std::vector<std::string>{"Half"} && sequencePlayer.IsPlaying());
+
+    HeightField terrain;
+    CHECK(terrain.Configure(2, 2, 1.0f, {0.0f, 2.0f, 2.0f, 4.0f}));
+    CHECK(std::abs(terrain.SampleHeight(0.5f, 0.5f) - 2.0f) < 0.001f);
+    const auto terrainMesh = terrain.BuildMesh();
+    CHECK(terrainMesh.vertices.size() == 4 && terrainMesh.indices.size() == 6);
+    ImageSequencePlayer imageSequence;
+    CHECK(imageSequence.SetFrames({"frame0.png", "frame1.png", "frame2.png"}, 2.0f));
+    imageSequence.Play();
+    imageSequence.Update(0.6f);
+    CHECK(imageSequence.GetFrameIndex() == 1 && imageSequence.GetCurrentFrame() == "frame1.png");
 
     if (failures == 0)
         std::cout << "All TinyEngine tests passed\n";

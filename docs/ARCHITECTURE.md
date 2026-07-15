@@ -1,6 +1,6 @@
 # TinyEngine 架构说明
 
-本文对应 TinyEngine 0.16.0，最后同步于 2026-07-15。
+本文对应 TinyEngine 0.17.0，最后同步于 2026-07-15。
 
 ## 依赖方向
 
@@ -97,6 +97,10 @@ Assimp 的 CPU/文件转换通过 `AssetImportQueue` 提交到 JobSystem，编�
 
 `WorldPartition` 只负责依据 XZ 距离和迟滞阈值决定 Cell 加载/卸载，具体场景合并通过回调交给游戏或资产层。`ModuleManager` 根据显式依赖拓扑启动，启动失败会逆序回滚；Engine 在核心服务就绪后启动模块，在子系统关闭前逆序停止模块。
 
+联网数据层使用 `TNYNET1` 小端快照保留完整 generation Entity、位置、旋转和速度。`SnapshotBuffer` 按服务器时间排序并对相同实体插值；`ReplayStream` 复用完全相同的快照编码写入 `TNYRPLY1`，避免回放另造一套状态格式。当前没有 Socket/RPC/Ownership/客户端预测，不能据此宣称完整联机后端。
+
+Sequencer 的 Transform Track 与事件 Player 是后端无关的时间采样层；高度场负责采样、法线与静态 Mesh 数据生成；ImageSequencePlayer 只推进帧路径，不在媒体层直接依赖 OpenGL。视频解码、音画同步、地形 LOD/植被和 Sequencer 编辑器仍由后续模块承接。
+
 编辑器属性面板不直接依赖具体组件类型。`ReflectionRegistry` 登记组件存在性、增删回调、字段访问器、枚举项、数值范围和资产类型，Inspector 据此生成通用控件。资产浏览器拖放路径时先经 `AssetRegistry` 校验类型。编辑操作进入序列化快照 Undo 栈并设置脏标记；未保存场景每 30 秒写入项目 `Saved/EditorAutosave.scene`，启动后可显式恢复，正常保存会删除恢复文件。
 
 ## 数据格式与约束
@@ -106,6 +110,7 @@ Assimp 的 CPU/文件转换通过 `AssetImportQueue` 提交到 JobSystem，编�
 - `TinyEnginePlatformCook 1`：平台、配置、纹理/Shader 格式、启动场景和变体数量清单。
 - `TNYTEX1` / `TNYMSH1`：平台 Cook 产出的 Texture/Mesh 小端运行时二进制。
 - `TINYLOC 1`：按 locale/key 组织、支持回退和参数替换的本地化字符串表。
+- `TNYNET1` / `TNYRPLY1`：网络实体快照与复用同一快照格式的离线回放流。
 - `TINYINPUT 1`：逻辑 Axis/Action 到物理输入通道的多重映射。
 - `.mat`：`color`、`metallic`、`roughness`、`emissive`、`texture`、`blend`。
 - `<asset>.meta`：32 位十六进制 GUID、类型、导入时间、设置和依赖。

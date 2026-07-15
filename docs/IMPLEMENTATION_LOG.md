@@ -2,7 +2,7 @@
 
 本文记录本轮开发对 TinyEngine 做过的主要更新，以及各功能采用的简要实现方式。内容按 Git 提交顺序整理，方便以后定位代码、回溯设计和继续开发。
 
-当前引擎版本：0.16.0
+当前引擎版本：0.17.0
 
 参考源码：Unreal Engine 5.3.2
 
@@ -300,6 +300,22 @@
 - 行为组合节点只保存当前子节点索引，终态统一 Reset，避免每帧从根节点重复执行已经完成的 Wait 前置步骤。
 - WorldPartition 通过回调保持对 Scene/Resource 实现的解耦，加载成功才修改 Cell 状态。
 - 模块按注册顺序处理同层依赖，保证结果可复现；依赖决定的先后关系优先于注册顺序。
+
+## 19. 网络快照、回放、Sequencer、地形与媒体基础
+
+更新内容：
+
+- 新增 `SnapshotCodec`、`SnapshotBuffer` 和 `ReplayStream`：网络状态二进制编码、时间插值、64 帧抖动缓冲和回放文件。
+- 新增 Transform Track 与 `SequencePlayer`：关键帧采样、事件派发、播放/暂停/Seek/Stop/Loop。
+- 新增 `HeightField`：规则高度数据、双线性高度、有限差分法线和带 UV/Tangent 的三角网格生成。
+- 新增 `ImageSequencePlayer`：帧率、播放、暂停、Seek、循环和当前帧路径。
+
+实现方式：
+
+- Replay 直接封装 `TNYNET1` 快照，线上和离线状态表示保持一致；SnapshotBuffer 只插值两帧都存在的实体。
+- Sequencer 和媒体播放器不持有 Renderer/World，游戏可将采样结果应用到 ECS，编辑器也可复用同一时间轴。
+- HeightField 输出 `MeshVertex`/Index 数据但不直接创建 GPU 资源，保留 RenderDevice 边界。
+- 当前联网层不含 UDP/RPC/Prediction，媒体不含视频 Codec，地形不含 Chunk LOD；这些能力仍登记在未完成清单。
 
 ## 当前仍未完成
 
