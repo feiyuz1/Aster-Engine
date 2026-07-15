@@ -2,18 +2,18 @@
 
 TinyEngine 是参考 Unreal Engine 5.3.2 模块职责、以 C++17 实现的轻量 3D 引擎。目标不是复制 UE 的 UObject/UHT、完整 RHI 或大型编辑器，而是形成“项目—资产—场景—运行时—渲染—打包—编辑器”的最小可用闭环。
 
-当前版本：0.22.0（全模型骨骼编号与逐实体 Skin Matrix 上传）。
+当前版本：0.23.0（Assimp Skeleton/Clip 自动导入与播放闭环）。
 
 ## 已实现
 
 - 项目与运行时：`.tinyproject`、启动场景、`GameInstance`、`SceneManager`、Play/Stop 隔离、SaveGame、独立 Shipping Game 和 TPAK 启动挂载。
-- 世界：generation Entity、组件查询、父子层级、Active/Tag/Layer、生命周期、Prefab、`TINYSCENE 7`。
+- 世界：generation Entity、组件查询、父子层级、Active/Tag/Layer、生命周期、Prefab、`TINYSCENE 8`。
 - 资产：Assimp 6.0.5 后台模型导入/重导入、进度与取消、稳定 GUID/`.meta`、依赖和导入参数、异步资源、清单增量 Cook、平台 Mesh/Texture 二进制编译、TPAK、VFS。
 - 图片：PPM，以及 Windows WIC 的 PNG/JPG/BMP/TIFF；Radiance HDR 保持线性浮点数据，GPU 使用 RGBA16F。
 - 渲染：SDL2 + OpenGL 3.3、RGBA16F Scene RenderTarget、ACES Tonemap/曝光、FXAA、2048² 方向光 PCF 阴影、最多四盏方向光、程序化天空与 HDR equirect 环境 IBL、完整 PBR 贴图、sRGB/Mipmap、距离 LOD、粗裁剪和透明队列。
 - 材质：文本 PBR 材质、六类贴图、透明模式，以及通过 `parent` 稀疏覆盖参数的材质实例；循环父级会在加载期拒绝。
 - 物理：固定步长、SAP、Box/Sphere/Capsule、Convex/TriangleMesh 包围体、层过滤、Trigger、Raycast/SphereCast/Overlap、连续子步、三轴冲量响应、Distance/Fixed Joint、带接地/碰顶/台阶/地面法线和最大坡度判定的轻量 CharacterController。
-- 动画与音频：Assimp 每顶点四骨骼权重导入、Cook 保留和 OpenGL Skinning 顶点布局；Skeleton/Bone、关键帧采样、蒙皮矩阵和状态机；多 Voice 混音与空间音频。
+- 动画与音频：Assimp 四骨骼权重、层级/Inverse Bind、30 Hz Clip 重采样、Prefab 自动绑定、逐实体 GPU Skinning；关键帧采样和状态机；多 Voice 混音与空间音频。
 - 内容系统：严格 UTF-8 编解码、本地化字符串表/语言回退/参数替换、TTF/OTF 容器校验，以及带发射率、Burst、重力、生命周期曲线和 OpenGL 世界空间 Billboard 的粒子系统。
 - 导航与 AI：可配置代价/障碍的网格 A*、斜向防穿角、Blackboard、Sequence/Selector、Condition/Action 和跨帧 Wait 行为节点。
 - 大世界与模块：带加载/卸载迟滞距离的 World Cell 流送协调器；模块依赖校验、拓扑启动、失败回滚和逆序关闭，并接入 Engine 生命周期。

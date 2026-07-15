@@ -39,8 +39,10 @@ std::string AssetType(const std::string &extension)
         return "Prefab";
     if (extension == ".wav" || extension == ".ogg")
         return "Audio";
-    if (extension == ".anim")
+    if (extension == ".anim" || extension == ".skanim")
         return "Animation";
+    if (extension == ".skeleton")
+        return "Skeleton";
     if (extension == ".input")
         return "Input";
     if (extension == ".ttf" || extension == ".otf")

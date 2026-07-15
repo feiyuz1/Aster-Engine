@@ -2,6 +2,7 @@
 
 #include "MiniEngine/Math/Math.hpp"
 
+#include <filesystem>
 #include <functional>
 #include <memory>
 #include <string>
@@ -50,6 +51,10 @@ class SkeletalClip
 };
 
 std::vector<Mat4> BuildSkinMatrices(const Skeleton &skeleton, const std::vector<BonePose> &localPose);
+bool SaveSkeletonAsset(const Skeleton &skeleton, const std::filesystem::path &path);
+bool LoadSkeletonAsset(const std::filesystem::path &path, Skeleton &skeleton);
+bool SaveSkeletalClipAsset(const SkeletalClip &clip, const std::filesystem::path &path);
+bool LoadSkeletalClipAsset(const std::filesystem::path &path, SkeletalClip &clip);
 
 class AnimationStateMachine
 {

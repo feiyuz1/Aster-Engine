@@ -1,4 +1,5 @@
 #include "MiniEngine/Import/AssimpImporter.hpp"
+#include "MiniEngine/Animation/SkeletalAnimation.hpp"
 
 #include "MiniEngine/ECS/Components.hpp"
 #include "MiniEngine/ECS/ECS.hpp"
@@ -21,6 +22,7 @@
 #include <iomanip>
 #include <sstream>
 #include <unordered_map>
+#include <unordered_set>
 
 namespace MiniEngine
 {
@@ -211,6 +213,52 @@ Vec3 RadiansToDegrees(const aiVector3D &value)
 {
     return {value.x * 180.0f / Pi, value.y * 180.0f / Pi, value.z * 180.0f / Pi};
 }
+
+aiVector3D SampleVectorKeys(const aiVectorKey *keys, const unsigned int count, const double time, const aiVector3D &fallback)
+{
+    if (!keys || count == 0)
+        return fallback;
+    unsigned int right = 0;
+    while (right < count && keys[right].mTime < time)
+        ++right;
+    if (right == 0)
+        return keys[0].mValue;
+    if (right == count)
+        return keys[count - 1].mValue;
+    const auto &leftKey = keys[right - 1], &rightKey = keys[right];
+    const float alpha =
+        rightKey.mTime > leftKey.mTime ? static_cast<float>((time - leftKey.mTime) / (rightKey.mTime - leftKey.mTime)) : 0.0f;
+    return leftKey.mValue + (rightKey.mValue - leftKey.mValue) * alpha;
+}
+
+aiQuaternion SampleRotationKeys(const aiQuatKey *keys, const unsigned int count, const double time, const aiQuaternion &fallback)
+{
+    if (!keys || count == 0)
+        return fallback;
+    unsigned int right = 0;
+    while (right < count && keys[right].mTime < time)
+        ++right;
+    if (right == 0)
+        return keys[0].mValue;
+    if (right == count)
+        return keys[count - 1].mValue;
+    aiQuaternion result;
+    const auto &leftKey = keys[right - 1], &rightKey = keys[right];
+    const float alpha =
+        rightKey.mTime > leftKey.mTime ? static_cast<float>((time - leftKey.mTime) / (rightKey.mTime - leftKey.mTime)) : 0.0f;
+    aiQuaternion::Interpolate(result, leftKey.mValue, rightKey.mValue, alpha);
+    return result.Normalize();
+}
+
+Vec3 QuaternionToEulerDegrees(const aiQuaternion &value)
+{
+    const float sinX = 2.0f * (value.w * value.x + value.y * value.z);
+    const float cosX = 1.0f - 2.0f * (value.x * value.x + value.y * value.y);
+    const float sinY = std::clamp(2.0f * (value.w * value.y - value.z * value.x), -1.0f, 1.0f);
+    const float sinZ = 2.0f * (value.w * value.z + value.x * value.y);
+    const float cosZ = 1.0f - 2.0f * (value.y * value.y + value.z * value.z);
+    return {std::atan2(sinX, cosX) * 180.0f / Pi, std::asin(sinY) * 180.0f / Pi, std::atan2(sinZ, cosZ) * 180.0f / Pi};
+}
 } // namespace
 
 bool AssimpImporter::CanImport(const std::filesystem::path &source)
@@ -271,13 +319,104 @@ ModelImportResult AssimpImporter::ImportModel(const std::filesystem::path &sourc
     }
 
     const std::string baseName = SafeName(source.stem().string(), "Model");
-    std::unordered_map<std::string, unsigned int> globalBones;
+    std::unordered_set<std::string> boneNames;
     for (unsigned int meshIndex = 0; meshIndex < scene->mNumMeshes; ++meshIndex)
         for (unsigned int boneIndex = 0; boneIndex < scene->mMeshes[meshIndex]->mNumBones; ++boneIndex)
+            boneNames.insert(scene->mMeshes[meshIndex]->mBones[boneIndex]->mName.C_Str());
+    std::unordered_map<std::string, unsigned int> globalBones;
+    std::function<void(const aiNode &)> indexBones = [&](const aiNode &node) {
+        const std::string name = node.mName.C_Str();
+        if (boneNames.count(name) && globalBones.size() < 64)
+            globalBones[name] = static_cast<unsigned int>(globalBones.size());
+        for (unsigned int index = 0; index < node.mNumChildren; ++index)
+            indexBones(*node.mChildren[index]);
+    };
+    indexBones(*scene->mRootNode);
+    std::filesystem::path skeletonPath;
+    Skeleton importedSkeleton;
+    if (!globalBones.empty())
+    {
+        Skeleton &skeleton = importedSkeleton;
+        skeleton.bones.resize(globalBones.size());
+        std::unordered_map<std::string, Mat4> inverseBinds;
+        for (unsigned int meshIndex = 0; meshIndex < scene->mNumMeshes; ++meshIndex)
+            for (unsigned int boneIndex = 0; boneIndex < scene->mMeshes[meshIndex]->mNumBones; ++boneIndex)
+            {
+                const aiBone &sourceBone = *scene->mMeshes[meshIndex]->mBones[boneIndex];
+                Mat4 matrix;
+                for (int row = 0; row < 4; ++row)
+                    for (int column = 0; column < 4; ++column)
+                        matrix.At(row, column) = sourceBone.mOffsetMatrix[row][column];
+                inverseBinds[sourceBone.mName.C_Str()] = matrix;
+            }
+        for (const auto &entry : globalBones)
         {
-            const std::string name = scene->mMeshes[meshIndex]->mBones[boneIndex]->mName.C_Str();
-            if (!globalBones.count(name) && globalBones.size() < 64)
-                globalBones[name] = static_cast<unsigned int>(globalBones.size());
+            Bone &bone = skeleton.bones[entry.second];
+            bone.name = entry.first;
+            bone.inverseBind = inverseBinds.count(entry.first) ? inverseBinds.at(entry.first) : Mat4::Identity();
+            const aiNode *node = scene->mRootNode->FindNode(entry.first.c_str());
+            for (node = node ? node->mParent : nullptr; node; node = node->mParent)
+                if (const auto parent = globalBones.find(node->mName.C_Str()); parent != globalBones.end())
+                {
+                    bone.parent = static_cast<int>(parent->second);
+                    break;
+                }
+        }
+        skeletonPath = outputDirectory / (baseName + ".skeleton");
+        if (!SaveSkeletonAsset(skeleton, skeletonPath))
+        {
+            result.error = "Failed to write skeleton";
+            return result;
+        }
+        result.assets.push_back({"Skeleton", skeletonPath});
+    }
+    std::vector<std::filesystem::path> skeletalClipPaths;
+    if (!importedSkeleton.bones.empty())
+        for (unsigned int animationIndex = 0; animationIndex < scene->mNumAnimations; ++animationIndex)
+        {
+            const aiAnimation &animation = *scene->mAnimations[animationIndex];
+            const double ticksPerSecond = animation.mTicksPerSecond > 0.0 ? animation.mTicksPerSecond : 25.0;
+            SkeletalClip clip;
+            clip.name = SafeName(animation.mName.C_Str(), "Animation" + std::to_string(animationIndex));
+            clip.duration = static_cast<float>(animation.mDuration / ticksPerSecond);
+            clip.looping = true;
+            std::unordered_map<std::string, const aiNodeAnim *> channels;
+            for (unsigned int channelIndex = 0; channelIndex < animation.mNumChannels; ++channelIndex)
+                channels[animation.mChannels[channelIndex]->mNodeName.C_Str()] = animation.mChannels[channelIndex];
+            const unsigned int frameCount = std::max(2u, static_cast<unsigned int>(std::ceil(clip.duration * 30.0f)) + 1u);
+            for (unsigned int frame = 0; frame < frameCount; ++frame)
+            {
+                const float seconds = std::min(clip.duration, static_cast<float>(frame) / 30.0f);
+                SkeletalKeyframe key;
+                key.time = seconds;
+                key.localPose.resize(importedSkeleton.bones.size());
+                for (std::size_t boneIndex = 0; boneIndex < importedSkeleton.bones.size(); ++boneIndex)
+                {
+                    const Bone &bone = importedSkeleton.bones[boneIndex];
+                    const aiNode *node = scene->mRootNode->FindNode(bone.name.c_str());
+                    aiVector3D scale{1, 1, 1}, position{};
+                    aiQuaternion rotation;
+                    if (node)
+                        node->mTransformation.Decompose(scale, rotation, position);
+                    if (const auto channel = channels.find(bone.name); channel != channels.end())
+                    {
+                        const double ticks = seconds * ticksPerSecond;
+                        position = SampleVectorKeys(channel->second->mPositionKeys, channel->second->mNumPositionKeys, ticks, position);
+                        scale = SampleVectorKeys(channel->second->mScalingKeys, channel->second->mNumScalingKeys, ticks, scale);
+                        rotation = SampleRotationKeys(channel->second->mRotationKeys, channel->second->mNumRotationKeys, ticks, rotation);
+                    }
+                    key.localPose[boneIndex] = {{position.x * options.scale, position.y * options.scale, position.z * options.scale},
+                                                QuaternionToEulerDegrees(rotation),
+                                                {scale.x, scale.y, scale.z}};
+                }
+                clip.keyframes.push_back(std::move(key));
+            }
+            const auto clipPath = outputDirectory / (baseName + "_" + clip.name + ".skanim");
+            if (SaveSkeletalClipAsset(clip, clipPath))
+            {
+                skeletalClipPaths.push_back(clipPath);
+                result.assets.push_back({"Animation", clipPath});
+            }
         }
     std::vector<std::filesystem::path> materialPaths(scene->mNumMaterials);
     for (unsigned int index = 0; index < scene->mNumMaterials; ++index)
@@ -338,6 +477,13 @@ ModelImportResult AssimpImporter::ImportModel(const std::filesystem::path &sourc
                 target,
                 MeshComponent{ResourcePath(meshPaths[meshIndex], outputDirectory, options).generic_string(),
                               material.empty() ? std::string{} : ResourcePath(material, outputDirectory, options).generic_string()});
+            if (!skeletonPath.empty() && !skeletalClipPaths.empty())
+            {
+                AnimationComponent animation;
+                animation.clipPath = ResourcePath(skeletalClipPaths.front(), outputDirectory, options).generic_string();
+                animation.skeletonPath = ResourcePath(skeletonPath, outputDirectory, options).generic_string();
+                prefabWorld.AddComponent(target, std::move(animation));
+            }
         }
         for (unsigned int index = 0; index < node.mNumChildren; ++index)
             importNode(*node.mChildren[index], entity);

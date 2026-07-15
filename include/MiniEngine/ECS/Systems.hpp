@@ -1,5 +1,6 @@
 #pragma once
 
+#include "MiniEngine/Animation/SkeletalAnimation.hpp"
 #include "MiniEngine/ECS/ECS.hpp"
 
 #include <string>
@@ -34,5 +35,7 @@ class AnimationSystem final : public System
     };
     const Clip *LoadClip(const std::string &path);
     std::unordered_map<std::string, Clip> m_clips;
+    std::unordered_map<std::string, Skeleton> m_skeletons;
+    std::unordered_map<std::string, SkeletalClip> m_skeletalClips;
 };
 } // namespace MiniEngine

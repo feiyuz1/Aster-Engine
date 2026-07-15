@@ -1,7 +1,10 @@
 #include "MiniEngine/Animation/SkeletalAnimation.hpp"
+#include "MiniEngine/Platform/Platform.hpp"
 
 #include <algorithm>
 #include <cmath>
+#include <iomanip>
+#include <sstream>
 
 namespace MiniEngine
 {
@@ -85,6 +88,96 @@ std::vector<Mat4> BuildSkinMatrices(const Skeleton &skeleton, const std::vector<
         skin[index] = world[index] * skeleton.bones[index].inverseBind;
     }
     return skin;
+}
+
+bool SaveSkeletonAsset(const Skeleton &skeleton, const std::filesystem::path &path)
+{
+    if (!skeleton.IsValid())
+        return false;
+    std::ostringstream output;
+    output << "TINY_SKELETON 1\n";
+    for (const auto &bone : skeleton.bones)
+    {
+        output << "bone " << std::quoted(bone.name) << ' ' << bone.parent;
+        for (const float value : bone.inverseBind.data)
+            output << ' ' << value;
+        output << '\n';
+    }
+    return PlatformFile::WriteAllText(path, output.str());
+}
+
+bool LoadSkeletonAsset(const std::filesystem::path &path, Skeleton &skeleton)
+{
+    std::istringstream input(PlatformFile::ReadAllText(path));
+    std::string magic, token;
+    int version = 0;
+    if (!(input >> magic >> version) || magic != "TINY_SKELETON" || version != 1)
+        return false;
+    Skeleton result;
+    while (input >> token)
+    {
+        if (token != "bone")
+            return false;
+        Bone bone;
+        if (!(input >> std::quoted(bone.name) >> bone.parent))
+            return false;
+        for (float &value : bone.inverseBind.data)
+            if (!(input >> value))
+                return false;
+        result.bones.push_back(std::move(bone));
+    }
+    if (!result.IsValid())
+        return false;
+    skeleton = std::move(result);
+    return true;
+}
+
+bool SaveSkeletalClipAsset(const SkeletalClip &clip, const std::filesystem::path &path)
+{
+    if (clip.keyframes.empty() || !clip.IsValid(clip.keyframes.front().localPose.size()))
+        return false;
+    std::ostringstream output;
+    output << "TINY_SKANIM 1\nclip " << std::quoted(clip.name) << ' ' << clip.duration << ' ' << clip.looping << ' '
+           << clip.keyframes.front().localPose.size() << '\n';
+    for (const auto &key : clip.keyframes)
+    {
+        output << "key " << key.time << '\n';
+        for (const auto &pose : key.localPose)
+            output << "pose " << pose.position.x << ' ' << pose.position.y << ' ' << pose.position.z << ' ' << pose.rotation.x << ' '
+                   << pose.rotation.y << ' ' << pose.rotation.z << ' ' << pose.scale.x << ' ' << pose.scale.y << ' ' << pose.scale.z
+                   << '\n';
+    }
+    return PlatformFile::WriteAllText(path, output.str());
+}
+
+bool LoadSkeletalClipAsset(const std::filesystem::path &path, SkeletalClip &clip)
+{
+    std::istringstream input(PlatformFile::ReadAllText(path));
+    std::string magic, token;
+    int version = 0;
+    std::size_t boneCount = 0;
+    SkeletalClip result;
+    if (!(input >> magic >> version >> token >> std::quoted(result.name) >> result.duration >> result.looping >> boneCount) ||
+        magic != "TINY_SKANIM" || version != 1 || token != "clip" || boneCount > 64)
+        return false;
+    while (input >> token)
+    {
+        if (token != "key")
+            return false;
+        SkeletalKeyframe key;
+        input >> key.time;
+        key.localPose.resize(boneCount);
+        for (auto &pose : key.localPose)
+            if (!(input >> token >> pose.position.x >> pose.position.y >> pose.position.z >> pose.rotation.x >> pose.rotation.y >>
+                  pose.rotation.z >> pose.scale.x >> pose.scale.y >> pose.scale.z) ||
+                token != "pose")
+                return false;
+        result.keyframes.push_back(std::move(key));
+    }
+    if (!result.IsValid(boneCount))
+        return false;
+    clip = std::move(result);
+    return true;
 }
 
 bool AnimationStateMachine::AddState(std::string name, std::shared_ptr<SkeletalClip> clip)

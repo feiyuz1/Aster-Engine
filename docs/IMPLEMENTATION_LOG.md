@@ -2,7 +2,7 @@
 
 本文记录本轮开发对 TinyEngine 做过的主要更新，以及各功能采用的简要实现方式。内容按 Git 提交顺序整理，方便以后定位代码、回溯设计和继续开发。
 
-当前引擎版本：0.22.0
+当前引擎版本：0.23.0
 
 参考源码：Unreal Engine 5.3.2
 
@@ -362,6 +362,15 @@
 - AnimationComponent 保存运行时 Skin Matrices；Renderer 将其复制进对应实体 RenderItem。
 - OpenGL 每次 Draw 上传该实体的 Bone Matrix，不足 64 根的位置补 Identity，因此静态/蒙皮实体可共用 Shader。
 - 当前仍需输出 Skeleton 层级、Inverse Bind 和 Assimp Clip，才能由导入动画自动填充这些矩阵。
+
+## 25. Assimp Skeleton/Clip 自动播放闭环
+
+- 新增 `TINY_SKELETON 1` 和 `TINY_SKANIM 1` 保存/加载，严格校验层级、骨骼数和 Pose 数。
+- Assimp 按源节点树建立骨骼父子关系，收集 Offset Matrix 作为 Inverse Bind。
+- 每条 Assimp Animation 以 30 Hz 插值重采样 Position/Quaternion/Scale，输出独立 `.skanim`。
+- 导入 Prefab 的蒙皮 Mesh 自动添加 AnimationComponent，并绑定首个 Clip 与 Skeleton。
+- AnimationSystem 缓存资产、逐帧采样 Local Pose、构建 Skin Matrices，再沿 RenderItem/OpenGL 通路上传。
+- 场景升级到 `TINYSCENE 8` 持久化 Skeleton 路径，继续兼容 1–7。
 
 ## 当前仍未完成
 

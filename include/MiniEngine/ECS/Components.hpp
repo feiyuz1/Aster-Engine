@@ -155,6 +155,7 @@ struct AnimationComponent
     float blendDuration = 0.0f;
     float blendTime = 0.0f;
     bool rootMotion = false;
+    std::string skeletonPath;
     std::vector<Mat4> skinMatrices;
 };
 

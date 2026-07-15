@@ -63,6 +63,36 @@ void AnimationSystem::Update(World &world, const float deltaTime)
                                                                                                   AnimationComponent &animation) {
         if (!animation.playing || animation.clipPath.empty())
             return;
+        if (!animation.skeletonPath.empty())
+        {
+            auto skeleton = m_skeletons.find(animation.skeletonPath);
+            if (skeleton == m_skeletons.end())
+            {
+                Skeleton loaded;
+                if (!LoadSkeletonAsset(animation.skeletonPath, loaded))
+                    return;
+                skeleton = m_skeletons.emplace(animation.skeletonPath, std::move(loaded)).first;
+            }
+            auto skeletalClip = m_skeletalClips.find(animation.clipPath);
+            if (skeletalClip == m_skeletalClips.end())
+            {
+                SkeletalClip loaded;
+                if (!LoadSkeletalClipAsset(animation.clipPath, loaded))
+                    return;
+                skeletalClip = m_skeletalClips.emplace(animation.clipPath, std::move(loaded)).first;
+            }
+            animation.time += deltaTime * animation.speed;
+            if (animation.loop && skeletalClip->second.duration > 0.0f)
+                animation.time = std::fmod(std::max(0.0f, animation.time), skeletalClip->second.duration);
+            else if (animation.time >= skeletalClip->second.duration)
+            {
+                animation.time = skeletalClip->second.duration;
+                animation.playing = false;
+            }
+            animation.skinMatrices =
+                BuildSkinMatrices(skeleton->second, skeletalClip->second.Sample(animation.time, skeleton->second.bones.size()));
+            return;
+        }
         const Clip *clip = LoadClip(animation.clipPath);
         if (!clip || clip->keys.empty() || clip->duration <= 0.0f)
             return;
