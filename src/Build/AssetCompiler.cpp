@@ -78,7 +78,7 @@ AssetCompileResult PlatformAssetCompiler::Compile(const std::filesystem::path &s
             result.error = mesh.GetError();
             return result;
         }
-        writer.WriteBytes("TNYMSH1\0", 8);
+        writer.WriteBytes("TNYMSH2\0", 8);
         writer.WriteU64(static_cast<std::uint64_t>(mesh.GetVertices().size()));
         writer.WriteU64(static_cast<std::uint64_t>(mesh.GetIndices().size()));
         for (const auto &vertex : mesh.GetVertices())
@@ -94,6 +94,9 @@ AssetCompileResult PlatformAssetCompiler::Compile(const std::filesystem::path &s
             writer.WriteFloat(vertex.tangent.x);
             writer.WriteFloat(vertex.tangent.y);
             writer.WriteFloat(vertex.tangent.z);
+            for (const float value : {vertex.boneIndices.x, vertex.boneIndices.y, vertex.boneIndices.z, vertex.boneIndices.w,
+                                      vertex.boneWeights.x, vertex.boneWeights.y, vertex.boneWeights.z, vertex.boneWeights.w})
+                writer.WriteFloat(value);
         }
         for (const auto index : mesh.GetIndices())
             writer.WriteU32(index);

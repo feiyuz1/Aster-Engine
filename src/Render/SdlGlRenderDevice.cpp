@@ -38,6 +38,9 @@ constexpr const char *VertexShaderSource = R"GLSL(
             layout(location = 0) in vec3 aPosition;
             layout(location = 1) in vec3 aNormal;
             layout(location = 2) in vec2 aUv;
+            layout(location = 4) in vec4 aBoneIndices;
+            layout(location = 5) in vec4 aBoneWeights;
+            uniform mat4 uBones[64];
             uniform mat4 uMvp;
             uniform mat4 uModel;
             uniform mat4 uLightViewProjection;
@@ -47,7 +50,10 @@ constexpr const char *VertexShaderSource = R"GLSL(
             out vec4 vLightSpace;
             void main()
             {
-                gl_Position = uMvp * vec4(aPosition, 1.0);
+                float totalWeight = dot(aBoneWeights, vec4(1.0));
+                mat4 skin = mat4(1.0);
+                if (totalWeight > 0.0001) skin = uBones[int(aBoneIndices.x)] * aBoneWeights.x + uBones[int(aBoneIndices.y)] * aBoneWeights.y + uBones[int(aBoneIndices.z)] * aBoneWeights.z + uBones[int(aBoneIndices.w)] * aBoneWeights.w;
+                gl_Position = uMvp * skin * vec4(aPosition, 1.0);
                 vNormal = normalize(mat3(uModel) * aNormal);
                 vWorldPosition = vec3(uModel * vec4(aPosition, 1.0));
                 vLightSpace = uLightViewProjection * vec4(vWorldPosition, 1.0);
@@ -301,6 +307,7 @@ struct SdlGlRenderDevice::Impl
     bool previousUiNext = false, previousUiAccept = false;
     SDL_GameController *controller = nullptr;
     GLint mvpLocation = -1, modelLocation = -1, lightViewProjectionLocation = -1, baseColorLocation = -1;
+    GLint bonesLocation = -1;
     GLint metallicLocation = -1, roughnessLocation = -1, emissiveLocation = -1, cameraPositionLocation = -1;
     GLint lightDirectionLocation = -1, lightColorLocation = -1, lightIntensityLocation = -1;
     GLint textureLocation = -1, hasTextureLocation = -1, shadowMapLocation = -1;
@@ -578,6 +585,7 @@ struct SdlGlRenderDevice::Impl
         program = candidate;
         lastShaderError.clear();
         mvpLocation = GetUniformLocation(program, "uMvp");
+        bonesLocation = GetUniformLocation(program, "uBones");
         modelLocation = GetUniformLocation(program, "uModel");
         lightViewProjectionLocation = GetUniformLocation(program, "uLightViewProjection");
         baseColorLocation = GetUniformLocation(program, "uBaseColor");
@@ -782,6 +790,10 @@ struct SdlGlRenderDevice::Impl
         EnableVertexAttribArray(2);
         VertexAttribPointer(3, 3, GL_FLOAT, GL_FALSE, sizeof(MeshVertex), reinterpret_cast<void *>(offsetof(MeshVertex, tangent)));
         EnableVertexAttribArray(3);
+        VertexAttribPointer(4, 4, GL_FLOAT, GL_FALSE, sizeof(MeshVertex), reinterpret_cast<void *>(offsetof(MeshVertex, boneIndices)));
+        EnableVertexAttribArray(4);
+        VertexAttribPointer(5, 4, GL_FLOAT, GL_FALSE, sizeof(MeshVertex), reinterpret_cast<void *>(offsetof(MeshVertex, boneWeights)));
+        EnableVertexAttribArray(5);
         BindVertexArray(0);
         mesh.indexCount = static_cast<GLsizei>(indices.size());
         mesh.byteSize = requiredBytes;
@@ -1229,6 +1241,10 @@ void SdlGlRenderDevice::Draw(const RenderItem &item)
     const float roughness = item.material ? item.material->GetRoughness() : 0.7f;
     const Vec3 emissive = item.material ? item.material->GetEmissive() : Vec3{};
     m_impl->UniformMatrix4fv(m_impl->mvpLocation, 1, GL_FALSE, mvp.Data());
+    std::array<Mat4, 64> identityBones;
+    for (auto &bone : identityBones)
+        bone = Mat4::Identity();
+    m_impl->UniformMatrix4fv(m_impl->bonesLocation, static_cast<GLsizei>(identityBones.size()), GL_FALSE, identityBones[0].Data());
     m_impl->UniformMatrix4fv(m_impl->modelLocation, 1, GL_FALSE, item.model.Data());
     m_impl->Uniform4f(m_impl->baseColorLocation, color.x, color.y, color.z, color.w);
     m_impl->Uniform1f(m_impl->metallicLocation, metallic);

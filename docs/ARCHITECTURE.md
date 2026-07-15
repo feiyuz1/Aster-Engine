@@ -1,6 +1,6 @@
 # TinyEngine 架构说明
 
-本文对应 TinyEngine 0.20.0，最后同步于 2026-07-15。
+本文对应 TinyEngine 0.21.0，最后同步于 2026-07-15。
 
 ## 依赖方向
 
@@ -108,7 +108,7 @@ Sequencer 的 Transform Track 与事件 Player 是后端无关的时间采样层
 - `TINYSCENE 7`：场景和 Prefab 文本格式，增加 Pawn/CharacterController，并继续读取 1–6 版。
 - `TINYARCHIVE`：带格式名、版本号和有序字段的通用文本 Archive；二进制 Archive 固定使用小端编码和有界字符串。
 - `TinyEnginePlatformCook 1`：平台、配置、纹理/Shader 格式、启动场景和变体数量清单。
-- `TNYTEX1` / `TNYMSH1`：平台 Cook 产出的 Texture/Mesh 小端运行时二进制。
+- `TNYTEX1` / `TNYMSH2`：平台 Cook 产出的 Texture/Mesh 小端运行时二进制；Mesh v2 增加四骨骼索引和归一化权重，并兼容读取 v1。
 - `TINYLOC 1`：按 locale/key 组织、支持回退和参数替换的本地化字符串表。
 - `TNYNET1` / `TNYRPLY1`：网络实体快照与复用同一快照格式的离线回放流。
 - `TINYINPUT 1`：逻辑 Axis/Action 到物理输入通道的多重映射。

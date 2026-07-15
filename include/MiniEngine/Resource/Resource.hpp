@@ -72,6 +72,8 @@ struct MeshVertex
     Vec3 normal{0.0f, 0.0f, 1.0f};
     Vec2 uv;
     Vec3 tangent{1.0f, 0.0f, 0.0f};
+    Vec4 boneIndices{};
+    Vec4 boneWeights{};
 };
 
 class MeshResource final : public Resource

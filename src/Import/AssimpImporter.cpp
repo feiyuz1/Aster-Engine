@@ -62,6 +62,43 @@ bool WriteMesh(const aiMesh &mesh, const std::filesystem::path &path, const floa
         const aiVector3D value = mesh.HasNormals() ? mesh.mNormals[index] : aiVector3D{0, 0, 1};
         out << "vn " << value.x << ' ' << value.y << ' ' << value.z << '\n';
     }
+    struct Skin
+    {
+        float indices[4]{};
+        float weights[4]{};
+    };
+    std::vector<Skin> skin(mesh.mNumVertices);
+    for (unsigned int boneIndex = 0; boneIndex < mesh.mNumBones && boneIndex < 64; ++boneIndex)
+        for (unsigned int weightIndex = 0; weightIndex < mesh.mBones[boneIndex]->mNumWeights; ++weightIndex)
+        {
+            const auto &weight = mesh.mBones[boneIndex]->mWeights[weightIndex];
+            if (weight.mVertexId >= skin.size())
+                continue;
+            auto &vertex = skin[weight.mVertexId];
+            for (int slot = 0; slot < 4; ++slot)
+                if (weight.mWeight > vertex.weights[slot])
+                {
+                    for (int move = 3; move > slot; --move)
+                    {
+                        vertex.weights[move] = vertex.weights[move - 1];
+                        vertex.indices[move] = vertex.indices[move - 1];
+                    }
+                    vertex.weights[slot] = weight.mWeight;
+                    vertex.indices[slot] = static_cast<float>(boneIndex);
+                    break;
+                }
+        }
+    for (unsigned int index = 0; index < mesh.mNumVertices; ++index)
+    {
+        const float total = skin[index].weights[0] + skin[index].weights[1] + skin[index].weights[2] + skin[index].weights[3];
+        if (total > 0.0f)
+            for (float &weight : skin[index].weights)
+                weight /= total;
+        out << "vw " << index + 1;
+        for (int slot = 0; slot < 4; ++slot)
+            out << ' ' << skin[index].indices[slot] << ' ' << skin[index].weights[slot];
+        out << '\n';
+    }
     for (unsigned int faceIndex = 0; faceIndex < mesh.mNumFaces; ++faceIndex)
     {
         const aiFace &face = mesh.mFaces[faceIndex];

@@ -376,7 +376,9 @@ bool MeshResource::Load(const std::string &path)
 {
     MarkLoading(path);
     const auto bytes = PlatformFile::ReadAllBytes(path);
-    if (bytes.size() >= 8 && std::equal(bytes.begin(), bytes.begin() + 8, "TNYMSH1\0"))
+    const bool compiledMeshV1 = bytes.size() >= 8 && std::equal(bytes.begin(), bytes.begin() + 8, "TNYMSH1\0");
+    const bool compiledMeshV2 = bytes.size() >= 8 && std::equal(bytes.begin(), bytes.begin() + 8, "TNYMSH2\0");
+    if (compiledMeshV1 || compiledMeshV2)
     {
         BinaryReader reader(bytes);
         char signature[8]{};
@@ -396,7 +398,11 @@ bool MeshResource::Load(const std::string &path)
             if (!reader.ReadFloat(vertex.position.x) || !reader.ReadFloat(vertex.position.y) || !reader.ReadFloat(vertex.position.z) ||
                 !reader.ReadFloat(vertex.normal.x) || !reader.ReadFloat(vertex.normal.y) || !reader.ReadFloat(vertex.normal.z) ||
                 !reader.ReadFloat(vertex.uv.x) || !reader.ReadFloat(vertex.uv.y) || !reader.ReadFloat(vertex.tangent.x) ||
-                !reader.ReadFloat(vertex.tangent.y) || !reader.ReadFloat(vertex.tangent.z))
+                !reader.ReadFloat(vertex.tangent.y) || !reader.ReadFloat(vertex.tangent.z) ||
+                (compiledMeshV2 && (!reader.ReadFloat(vertex.boneIndices.x) || !reader.ReadFloat(vertex.boneIndices.y) ||
+                                    !reader.ReadFloat(vertex.boneIndices.z) || !reader.ReadFloat(vertex.boneIndices.w) ||
+                                    !reader.ReadFloat(vertex.boneWeights.x) || !reader.ReadFloat(vertex.boneWeights.y) ||
+                                    !reader.ReadFloat(vertex.boneWeights.z) || !reader.ReadFloat(vertex.boneWeights.w))))
             {
                 SetState(ResourceState::Failed, "Truncated compiled mesh: " + path);
                 return false;
@@ -426,6 +432,8 @@ bool MeshResource::Load(const std::string &path)
     std::vector<Vec3> positions;
     std::vector<Vec3> normals;
     std::vector<Vec2> uvs;
+    std::vector<Vec4> boneIndices;
+    std::vector<Vec4> boneWeights;
     std::string line;
     m_vertices.clear();
     m_indices.clear();
@@ -460,6 +468,24 @@ bool MeshResource::Load(const std::string &path)
             Vec3 value;
             if (row >> value.x >> value.y >> value.z)
                 normals.push_back(Normalize(value));
+        }
+        else if (type == "vw")
+        {
+            int vertex = 0;
+            Vec4 indices{}, weights{};
+            if (row >> vertex >> indices.x >> weights.x >> indices.y >> weights.y >> indices.z >> weights.z >> indices.w >> weights.w)
+            {
+                if (boneIndices.size() < positions.size())
+                {
+                    boneIndices.resize(positions.size());
+                    boneWeights.resize(positions.size());
+                }
+                if (vertex > 0 && static_cast<std::size_t>(vertex) <= positions.size())
+                {
+                    boneIndices[vertex - 1] = indices;
+                    boneWeights[vertex - 1] = weights;
+                }
+            }
         }
         else if (type == "f")
         {
@@ -512,7 +538,13 @@ bool MeshResource::Load(const std::string &path)
                     const Vec3 normal = triangle[corner].normal >= 0 ? normals[triangle[corner].normal] : faceNormal;
                     const Vec2 uv =
                         triangle[corner].uv >= 0 ? uvs[triangle[corner].uv] : Vec2{corner == 1 ? 1.0f : 0.0f, corner == 2 ? 1.0f : 0.0f};
-                    m_vertices.push_back({trianglePositions[corner], normal, uv});
+                    MeshVertex vertex{trianglePositions[corner], normal, uv};
+                    if (static_cast<std::size_t>(triangle[corner].position) < boneWeights.size())
+                    {
+                        vertex.boneIndices = boneIndices[triangle[corner].position];
+                        vertex.boneWeights = boneWeights[triangle[corner].position];
+                    }
+                    m_vertices.push_back(vertex);
                 }
                 m_indices.insert(m_indices.end(), {base, base + 1, base + 2});
             }

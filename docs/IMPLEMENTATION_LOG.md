@@ -2,7 +2,7 @@
 
 本文记录本轮开发对 TinyEngine 做过的主要更新，以及各功能采用的简要实现方式。内容按 Git 提交顺序整理，方便以后定位代码、回溯设计和继续开发。
 
-当前引擎版本：0.20.0
+当前引擎版本：0.21.0
 
 参考源码：Unreal Engine 5.3.2
 
@@ -348,6 +348,13 @@
 - CharacterController 返回 GroundNormal，并按可配置最大坡度角拒绝不可行走表面。
 - Hierarchy 与 Scene View 支持 Ctrl 增删选择集，Inspector 标识主实体，Delete 对选择集批量删除。
 - 测试覆盖微软雅黑中文“引”字栅格化；Editor 和 Tests 构建通过。
+
+## 23. Assimp 权重与 GPU Skinning 数据通路
+
+- Assimp 为每个顶点筛选权重最高的四根骨骼并归一化，写入 `vw` 记录。
+- MeshVertex、文本加载器和 `TNYMSH2` Cook 格式保留 BoneIndices/BoneWeights，同时兼容 `TNYMSH1`。
+- OpenGL VAO 增加 location 4/5，默认 Shader 在 GPU 计算四骨骼混合矩阵。
+- 当前上传 64 个 Identity Bind Pose，保证旧网格和权重网格兼容；下一步把 AnimationStateMachine 产出的 Skin Matrices 接入 RenderItem。
 
 ## 当前仍未完成
 

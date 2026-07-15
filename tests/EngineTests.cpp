@@ -363,6 +363,13 @@ int main()
     CHECK(materialInstance.GetParentPath() == "Saved/TestPbr.mat" && std::abs(materialInstance.GetBaseColor().x - 0.9f) < 0.001f &&
           std::abs(materialInstance.GetMetallic() - 0.8f) < 0.001f && std::abs(materialInstance.GetRoughness() - 0.5f) < 0.001f &&
           materialInstance.GetNormalTexturePath() == "Saved/Test.png");
+    CHECK(PlatformFile::WriteAllText("Saved/Skinned.mesh",
+                                     "TINY_MESH 3\nv 0 0 0\nv 1 0 0\nv 0 1 0\nvt 0 0\nvt 1 0\nvt 0 1\nvn 0 0 1\nvn 0 0 1\nvn 0 0 1\n"
+                                     "vw 1 2 1 0 0 0 0 0 0\nvw 2 2 0.75 1 0.25 0 0 0 0\nvw 3 1 1 0 0 0 0 0 0\nf 1/1/1 2/2/2 3/3/3\n"));
+    MeshResource skinnedMesh;
+    CHECK(skinnedMesh.Load("Saved/Skinned.mesh") && skinnedMesh.GetVertices().size() == 3);
+    CHECK(std::abs(skinnedMesh.GetVertices()[1].boneWeights.x - 0.75f) < 0.001f &&
+          std::abs(skinnedMesh.GetVertices()[1].boneIndices.y - 1.0f) < 0.001f);
     ShaderResource shader;
     CHECK(shader.Load("assets/shaders/default.vert"));
     CHECK(shader.GetSource().find("uLightViewProjection") != std::string::npos);

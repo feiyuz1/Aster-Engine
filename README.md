@@ -2,7 +2,7 @@
 
 TinyEngine 是参考 Unreal Engine 5.3.2 模块职责、以 C++17 实现的轻量 3D 引擎。目标不是复制 UE 的 UObject/UHT、完整 RHI 或大型编辑器，而是形成“项目—资产—场景—运行时—渲染—打包—编辑器”的最小可用闭环。
 
-当前版本：0.20.0（Unicode 字形、坡度判定与编辑器多选）。
+当前版本：0.21.0（Assimp 骨骼权重与 GPU Skinning 数据通路）。
 
 ## 已实现
 
@@ -13,7 +13,7 @@ TinyEngine 是参考 Unreal Engine 5.3.2 模块职责、以 C++17 实现的轻�
 - 渲染：SDL2 + OpenGL 3.3、RGBA16F Scene RenderTarget、ACES Tonemap/曝光、FXAA、2048² 方向光 PCF 阴影、最多四盏方向光、程序化天空与 HDR equirect 环境 IBL、完整 PBR 贴图、sRGB/Mipmap、距离 LOD、粗裁剪和透明队列。
 - 材质：文本 PBR 材质、六类贴图、透明模式，以及通过 `parent` 稀疏覆盖参数的材质实例；循环父级会在加载期拒绝。
 - 物理：固定步长、SAP、Box/Sphere/Capsule、Convex/TriangleMesh 包围体、层过滤、Trigger、Raycast/SphereCast/Overlap、连续子步、三轴冲量响应、Distance/Fixed Joint、带接地/碰顶/台阶/地面法线和最大坡度判定的轻量 CharacterController。
-- 动画与音频：Transform Clip 插值、Clip 交叉淡化与 Root Motion；Skeleton/Bone、关键帧采样、蒙皮矩阵计算和条件状态机；多 Voice 实时混音、Master/SFX/Music/UI Bus、循环播放、距离衰减和左右声像。
+- 动画与音频：Assimp 每顶点四骨骼权重导入、Cook 保留和 OpenGL Skinning 顶点布局；Skeleton/Bone、关键帧采样、蒙皮矩阵和状态机；多 Voice 混音与空间音频。
 - 内容系统：严格 UTF-8 编解码、本地化字符串表/语言回退/参数替换、TTF/OTF 容器校验，以及带发射率、Burst、重力、生命周期曲线和 OpenGL 世界空间 Billboard 的粒子系统。
 - 导航与 AI：可配置代价/障碍的网格 A*、斜向防穿角、Blackboard、Sequence/Selector、Condition/Action 和跨帧 Wait 行为节点。
 - 大世界与模块：带加载/卸载迟滞距离的 World Cell 流送协调器；模块依赖校验、拓扑启动、失败回滚和逆序关闭，并接入 Engine 生命周期。
