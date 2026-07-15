@@ -25,11 +25,20 @@ float RadicalInverse(std::uint32_t bits)
     return static_cast<float>(bits) * 2.3283064365386963e-10f;
 }
 
-Vec3 Direction(const float u, const float v)
+Vec3 CubeDirection(const int face, const float u, const float v)
 {
-    const float longitude = (u - 0.5f) * 2.0f * Pi, latitude = (v - 0.5f) * Pi;
-    const float cosine = std::cos(latitude);
-    return {cosine * std::cos(longitude), std::sin(latitude), cosine * std::sin(longitude)};
+    const float x = u * 2.0f - 1.0f, y = v * 2.0f - 1.0f;
+    if (face == 0)
+        return Normalize({1.0f, -y, -x});
+    if (face == 1)
+        return Normalize({-1.0f, -y, x});
+    if (face == 2)
+        return Normalize({x, 1.0f, y});
+    if (face == 3)
+        return Normalize({x, -1.0f, -y});
+    if (face == 4)
+        return Normalize({x, -y, 1.0f});
+    return Normalize({-x, -y, -1.0f});
 }
 
 Vec3 Sample(const TextureResource &texture, const Vec3 &direction)
@@ -103,12 +112,14 @@ EnvironmentBakeResult EnvironmentBaker::Bake(const std::filesystem::path &source
         return result;
     }
     const int samples = std::clamp(sampleCount, 16, 1024);
-    constexpr int irradianceWidth = 32, irradianceHeight = 16;
+    constexpr int irradianceFaceSize = 16, cubeFaces = 6;
+    constexpr int irradianceWidth = irradianceFaceSize * cubeFaces, irradianceHeight = irradianceFaceSize;
     std::vector<float> irradiance(irradianceWidth * irradianceHeight * 4);
     for (int y = 0; y < irradianceHeight; ++y)
         for (int x = 0; x < irradianceWidth; ++x)
         {
-            const Vec3 normal = Direction((x + 0.5f) / irradianceWidth, (y + 0.5f) / irradianceHeight);
+            const int face = x / irradianceFaceSize, faceX = x % irradianceFaceSize;
+            const Vec3 normal = CubeDirection(face, (faceX + 0.5f) / irradianceFaceSize, (y + 0.5f) / irradianceFaceSize);
             Vec3 tangent, bitangent, color{};
             Basis(normal, tangent, bitangent);
             for (int sample = 0; sample < samples; ++sample)
@@ -122,7 +133,8 @@ EnvironmentBakeResult EnvironmentBaker::Bake(const std::filesystem::path &source
             Store(irradiance, irradianceWidth, x, y, color / static_cast<float>(samples));
         }
 
-    constexpr int prefilterWidth = 128, prefilterSliceHeight = 64, levels = 6;
+    constexpr int prefilterFaceSize = 32, prefilterWidth = prefilterFaceSize * cubeFaces, prefilterSliceHeight = prefilterFaceSize,
+                  levels = 6;
     std::vector<float> prefilter(prefilterWidth * prefilterSliceHeight * levels * 4);
     for (int level = 0; level < levels; ++level)
     {
@@ -130,7 +142,8 @@ EnvironmentBakeResult EnvironmentBaker::Bake(const std::filesystem::path &source
         for (int y = 0; y < prefilterSliceHeight; ++y)
             for (int x = 0; x < prefilterWidth; ++x)
             {
-                const Vec3 normal = Direction((x + 0.5f) / prefilterWidth, (y + 0.5f) / prefilterSliceHeight);
+                const int face = x / prefilterFaceSize, faceX = x % prefilterFaceSize;
+                const Vec3 normal = CubeDirection(face, (faceX + 0.5f) / prefilterFaceSize, (y + 0.5f) / prefilterFaceSize);
                 Vec3 color{};
                 float weight = 0.0f;
                 for (int sample = 0; sample < samples; ++sample)
