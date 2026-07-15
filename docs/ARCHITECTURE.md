@@ -77,9 +77,9 @@ SDL events -> semantic input / ImGui
 
 Logger 可同时输出控制台和逐行 JSON；CrashReporter 在 Windows 注册 Structured Exception Filter 并写 MiniDump/文本上下文，在 `std::terminate` 路径至少写文本报告。CI 使用无 Editor/Assimp 的最小运行时配置验证公共核心，完整本地发布通过 `tools/ReleaseSmoke.ps1` 构建、CTest、打包并运行三帧。
 
-默认 PBR Shader 是独立 `.vert/.frag` 资产。RenderDevice 监测修改时间并尝试原子替换 OpenGL program；编译或链接失败时继续使用上一份有效 program。每帧最多收集四盏方向光，第一盏灯使用固定 2048² 深度图和 3×3 PCF；其余灯只计算直接 PBR 光照。Tonemap Pass 在无几何覆盖的像素绘制程序化天空渐变，并为物体提供半球环境近似。
+默认 PBR Shader 是独立 `.vert/.frag` 资产。RenderDevice 监测依赖修改并尝试原子替换 OpenGL Program；编译或链接失败时继续使用上一份有效 Program。每帧最多收集四盏方向光，第一盏灯使用三段 2048² CSM 和 3×3 PCF；透明阴影通过 Alpha 覆盖率抖动。离线 Cubemap 六面 Atlas 提供 Irradiance、六级 GGX Prefilter 和 BRDF LUT；HDR 合成执行 Bloom、SSAO、TAA、FXAA 与 ACES。
 
-Runtime UI 在提交前根据 Viewport 解析锚点和父子容器布局，生成裁剪后的矩形、图片与文本命令。OpenGL UI Program 使用动态 VBO 批量提交四边形；Windows 运行时用 GDI 构建固定 ASCII Atlas，Label/Button 采样 Atlas，Image 复用 TextureResource。Tab/Enter/Space 使用按下沿驱动焦点和激活。
+Runtime UI 在提交前根据 Viewport 解析锚点和父子容器布局，生成裁剪后的矩形、图片与文本命令。TextLayout 负责 UTF-8、BiDi Run、连字、自动断行和富文本样式；OpenGL 后端按需把 Codepoint 栅格化进 1024² 动态 Atlas，Windows 使用 GDI，非 Windows 使用 FreeType。InputField、List、Dropdown、ProgressBar 与 Button 共用焦点和回调模型。
 
 Assimp 的 CPU/文件转换通过 `AssetImportQueue` 提交到 JobSystem，编辑器只轮询原子状态与受锁保护的结果，不阻塞 UI 帧。取消是协作式的：排队阶段立即终止，Assimp 已进入解析后在产物提交点转为 Cancelled。AssetCooker 用 `TINYCOOK 1` 清单比较相对路径、时间戳和大小，仅复制变化文件、删除清单中的陈旧产物，再重建 TPAK。
 
@@ -87,7 +87,7 @@ Assimp 的 CPU/文件转换通过 `AssetImportQueue` 提交到 JobSystem，编�
 
 `GameplayFramework` 管理 GameMode、Timer 和玩家 Pawn；`CharacterControllerComponent` 将语义输入转换为速度，再调用 `PhysicsWorld::MoveCharacterController` 得到台阶、接地和碰顶结果。通用运行逻辑不再硬编码在 `Engine::Tick`。Diagnostics 提供类型化 CVar、命令和线程安全 Stat；Engine 注册时间缩放、FXAA、CPU/GPU 资源预算和资源回收，并逐帧写入渲染、资源和 Job 统计。
 
-无头 `tinyengine_commandlet` 当前提供 `ValidateAssets`、`ValidateScenes`、`MigrateScenes` 和 `CookProject`。TargetPlatform Cook 对源资产执行平台过滤，将 Mesh/Texture 编译为确定性的运行时二进制，离线展开 Shader variant，并生成 `Game.tpak` 和版本化 `PlatformCook.manifest`；Windows/Linux Profile 已存在，BCn/KTX2 等硬件压缩仍属于后续平台工具链。
+无头 `tinyengine_commandlet` 当前提供 `ValidateAssets`、`ValidateScenes`、`MigrateScenes` 和 `CookProject`。TargetPlatform Cook 对源资产执行平台过滤，将 Mesh/Texture 编译为确定性的运行时二进制，离线展开 Shader variant，并生成 `Game.tpak` 和版本化 `PlatformCook.manifest`。TextureResource 可直接消费 DDS/KTX2 的 BC1–BC7 层级并原样上传 GPU；离线编码质量由目标平台工具决定。
 
 `RenderDevice` 统一暴露 GPU 驻留字节数、预算设置和缓存回收。OpenGL 后端统计 Mesh buffer 与 Texture payload；超预算时释放可重建的缓存对象，Diagnostics 通过 `r.GpuBudgetMB`、`r.TrimGpu` 和 `render.gpu_resident_bytes` 提供运行时控制与观测。
 
@@ -105,7 +105,7 @@ Sequencer 的 Transform Track 与事件 Player 是后端无关的时间采样层
 
 ## 数据格式与约束
 
-- `TINYSCENE 9`：Animation 增加 Animation Graph、驱动参数和值，并继续读取 1–8 版。
+- `TINYSCENE 10`：RigidBody 增加角速度、摩擦、惯量和旋转锁，Joint 增加 Hinge/Spring、限制与 Break Force；继续读取 1–9 版。
 - `TINY_SKELETON 1` / `TINY_SKANIM 2`：骨骼层级与 Inverse Bind；Clip v2 支持 raw 完整 Pose、逐骨骼独立 P/R/S 压缩曲线和事件，并兼容读取 v1。
 - `TINY_BLENDTREE 1`：按单个浮点参数排列阈值样本，在相邻 SkeletalClip 间插值。
 - `TINY_ANIMGRAPH 1`：参数、状态、Motion 路径、比较条件、转换和交叉淡化时间。
@@ -115,8 +115,11 @@ Sequencer 的 Transform Track 与事件 Player 是后端无关的时间采样层
 - `TINYLOC 1`：按 locale/key 组织、支持回退和参数替换的本地化字符串表。
 - `TNYNET1` / `TNYRPLY1`：网络实体快照与复用同一快照格式的离线回放流。
 - `TINYINPUT 1`：逻辑 Axis/Action 到物理输入通道的多重映射。
-- `.mat`：`color`、`metallic`、`roughness`、`emissive`、`texture`、`blend`。
-- `.mat` 可选 `parent <path>`：先递归加载父材质，再以子文件中出现的字段覆盖；规范化路径集合阻止继承环。
+- `.mat`：`color`、`metallic`、`roughness`、`emissive`、`texture`、`packedTexture`、`packedLayout ORM|RMA`、`parameter`、`blend`。
+- `.mat` 可选 `parent <path>` 与 `override <property> 0|1`：先递归加载父材质，再仅应用启用的实例覆盖；规范化路径集合阻止继承环。
+- `TINY_ENV 1`：Cubemap 六面辐照度 Atlas、六级 GGX 预过滤六面 Atlas 和 BRDF LUT 的相对路径清单。
+- `TINY_MATGRAPH 1`：材质节点、位置和值以及有向输入连线。
+- `TINYCHUNK 1`：大型资产总大小、块大小、块文件名和每块长度。
 - `<asset>.meta`：32 位十六进制 GUID、类型、导入时间、设置和依赖。
 - `TPAK 1`：路径与 payload 的简单归档。
 - 新持久化组件必须同步 SceneSerializer 和测试。

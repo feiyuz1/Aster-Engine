@@ -2,11 +2,11 @@
 
 本文记录本轮开发对 TinyEngine 做过的主要更新，以及各功能采用的简要实现方式。内容按 Git 提交顺序整理，方便以后定位代码、回溯设计和继续开发。
 
-当前引擎版本：0.24.0
+当前引擎版本：0.25.0
 
 参考源码：Unreal Engine 5.3.2
 
-最后同步：2026-07-15
+最后同步：2026-07-16
 
 ## 1. 初始化引擎工程
 
@@ -382,12 +382,24 @@
 - Dear ImGui 编辑器可创建 Blend Tree/Animation Graph，编辑 Clip 事件、压缩曲线、样本、参数、状态、转换，并绘制状态节点和连线预览。
 - 新增独立 Assimp 真实资产测试，覆盖带骨骼动画 FBX、复杂多 Mesh FBX、带皮肤动画 glTF 2.0 和 34 Mesh PBR glTF；每次测试生成兼容报告并校验产物格式。
 
+## 27. 0.25 渲染、材质、资产、物理、UI 与编辑器完成批次
+
+提交：`0b8ae87`、`b081777`、`9f0be94`
+
+- 完成离线 Cubemap 六面预过滤、BRDF LUT、三段 CSM、逆转置法线矩阵、透明覆盖率阴影、GPU Instancing、保守遮挡剔除、Bloom/SSAO/TAA 和各向异性过滤。
+- 完成材质实例显式覆盖、Shader Inspector 反射、ORM/RMA、Material Graph 和带实时错误行定位的 Shader Editor。
+- 完成 DDS/KTX2 BC1–BC7 运行时上传、三类缩略图、缺失依赖修复、移动/重命名引用更新和分块区间流读取。
+- 完成 Convex GJK、Triangle Mesh 三角形查询、通用 Shape Sweep、角速度/摩擦/约束扩展和可选 Jolt 构建入口。
+- 完成动态 Unicode Glyph Atlas、非 Windows FreeType、BiDi/连字/断行/富文本和常用 Runtime UI 控件。
+- 完成框选、批量 Gizmo、Local/World、Pivot 模式、Shader 文本编辑器、资产预览和属性 Undo 对接。
+- 详细设计、命令、验证和边界见 `docs/ENGINE_COMPLETION_025.md`。
+
 ## 当前仍未完成
 
-- Cubemap 离线预过滤/BRDF LUT、级联阴影、实例化和遮挡裁剪；HDR IBL、FXAA、LOD 和 GPU profiler 已完成。
-- 精确 Mesh 窄相位/可选 Jolt、完整斜坡 Sweep/Slide CharacterController。
+- 本轮列出的 0.25 功能已进入可运行路径；质量升级项包括 HZB/Occlusion Query、Motion Vector TAA、分离式 SSAO/Bloom Pass 和真正异步 I/O。
+- Jolt 已有可选源码构建、Backend 选择与可用性边界；在引入 Jolt 源码后仍需按目标平台完成性能/确定性验证。
 - 动画重定向、IK、2D Blend Space、OGG 流式音频与复杂 UI 排版。
-- 多选/框选、Gizmo local/world 和 Shader 文本编辑器；多场景与 Material 编辑已完成。
+- 完整 OpenType Script Shaping 可接 HarfBuzz；当前为内置 BiDi Run、常用连字、富文本和自动断行。
 - 格式 CI 检查、渲染截图对比和逐分配内存追踪；基础无头 Commandlet、数据迁移、CI、崩溃报告、许可证清单和发布包冒烟已完成。
 
 继续开发时，应同时更新本文、`README.md`、`设计.md` 和 `docs/ARCHITECTURE.md`。
