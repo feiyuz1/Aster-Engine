@@ -3,8 +3,10 @@
 
 #include <algorithm>
 #include <iomanip>
+#include <regex>
 #include <set>
 #include <sstream>
+#include <unordered_set>
 
 namespace MiniEngine
 {
@@ -155,5 +157,81 @@ bool ShaderPipeline::WriteCache(const ShaderPreprocessResult &result, const std:
     std::ostringstream name;
     name << std::hex << std::setfill('0') << std::setw(16) << result.hash << ".glsl";
     return PlatformFile::WriteAllText(cacheDirectory / name.str(), result.source);
+}
+
+std::vector<ShaderParameterInfo> ShaderPipeline::ReflectParameters(const std::filesystem::path &path)
+{
+    const auto preprocessed = Preprocess(path);
+    if (!preprocessed.success)
+        return {};
+    static const std::unordered_set<std::string> engineUniforms = {"uBones",
+                                                                   "uMvp",
+                                                                   "uModel",
+                                                                   "uView",
+                                                                   "uViewProjection",
+                                                                   "uShadowViewProjections",
+                                                                   "uShadowCascadeSplits",
+                                                                   "uInstanced",
+                                                                   "uCameraPosition",
+                                                                   "uLightCount",
+                                                                   "uLightDirections",
+                                                                   "uLightColors",
+                                                                   "uLightIntensities",
+                                                                   "uTexture",
+                                                                   "uHasTexture",
+                                                                   "uNormalTexture",
+                                                                   "uHasNormalTexture",
+                                                                   "uMetallicTexture",
+                                                                   "uHasMetallicTexture",
+                                                                   "uRoughnessTexture",
+                                                                   "uHasRoughnessTexture",
+                                                                   "uAoTexture",
+                                                                   "uHasAoTexture",
+                                                                   "uEmissiveTexture",
+                                                                   "uHasEmissiveTexture",
+                                                                   "uShadowMaps",
+                                                                   "uEnvironmentIrradiance",
+                                                                   "uEnvironmentPrefilter",
+                                                                   "uEnvironmentBrdfLut",
+                                                                   "uHasEnvironment",
+                                                                   "uBaseColor",
+                                                                   "uMetallic",
+                                                                   "uRoughness",
+                                                                   "uEmissive",
+                                                                   "uPackedTexture",
+                                                                   "uHasPackedTexture",
+                                                                   "uPackedLayoutRma"};
+    const std::regex uniformPattern(R"(^\s*uniform\s+(float|vec2|vec3|vec4|sampler2D)\s+([A-Za-z_][A-Za-z0-9_]*)\s*;)");
+    const std::regex rangePattern(R"(//@range\s+([-+0-9.eE]+)\s+([-+0-9.eE]+))");
+    const std::regex defaultPattern(R"(//@default\s+([-+0-9.eE]+)(?:\s+([-+0-9.eE]+))?(?:\s+([-+0-9.eE]+))?(?:\s+([-+0-9.eE]+))?)");
+    std::vector<ShaderParameterInfo> result;
+    std::istringstream input(preprocessed.source);
+    std::string line;
+    while (std::getline(input, line))
+    {
+        std::smatch match;
+        if (!std::regex_search(line, match, uniformPattern) || engineUniforms.count(match[2].str()))
+            continue;
+        ShaderParameterInfo parameter;
+        parameter.name = match[2].str();
+        const std::string type = match[1].str();
+        parameter.type = type == "vec2"        ? ShaderParameterType::Vec2
+                         : type == "vec3"      ? ShaderParameterType::Vec3
+                         : type == "vec4"      ? ShaderParameterType::Vec4
+                         : type == "sampler2D" ? ShaderParameterType::Texture
+                                               : ShaderParameterType::Float;
+        if (std::regex_search(line, match, rangePattern))
+        {
+            parameter.minimum = std::stof(match[1].str());
+            parameter.maximum = std::stof(match[2].str());
+            parameter.hasRange = true;
+        }
+        if (std::regex_search(line, match, defaultPattern))
+            for (std::size_t index = 1; index < match.size() && index <= 4; ++index)
+                if (match[index].matched)
+                    parameter.defaultValue[index - 1] = std::stof(match[index].str());
+        result.push_back(std::move(parameter));
+    }
+    return result;
 }
 } // namespace MiniEngine

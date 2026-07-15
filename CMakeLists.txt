@@ -88,6 +88,7 @@ add_library(tinyengine STATIC
     src/Build/AssetCompiler.cpp
     src/Automation/Automation.cpp
     src/Render/Renderer.cpp
+    src/Render/EnvironmentBaker.cpp
     src/Render/ShaderPipeline.cpp
     src/Render/SdlGlRenderDevice.cpp
     src/Physics/PhysicsWorld.cpp

@@ -25,6 +25,7 @@
 #include "MiniEngine/Platform/Platform.hpp"
 #include "MiniEngine/Project/Project.hpp"
 #include "MiniEngine/Project/ProjectPackager.hpp"
+#include "MiniEngine/Render/EnvironmentBaker.hpp"
 #include "MiniEngine/Render/Renderer.hpp"
 #include "MiniEngine/Render/ShaderPipeline.hpp"
 #include "MiniEngine/Resource/AssetCooker.hpp"
@@ -344,6 +345,12 @@ int main()
     CHECK(compiledTextureResult.success && compiledTextureResult.type == CompiledAssetType::Texture);
     TextureResource compiledTexture;
     CHECK(compiledTexture.Load("Saved/CompiledDefault.ppm") && compiledTexture.GetData() == texture.GetData());
+    const auto bakedEnvironment = EnvironmentBaker::Bake("assets/default.ppm", "Saved/Environment", 16);
+    TextureResource bakedIrradiance, bakedPrefilter, bakedBrdf;
+    CHECK(bakedEnvironment.success && bakedIrradiance.Load(bakedEnvironment.irradiancePath.generic_string()) &&
+          bakedPrefilter.Load(bakedEnvironment.prefilterPath.generic_string()) &&
+          bakedBrdf.Load(bakedEnvironment.brdfLutPath.generic_string()) && bakedIrradiance.IsHdr() &&
+          bakedPrefilter.GetHeight() == 64 * 6 && bakedBrdf.GetWidth() == 128);
     const std::vector<std::uint8_t> pngBytes{0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48,
                                              0x44, 0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00,
                                              0x00, 0x1f, 0x15, 0xc4, 0x89, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x44, 0x41, 0x54, 0x08,
@@ -387,7 +394,8 @@ int main()
           std::abs(skinnedMesh.GetVertices()[1].boneIndices.y - 1.0f) < 0.001f);
     ShaderResource shader;
     CHECK(shader.Load("assets/shaders/default.vert"));
-    CHECK(shader.GetSource().find("uLightViewProjection") != std::string::npos);
+    CHECK(shader.GetSource().find("uShadowViewProjections") != std::string::npos &&
+          shader.GetSource().find("normalMatrix") != std::string::npos);
     CHECK(PlatformFile::WriteAllText("Saved/Common.glsl", "vec3 IncludedColor() { return vec3(1.0); }\n"));
     CHECK(PlatformFile::WriteAllText("Saved/Variant.frag",
                                      "#version 330 core\n#pragma variant USE_FOG 0 1\n#include \"Common.glsl\"\nvoid main(){}\n"));

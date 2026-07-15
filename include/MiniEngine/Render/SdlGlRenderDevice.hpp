@@ -20,11 +20,13 @@ class SdlGlRenderDevice final : public RenderDevice
     const InputState &GetInputState() const override;
     float GetAspectRatio() const override;
     Vec2 GetViewportSize() const override;
-    void BeginShadowPass(const FrameView &view) override;
+    void BeginShadowPass(const FrameView &view, std::size_t cascadeIndex) override;
     void DrawShadow(const RenderItem &item) override;
+    void DrawShadowInstanced(const std::vector<RenderItem> &items) override;
     void EndShadowPass() override;
     void BeginFrame(const FrameView &view) override;
     void Draw(const RenderItem &item) override;
+    void DrawInstanced(const std::vector<RenderItem> &items) override;
     void DrawParticles(const std::vector<Particle> &particles) override;
     void EndFrame() override;
     void DrawUi(const std::vector<UIDrawCommand> &commands) override;
@@ -46,6 +48,12 @@ class SdlGlRenderDevice final : public RenderDevice
     const std::string &GetLastShaderError() const;
     void SetFxaaEnabled(bool enabled);
     bool IsFxaaEnabled() const;
+    void SetBloomEnabled(bool enabled);
+    bool IsBloomEnabled() const;
+    void SetSsaoEnabled(bool enabled);
+    bool IsSsaoEnabled() const;
+    void SetTaaEnabled(bool enabled);
+    bool IsTaaEnabled() const;
     float GetLastGpuFrameMilliseconds() const;
 
   private:

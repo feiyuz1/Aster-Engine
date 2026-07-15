@@ -659,6 +659,11 @@ bool MaterialResource::Load(const std::string &path)
     m_aoTexturePath.clear();
     m_emissiveTexturePath.clear();
     m_parentPath.clear();
+    m_overrides.clear();
+    m_parameters.clear();
+    m_packedTexturePath.clear();
+    m_packedTextureLayout = "ORM";
+    m_packedTextureLayout = "ORM";
     const std::string source = PlatformFile::ReadAllText(path);
     if (source.empty())
     {
@@ -678,6 +683,23 @@ bool MaterialResource::Load(const std::string &path)
             {
                 std::string ignored;
                 std::getline(parentStream, ignored);
+            }
+    }
+    {
+        std::istringstream overrideStream(source);
+        std::string token;
+        while (overrideStream >> token)
+            if (token == "override")
+            {
+                std::string property;
+                bool enabled = false;
+                if (overrideStream >> property >> enabled)
+                    m_overrides[property] = enabled;
+            }
+            else
+            {
+                std::string ignored;
+                std::getline(overrideStream, ignored);
             }
     }
     if (!m_parentPath.empty())
@@ -703,7 +725,14 @@ bool MaterialResource::Load(const std::string &path)
         m_roughness = base.m_roughness;
         m_emissive = base.m_emissive;
         m_transparent = base.m_transparent;
+        m_parameters = base.m_parameters;
+        m_packedTexturePath = base.m_packedTexturePath;
+        m_packedTextureLayout = base.m_packedTextureLayout;
     }
+    const auto applies = [this](const std::string &property) {
+        const auto found = m_overrides.find(property);
+        return m_parentPath.empty() || found == m_overrides.end() || found->second;
+    };
     std::istringstream stream(source);
     std::string key;
     while (stream >> key)
@@ -713,33 +742,79 @@ bool MaterialResource::Load(const std::string &path)
             std::string ignored;
             stream >> ignored;
         }
+        else if (key == "override")
+        {
+            std::string property;
+            bool ignored = false;
+            stream >> property >> ignored;
+        }
         else if (key == "color")
-            stream >> m_baseColor.x >> m_baseColor.y >> m_baseColor.z >> m_baseColor.w;
-        else if (key == "metallic")
-            stream >> m_metallic;
-        else if (key == "roughness")
-            stream >> m_roughness;
+        {
+            Vec4 value;
+            stream >> value.x >> value.y >> value.z >> value.w;
+            if (applies(key))
+                m_baseColor = value;
+        }
+        else if (key == "metallic" || key == "roughness")
+        {
+            float value = 0.0f;
+            stream >> value;
+            if (applies(key))
+                (key == "metallic" ? m_metallic : m_roughness) = value;
+        }
         else if (key == "emissive")
-            stream >> m_emissive.x >> m_emissive.y >> m_emissive.z;
-        else if (key == "shader")
-            stream >> m_shaderPath;
-        else if (key == "texture")
-            stream >> m_texturePath;
-        else if (key == "normalTexture")
-            stream >> m_normalTexturePath;
-        else if (key == "metallicTexture")
-            stream >> m_metallicTexturePath;
-        else if (key == "roughnessTexture")
-            stream >> m_roughnessTexturePath;
-        else if (key == "aoTexture")
-            stream >> m_aoTexturePath;
-        else if (key == "emissiveTexture")
-            stream >> m_emissiveTexturePath;
+        {
+            Vec3 value;
+            stream >> value.x >> value.y >> value.z;
+            if (applies(key))
+                m_emissive = value;
+        }
+        else if (key == "shader" || key == "texture" || key == "normalTexture" || key == "metallicTexture" || key == "roughnessTexture" ||
+                 key == "aoTexture" || key == "emissiveTexture" || key == "packedTexture")
+        {
+            std::string value;
+            stream >> value;
+            if (applies(key))
+            {
+                if (key == "shader")
+                    m_shaderPath = value;
+                else if (key == "texture")
+                    m_texturePath = value;
+                else if (key == "normalTexture")
+                    m_normalTexturePath = value;
+                else if (key == "metallicTexture")
+                    m_metallicTexturePath = value;
+                else if (key == "roughnessTexture")
+                    m_roughnessTexturePath = value;
+                else if (key == "aoTexture")
+                    m_aoTexturePath = value;
+                else if (key == "emissiveTexture")
+                    m_emissiveTexturePath = value;
+                else
+                    m_packedTexturePath = value;
+            }
+        }
+        else if (key == "packedLayout")
+        {
+            std::string value;
+            stream >> value;
+            if (applies(key) && (value == "ORM" || value == "RMA"))
+                m_packedTextureLayout = value;
+        }
+        else if (key == "parameter")
+        {
+            std::string name;
+            Vec4 value;
+            stream >> name >> value.x >> value.y >> value.z >> value.w;
+            if (applies("parameter." + name))
+                m_parameters[name] = value;
+        }
         else if (key == "blend")
         {
             std::string value;
             stream >> value;
-            m_transparent = value == "alpha" || value == "transparent";
+            if (applies(key))
+                m_transparent = value == "alpha" || value == "transparent";
         }
         else
         {
@@ -762,6 +837,9 @@ void MaterialResource::Unload()
     m_aoTexturePath.clear();
     m_emissiveTexturePath.clear();
     m_parentPath.clear();
+    m_overrides.clear();
+    m_parameters.clear();
+    m_packedTexturePath.clear();
     SetState(ResourceState::Unloaded);
 }
 
@@ -769,7 +847,8 @@ std::size_t MaterialResource::GetByteSize() const
 {
     return sizeof(*this) + m_path.size() + m_shaderPath.size() + m_texturePath.size() + m_normalTexturePath.size() +
            m_metallicTexturePath.size() + m_roughnessTexturePath.size() + m_aoTexturePath.size() + m_emissiveTexturePath.size() +
-           m_parentPath.size();
+           m_parentPath.size() + m_packedTexturePath.size() + m_packedTextureLayout.size() +
+           m_overrides.size() * (sizeof(bool) + sizeof(std::string)) + m_parameters.size() * (sizeof(Vec4) + sizeof(std::string));
 }
 Vec4 MaterialResource::GetBaseColor() const
 {
@@ -822,5 +901,22 @@ bool MaterialResource::IsTransparent() const
 const std::string &MaterialResource::GetParentPath() const
 {
     return m_parentPath;
+}
+bool MaterialResource::IsOverridden(const std::string &property) const
+{
+    const auto found = m_overrides.find(property);
+    return found == m_overrides.end() ? m_parentPath.empty() : found->second;
+}
+const std::unordered_map<std::string, Vec4> &MaterialResource::GetParameters() const
+{
+    return m_parameters;
+}
+const std::string &MaterialResource::GetPackedTexturePath() const
+{
+    return m_packedTexturePath;
+}
+const std::string &MaterialResource::GetPackedTextureLayout() const
+{
+    return m_packedTextureLayout;
 }
 } // namespace MiniEngine

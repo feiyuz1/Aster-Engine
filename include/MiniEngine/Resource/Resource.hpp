@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <mutex>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace MiniEngine
@@ -123,6 +124,10 @@ class MaterialResource final : public Resource
     Vec3 GetEmissive() const;
     bool IsTransparent() const;
     const std::string &GetParentPath() const;
+    bool IsOverridden(const std::string &property) const;
+    const std::unordered_map<std::string, Vec4> &GetParameters() const;
+    const std::string &GetPackedTexturePath() const;
+    const std::string &GetPackedTextureLayout() const;
 
   private:
     Vec4 m_baseColor{0.3f, 0.7f, 1.0f, 1.0f};
@@ -138,5 +143,9 @@ class MaterialResource final : public Resource
     Vec3 m_emissive{};
     bool m_transparent = false;
     std::string m_parentPath;
+    std::unordered_map<std::string, bool> m_overrides;
+    std::unordered_map<std::string, Vec4> m_parameters;
+    std::string m_packedTexturePath;
+    std::string m_packedTextureLayout = "ORM";
 };
 } // namespace MiniEngine

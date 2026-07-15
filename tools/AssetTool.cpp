@@ -1,3 +1,4 @@
+#include "MiniEngine/Render/EnvironmentBaker.hpp"
 #include "MiniEngine/Resource/AssetCooker.hpp"
 #include "MiniEngine/Resource/AssetRegistry.hpp"
 #include "MiniEngine/Resource/PakArchive.hpp"
@@ -12,11 +13,23 @@ int main(int argc, char **argv)
     if (argc < 3)
     {
         std::cout << "Usage:\n  tinyengine_asset_tool import <source-model> <output-directory> [resource-prefix]\n  tinyengine_asset_tool "
-                     "scan <asset-directory>\n  tinyengine_asset_tool cook <asset-directory> <cooked-directory> <output.tpak>\n  "
+                     "bake-env <source-hdr> <output-directory>\n  tinyengine_asset_tool scan <asset-directory>\n  tinyengine_asset_tool "
+                     "cook <asset-directory> <cooked-directory> <output.tpak>\n  "
                      "tinyengine_asset_tool pack <input-directory> <output.tpak>\n  tinyengine_asset_tool list <archive.tpak>\n";
         return 1;
     }
     const std::string command = argv[1];
+    if (command == "bake-env" && argc == 4)
+    {
+        const auto result = MiniEngine::EnvironmentBaker::Bake(argv[2], argv[3]);
+        if (!result.success)
+        {
+            std::cerr << "Environment bake failed: " << result.error << '\n';
+            return 2;
+        }
+        std::cout << result.environmentPath.generic_string() << '\n';
+        return 0;
+    }
 #ifdef TINYENGINE_HAS_ASSIMP
     if (command == "import" && (argc == 4 || argc == 5))
     {

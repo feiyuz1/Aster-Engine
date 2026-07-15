@@ -47,6 +47,8 @@ std::string AssetType(const std::string &extension)
         return "BlendTree";
     if (extension == ".animgraph")
         return "AnimationGraph";
+    if (extension == ".env")
+        return "Environment";
     if (extension == ".input")
         return "Input";
     if (extension == ".ttf" || extension == ".otf")

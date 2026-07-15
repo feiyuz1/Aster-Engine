@@ -129,13 +129,34 @@ constexpr const char *FragmentShaderSource = R"GLSL(
 constexpr const char *ShadowVertexShaderSource = R"GLSL(
             #version 330 core
             layout(location = 0) in vec3 aPosition;
+            layout(location = 2) in vec2 aUv;
+            layout(location = 8) in vec4 aInstance0;
+            layout(location = 9) in vec4 aInstance1;
+            layout(location = 10) in vec4 aInstance2;
+            layout(location = 11) in vec4 aInstance3;
             uniform mat4 uLightMvp;
-            void main() { gl_Position = uLightMvp * vec4(aPosition, 1.0); }
+            uniform mat4 uLightViewProjection;
+            uniform int uInstanced;
+            out vec2 vUv;
+            void main()
+            {
+                mat4 model = mat4(aInstance0, aInstance1, aInstance2, aInstance3);
+                gl_Position = uInstanced != 0 ? uLightViewProjection * model * vec4(aPosition, 1.0) : uLightMvp * vec4(aPosition, 1.0);
+                vUv = aUv;
+            }
         )GLSL";
 
 constexpr const char *ShadowFragmentShaderSource = R"GLSL(
             #version 330 core
-            void main() {}
+            in vec2 vUv;
+            uniform sampler2D uShadowAlphaTexture;
+            uniform int uShadowHasAlphaTexture;
+            uniform float uShadowOpacity;
+            void main()
+            {
+                float alpha = uShadowOpacity * (uShadowHasAlphaTexture != 0 ? texture(uShadowAlphaTexture, vUv).a : 1.0);
+                if (alpha < 0.35) discard;
+            }
         )GLSL";
 
 constexpr const char *ToneVertexShaderSource = R"GLSL(
@@ -153,9 +174,15 @@ constexpr const char *ToneFragmentShaderSource = R"GLSL(
             #version 330 core
             in vec2 vUv;
             uniform sampler2D uHdrTexture;
+            uniform sampler2D uDepthTexture;
+            uniform sampler2D uHistoryTexture;
             uniform float uExposure;
             uniform vec2 uInverseResolution;
             uniform int uFxaaEnabled;
+            uniform int uBloomEnabled;
+            uniform int uSsaoEnabled;
+            uniform int uTaaEnabled;
+            uniform int uHistoryValid;
             out vec4 outColor;
             vec3 AcesFilm(vec3 color)
             {
@@ -170,6 +197,37 @@ constexpr const char *ToneFragmentShaderSource = R"GLSL(
             void main()
             {
                 vec3 hdr = SceneColor(vUv);
+                if (uTaaEnabled != 0 && uHistoryValid != 0)
+                {
+                    vec3 history = texture(uHistoryTexture, vUv).rgb;
+                    vec3 minimumColor = min(hdr, min(SceneColor(vUv + vec2(uInverseResolution.x, 0.0)), SceneColor(vUv - vec2(uInverseResolution.x, 0.0))));
+                    vec3 maximumColor = max(hdr, max(SceneColor(vUv + vec2(uInverseResolution.x, 0.0)), SceneColor(vUv - vec2(uInverseResolution.x, 0.0))));
+                    hdr = mix(hdr, clamp(history, minimumColor, maximumColor), 0.88);
+                }
+                if (uSsaoEnabled != 0)
+                {
+                    float centerDepth = texture(uDepthTexture, vUv).r;
+                    float occlusion = 0.0;
+                    for (int x = -2; x <= 2; ++x)
+                        for (int y = -2; y <= 2; ++y)
+                        {
+                            float sampleDepth = texture(uDepthTexture, vUv + vec2(x, y) * uInverseResolution * 2.0).r;
+                            occlusion += sampleDepth + 0.0008 < centerDepth ? 1.0 : 0.0;
+                        }
+                    hdr *= 1.0 - occlusion / 25.0 * 0.42;
+                }
+                if (uBloomEnabled != 0)
+                {
+                    vec3 bloom = vec3(0.0);
+                    float weights[5] = float[5](0.22, 0.19, 0.12, 0.07, 0.035);
+                    for (int offset = -4; offset <= 4; ++offset)
+                    {
+                        vec3 horizontal = SceneColor(vUv + vec2(offset, 0.0) * uInverseResolution * 2.0);
+                        vec3 vertical = SceneColor(vUv + vec2(0.0, offset) * uInverseResolution * 2.0);
+                        bloom += (max(horizontal - vec3(1.0), vec3(0.0)) + max(vertical - vec3(1.0), vec3(0.0))) * weights[abs(offset)];
+                    }
+                    hdr += bloom * 0.28;
+                }
                 if (uFxaaEnabled != 0)
                 {
                     vec3 northWest = SceneColor(vUv + vec2(-1.0, -1.0) * uInverseResolution);
@@ -252,6 +310,8 @@ struct SdlGlRenderDevice::Impl
     using DeleteBuffersProc = void(APIENTRY *)(GLsizei, const GLuint *);
     using VertexAttribPointerProc = void(APIENTRY *)(GLuint, GLint, GLenum, GLboolean, GLsizei, const void *);
     using EnableVertexAttribArrayProc = void(APIENTRY *)(GLuint);
+    using VertexAttribDivisorProc = void(APIENTRY *)(GLuint, GLuint);
+    using DrawElementsInstancedProc = void(APIENTRY *)(GLenum, GLsizei, GLenum, const void *, GLsizei);
     using CreateShaderProc = GLuint(APIENTRY *)(GLenum);
     using ShaderSourceProc = void(APIENTRY *)(GLuint, GLsizei, const GLchar *const *, const GLint *);
     using CompileShaderProc = void(APIENTRY *)(GLuint);
@@ -292,11 +352,14 @@ struct SdlGlRenderDevice::Impl
     FrameView view;
     GLuint program = 0, shadowProgram = 0, toneProgram = 0, uiProgram = 0, particleProgram = 0, fullScreenVao = 0;
     GLuint uiVao = 0, uiVertexBuffer = 0, uiIndexBuffer = 0, fontAtlas = 0;
-    GLuint sceneFramebuffer = 0, toneFramebuffer = 0, sceneHdrColor = 0, sceneColor = 0, sceneDepth = 0;
-    GLuint shadowFramebuffer = 0, shadowDepth = 0;
+    GLuint sceneFramebuffer = 0, toneFramebuffer = 0, sceneHdrColor = 0, sceneColor = 0, sceneDepth = 0, historyHdrColor = 0;
+    std::array<GLuint, FrameView::MaxShadowCascades> shadowFramebuffers{}, shadowDepths{};
     int shadowResolution = 2048;
+    std::size_t activeShadowCascade = 0;
     float exposure = 1.0f;
     bool fxaaEnabled = true;
+    bool bloomEnabled = true, ssaoEnabled = true, taaEnabled = true, historyValid = false;
+    float maximumAnisotropy = 1.0f;
     GLuint timerQueries[2]{};
     bool timerIssued[2]{};
     int timerIndex = 0;
@@ -306,18 +369,25 @@ struct SdlGlRenderDevice::Impl
     bool sceneTargetEnabled = false;
     bool previousUiNext = false, previousUiAccept = false;
     SDL_GameController *controller = nullptr;
-    GLint mvpLocation = -1, modelLocation = -1, lightViewProjectionLocation = -1, baseColorLocation = -1;
+    GLint mvpLocation = -1, modelLocation = -1, viewProjectionLocation = -1, viewLocation = -1, instancedLocation = -1,
+          baseColorLocation = -1;
+    std::array<GLint, FrameView::MaxShadowCascades> shadowViewProjectionLocations{}, shadowCascadeSplitLocations{}, shadowMapLocations{};
     GLint bonesLocation = -1;
     GLint metallicLocation = -1, roughnessLocation = -1, emissiveLocation = -1, cameraPositionLocation = -1;
     GLint lightDirectionLocation = -1, lightColorLocation = -1, lightIntensityLocation = -1;
-    GLint textureLocation = -1, hasTextureLocation = -1, shadowMapLocation = -1;
+    GLint textureLocation = -1, hasTextureLocation = -1;
     GLint lightCountLocation = -1;
     std::array<GLint, FrameView::MaxLights> lightDirectionsLocations{}, lightColorsLocations{}, lightIntensitiesLocations{};
     GLint normalTextureLocation = -1, hasNormalTextureLocation = -1, metallicTextureLocation = -1, hasMetallicTextureLocation = -1;
     GLint roughnessTextureLocation = -1, hasRoughnessTextureLocation = -1, aoTextureLocation = -1, hasAoTextureLocation = -1;
     GLint emissiveTextureLocation = -1, hasEmissiveTextureLocation = -1;
-    GLint environmentTextureLocation = -1, hasEnvironmentLocation = -1;
-    GLint shadowMvpLocation = -1, toneTextureLocation = -1, exposureLocation = -1, inverseResolutionLocation = -1, fxaaEnabledLocation = -1;
+    GLint packedTextureLocation = -1, hasPackedTextureLocation = -1, packedLayoutRmaLocation = -1;
+    GLint environmentIrradianceLocation = -1, environmentPrefilterLocation = -1, environmentBrdfLocation = -1, hasEnvironmentLocation = -1;
+    GLint shadowMvpLocation = -1, shadowLightViewProjectionLocation = -1, shadowInstancedLocation = -1, shadowAlphaTextureLocation = -1,
+          shadowHasAlphaTextureLocation = -1, shadowOpacityLocation = -1;
+    GLint toneTextureLocation = -1, toneDepthTextureLocation = -1, toneHistoryTextureLocation = -1, exposureLocation = -1,
+          inverseResolutionLocation = -1, fxaaEnabledLocation = -1, bloomEnabledLocation = -1, ssaoEnabledLocation = -1,
+          taaEnabledLocation = -1, historyValidLocation = -1;
     GLint uiViewportLocation = -1, uiColorLocation = -1, uiTextureLocation = -1, uiHasTextureLocation = -1;
     GLint particleViewLocation = -1, particleProjectionLocation = -1, particlePositionLocation = -1, particleSizeLocation = -1,
           particleColorLocation = -1;
@@ -335,6 +405,8 @@ struct SdlGlRenderDevice::Impl
     DeleteBuffersProc DeleteBuffers = nullptr;
     VertexAttribPointerProc VertexAttribPointer = nullptr;
     EnableVertexAttribArrayProc EnableVertexAttribArray = nullptr;
+    VertexAttribDivisorProc VertexAttribDivisor = nullptr;
+    DrawElementsInstancedProc DrawElementsInstanced = nullptr;
     CreateShaderProc CreateShader = nullptr;
     ShaderSourceProc ShaderSource = nullptr;
     CompileShaderProc CompileShader = nullptr;
@@ -371,7 +443,7 @@ struct SdlGlRenderDevice::Impl
 
     struct GpuMesh
     {
-        GLuint vao = 0, vertexBuffer = 0, indexBuffer = 0;
+        GLuint vao = 0, vertexBuffer = 0, indexBuffer = 0, instanceBuffer = 0;
         GLsizei indexCount = 0;
         std::size_t byteSize = 0;
     };
@@ -402,6 +474,8 @@ struct SdlGlRenderDevice::Impl
         {
             DeleteBuffers(1, &pair.second.vertexBuffer);
             DeleteBuffers(1, &pair.second.indexBuffer);
+            if (pair.second.instanceBuffer)
+                DeleteBuffers(1, &pair.second.instanceBuffer);
             DeleteVertexArrays(1, &pair.second.vao);
         }
         meshes.clear();
@@ -418,6 +492,7 @@ struct SdlGlRenderDevice::Impl
                LoadGl(DeleteVertexArrays, "glDeleteVertexArrays") && LoadGl(GenBuffers, "glGenBuffers") &&
                LoadGl(BindBuffer, "glBindBuffer") && LoadGl(BufferData, "glBufferData") && LoadGl(DeleteBuffers, "glDeleteBuffers") &&
                LoadGl(VertexAttribPointer, "glVertexAttribPointer") && LoadGl(EnableVertexAttribArray, "glEnableVertexAttribArray") &&
+               LoadGl(VertexAttribDivisor, "glVertexAttribDivisor") && LoadGl(DrawElementsInstanced, "glDrawElementsInstanced") &&
                LoadGl(CreateShader, "glCreateShader") && LoadGl(ShaderSource, "glShaderSource") &&
                LoadGl(CompileShader, "glCompileShader") && LoadGl(GetShaderiv, "glGetShaderiv") &&
                LoadGl(GetShaderInfoLog, "glGetShaderInfoLog") && LoadGl(DeleteShader, "glDeleteShader") &&
@@ -443,11 +518,14 @@ struct SdlGlRenderDevice::Impl
             glDeleteTextures(1, &sceneColor);
         if (sceneDepth)
             glDeleteTextures(1, &sceneDepth);
+        if (historyHdrColor)
+            glDeleteTextures(1, &historyHdrColor);
         if (sceneFramebuffer)
             DeleteFramebuffers(1, &sceneFramebuffer);
         if (toneFramebuffer)
             DeleteFramebuffers(1, &toneFramebuffer);
-        sceneHdrColor = sceneColor = sceneDepth = sceneFramebuffer = toneFramebuffer = 0;
+        sceneHdrColor = sceneColor = sceneDepth = historyHdrColor = sceneFramebuffer = toneFramebuffer = 0;
+        historyValid = false;
         sceneWidth = sceneHeight = 0;
     }
 
@@ -469,6 +547,8 @@ struct SdlGlRenderDevice::Impl
         glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT24, width, height, 0, GL_DEPTH_COMPONENT, GL_UNSIGNED_INT, nullptr);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
         FramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, sceneDepth, 0);
         bool complete = CheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE;
         GenFramebuffers(1, &toneFramebuffer);
@@ -480,6 +560,13 @@ struct SdlGlRenderDevice::Impl
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
         FramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, sceneColor, 0);
         complete = complete && CheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE;
+        glGenTextures(1, &historyHdrColor);
+        glBindTexture(GL_TEXTURE_2D, historyHdrColor);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA16F, width, height, 0, GL_RGBA, GL_FLOAT, nullptr);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
         BindFramebuffer(GL_FRAMEBUFFER, 0);
         glBindTexture(GL_TEXTURE_2D, 0);
         if (!complete)
@@ -494,31 +581,39 @@ struct SdlGlRenderDevice::Impl
 
     void DestroyShadowTarget()
     {
-        if (shadowDepth)
-            glDeleteTextures(1, &shadowDepth);
-        if (shadowFramebuffer)
-            DeleteFramebuffers(1, &shadowFramebuffer);
-        shadowDepth = shadowFramebuffer = 0;
+        for (std::size_t index = 0; index < FrameView::MaxShadowCascades; ++index)
+        {
+            if (shadowDepths[index])
+                glDeleteTextures(1, &shadowDepths[index]);
+            if (shadowFramebuffers[index])
+                DeleteFramebuffers(1, &shadowFramebuffers[index]);
+            shadowDepths[index] = shadowFramebuffers[index] = 0;
+        }
     }
 
     bool CreateShadowTarget()
     {
         DestroyShadowTarget();
-        GenFramebuffers(1, &shadowFramebuffer);
-        BindFramebuffer(GL_FRAMEBUFFER, shadowFramebuffer);
-        glGenTextures(1, &shadowDepth);
-        glBindTexture(GL_TEXTURE_2D, shadowDepth);
-        glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT24, shadowResolution, shadowResolution, 0, GL_DEPTH_COMPONENT, GL_FLOAT, nullptr);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_BORDER);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_BORDER);
-        const GLfloat border[] = {1.0f, 1.0f, 1.0f, 1.0f};
-        glTexParameterfv(GL_TEXTURE_2D, GL_TEXTURE_BORDER_COLOR, border);
-        FramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, shadowDepth, 0);
-        glDrawBuffer(GL_NONE);
-        glReadBuffer(GL_NONE);
-        const bool complete = CheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE;
+        bool complete = true;
+        for (std::size_t index = 0; index < FrameView::MaxShadowCascades; ++index)
+        {
+            GenFramebuffers(1, &shadowFramebuffers[index]);
+            BindFramebuffer(GL_FRAMEBUFFER, shadowFramebuffers[index]);
+            glGenTextures(1, &shadowDepths[index]);
+            glBindTexture(GL_TEXTURE_2D, shadowDepths[index]);
+            glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT24, shadowResolution, shadowResolution, 0, GL_DEPTH_COMPONENT, GL_FLOAT,
+                         nullptr);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_BORDER);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_BORDER);
+            const GLfloat border[] = {1.0f, 1.0f, 1.0f, 1.0f};
+            glTexParameterfv(GL_TEXTURE_2D, GL_TEXTURE_BORDER_COLOR, border);
+            FramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, shadowDepths[index], 0);
+            glDrawBuffer(GL_NONE);
+            glReadBuffer(GL_NONE);
+            complete = complete && CheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE;
+        }
         BindFramebuffer(GL_FRAMEBUFFER, 0);
         glBindTexture(GL_TEXTURE_2D, 0);
         if (!complete)
@@ -587,7 +682,16 @@ struct SdlGlRenderDevice::Impl
         mvpLocation = GetUniformLocation(program, "uMvp");
         bonesLocation = GetUniformLocation(program, "uBones");
         modelLocation = GetUniformLocation(program, "uModel");
-        lightViewProjectionLocation = GetUniformLocation(program, "uLightViewProjection");
+        viewProjectionLocation = GetUniformLocation(program, "uViewProjection");
+        viewLocation = GetUniformLocation(program, "uView");
+        instancedLocation = GetUniformLocation(program, "uInstanced");
+        for (std::size_t index = 0; index < FrameView::MaxShadowCascades; ++index)
+        {
+            const std::string suffix = "[" + std::to_string(index) + "]";
+            shadowViewProjectionLocations[index] = GetUniformLocation(program, ("uShadowViewProjections" + suffix).c_str());
+            shadowCascadeSplitLocations[index] = GetUniformLocation(program, ("uShadowCascadeSplits" + suffix).c_str());
+            shadowMapLocations[index] = GetUniformLocation(program, ("uShadowMaps" + suffix).c_str());
+        }
         baseColorLocation = GetUniformLocation(program, "uBaseColor");
         lightDirectionLocation = GetUniformLocation(program, "uLightDirection");
         lightColorLocation = GetUniformLocation(program, "uLightColor");
@@ -616,8 +720,12 @@ struct SdlGlRenderDevice::Impl
         hasAoTextureLocation = GetUniformLocation(program, "uHasAoTexture");
         emissiveTextureLocation = GetUniformLocation(program, "uEmissiveTexture");
         hasEmissiveTextureLocation = GetUniformLocation(program, "uHasEmissiveTexture");
-        shadowMapLocation = GetUniformLocation(program, "uShadowMap");
-        environmentTextureLocation = GetUniformLocation(program, "uEnvironmentMap");
+        packedTextureLocation = GetUniformLocation(program, "uPackedTexture");
+        hasPackedTextureLocation = GetUniformLocation(program, "uHasPackedTexture");
+        packedLayoutRmaLocation = GetUniformLocation(program, "uPackedLayoutRma");
+        environmentIrradianceLocation = GetUniformLocation(program, "uEnvironmentIrradiance");
+        environmentPrefilterLocation = GetUniformLocation(program, "uEnvironmentPrefilter");
+        environmentBrdfLocation = GetUniformLocation(program, "uEnvironmentBrdfLut");
         hasEnvironmentLocation = GetUniformLocation(program, "uHasEnvironment");
         return true;
     }
@@ -698,10 +806,21 @@ struct SdlGlRenderDevice::Impl
         if (!shadowProgram || !toneProgram || !uiProgram || !particleProgram)
             return false;
         shadowMvpLocation = GetUniformLocation(shadowProgram, "uLightMvp");
+        shadowLightViewProjectionLocation = GetUniformLocation(shadowProgram, "uLightViewProjection");
+        shadowInstancedLocation = GetUniformLocation(shadowProgram, "uInstanced");
+        shadowAlphaTextureLocation = GetUniformLocation(shadowProgram, "uShadowAlphaTexture");
+        shadowHasAlphaTextureLocation = GetUniformLocation(shadowProgram, "uShadowHasAlphaTexture");
+        shadowOpacityLocation = GetUniformLocation(shadowProgram, "uShadowOpacity");
         toneTextureLocation = GetUniformLocation(toneProgram, "uHdrTexture");
+        toneDepthTextureLocation = GetUniformLocation(toneProgram, "uDepthTexture");
+        toneHistoryTextureLocation = GetUniformLocation(toneProgram, "uHistoryTexture");
         exposureLocation = GetUniformLocation(toneProgram, "uExposure");
         inverseResolutionLocation = GetUniformLocation(toneProgram, "uInverseResolution");
         fxaaEnabledLocation = GetUniformLocation(toneProgram, "uFxaaEnabled");
+        bloomEnabledLocation = GetUniformLocation(toneProgram, "uBloomEnabled");
+        ssaoEnabledLocation = GetUniformLocation(toneProgram, "uSsaoEnabled");
+        taaEnabledLocation = GetUniformLocation(toneProgram, "uTaaEnabled");
+        historyValidLocation = GetUniformLocation(toneProgram, "uHistoryValid");
         GenVertexArrays(1, &fullScreenVao);
         uiViewportLocation = GetUniformLocation(uiProgram, "uViewport");
         uiColorLocation = GetUniformLocation(uiProgram, "uColor");
@@ -794,6 +913,16 @@ struct SdlGlRenderDevice::Impl
         EnableVertexAttribArray(4);
         VertexAttribPointer(5, 4, GL_FLOAT, GL_FALSE, sizeof(MeshVertex), reinterpret_cast<void *>(offsetof(MeshVertex, boneWeights)));
         EnableVertexAttribArray(5);
+        GenBuffers(1, &mesh.instanceBuffer);
+        BindBuffer(GL_ARRAY_BUFFER, mesh.instanceBuffer);
+        BufferData(GL_ARRAY_BUFFER, 0, nullptr, GL_DYNAMIC_DRAW);
+        for (GLuint column = 0; column < 4; ++column)
+        {
+            VertexAttribPointer(8 + column, 4, GL_FLOAT, GL_FALSE, sizeof(Mat4),
+                                reinterpret_cast<void *>(static_cast<std::uintptr_t>(column * sizeof(float) * 4)));
+            EnableVertexAttribArray(8 + column);
+            VertexAttribDivisor(8 + column, 1);
+        }
         BindVertexArray(0);
         mesh.indexCount = static_cast<GLsizei>(indices.size());
         mesh.byteSize = requiredBytes;
@@ -818,6 +947,8 @@ struct SdlGlRenderDevice::Impl
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+        if (maximumAnisotropy > 1.0f)
+            glTexParameterf(GL_TEXTURE_2D, 0x84FE, maximumAnisotropy);
         glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
         if (resource->IsHdr())
             glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA16F, resource->GetWidth(), resource->GetHeight(), 0, GL_RGBA, GL_FLOAT,
@@ -901,6 +1032,9 @@ bool SdlGlRenderDevice::Initialize()
         Shutdown();
         return false;
     }
+    const char *extensions = reinterpret_cast<const char *>(glGetString(GL_EXTENSIONS));
+    if (extensions && std::strstr(extensions, "GL_EXT_texture_filter_anisotropic"))
+        glGetFloatv(0x84FF, &m_impl->maximumAnisotropy);
     const auto vertexSource = ShaderPipeline::Preprocess(m_impl->vertexShaderPath),
                fragmentSource = ShaderPipeline::Preprocess(m_impl->fragmentShaderPath);
     const bool programCreated = vertexSource.success && fragmentSource.success
@@ -942,6 +1076,8 @@ void SdlGlRenderDevice::Shutdown()
         {
             m_impl->DeleteBuffers(1, &pair.second.vertexBuffer);
             m_impl->DeleteBuffers(1, &pair.second.indexBuffer);
+            if (pair.second.instanceBuffer)
+                m_impl->DeleteBuffers(1, &pair.second.instanceBuffer);
             m_impl->DeleteVertexArrays(1, &pair.second.vao);
         }
         m_impl->meshes.clear();
@@ -1128,9 +1264,10 @@ Vec2 SdlGlRenderDevice::GetViewportSize() const
     return {static_cast<float>(width), static_cast<float>(height)};
 }
 
-void SdlGlRenderDevice::BeginShadowPass(const FrameView &view)
+void SdlGlRenderDevice::BeginShadowPass(const FrameView &view, const std::size_t cascadeIndex)
 {
     m_impl->view = view;
+    m_impl->activeShadowCascade = std::min(cascadeIndex, FrameView::MaxShadowCascades - 1);
     const int previous = (m_impl->timerIndex + 1) % 2;
     if (m_impl->timerIssued[previous])
     {
@@ -1145,7 +1282,7 @@ void SdlGlRenderDevice::BeginShadowPass(const FrameView &view)
     }
     m_impl->BeginQuery(GL_TIME_ELAPSED, m_impl->timerQueries[m_impl->timerIndex]);
     m_impl->timerActive = true;
-    m_impl->BindFramebuffer(GL_FRAMEBUFFER, m_impl->shadowFramebuffer);
+    m_impl->BindFramebuffer(GL_FRAMEBUFFER, m_impl->shadowFramebuffers[m_impl->activeShadowCascade]);
     glViewport(0, 0, m_impl->shadowResolution, m_impl->shadowResolution);
     glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
     glDepthMask(GL_TRUE);
@@ -1156,6 +1293,7 @@ void SdlGlRenderDevice::BeginShadowPass(const FrameView &view)
     glPolygonOffset(2.0f, 4.0f);
     glClear(GL_DEPTH_BUFFER_BIT);
     m_impl->UseProgram(m_impl->shadowProgram);
+    m_impl->Uniform1i(m_impl->shadowAlphaTextureLocation, 0);
 }
 
 void SdlGlRenderDevice::DrawShadow(const RenderItem &item)
@@ -1163,10 +1301,43 @@ void SdlGlRenderDevice::DrawShadow(const RenderItem &item)
     const auto *mesh = m_impl->GetOrCreateMesh(item.mesh);
     if (!mesh)
         return;
-    const Mat4 lightMvp = m_impl->view.lightViewProjection * item.model;
+    const Mat4 lightMvp = m_impl->view.shadowViewProjections[m_impl->activeShadowCascade] * item.model;
     m_impl->UniformMatrix4fv(m_impl->shadowMvpLocation, 1, GL_FALSE, lightMvp.Data());
+    m_impl->Uniform1i(m_impl->shadowInstancedLocation, 0);
+    const GLuint alphaTexture = m_impl->GetOrCreateTexture(item.texture, true);
+    m_impl->ActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, alphaTexture);
+    m_impl->Uniform1i(m_impl->shadowHasAlphaTextureLocation, alphaTexture ? 1 : 0);
+    const float opacity = item.material ? item.material->GetBaseColor().w : 1.0f;
+    m_impl->Uniform1f(m_impl->shadowOpacityLocation, opacity);
     m_impl->BindVertexArray(mesh->vao);
     glDrawElements(GL_TRIANGLES, mesh->indexCount, GL_UNSIGNED_INT, nullptr);
+    m_impl->BindVertexArray(0);
+}
+
+void SdlGlRenderDevice::DrawShadowInstanced(const std::vector<RenderItem> &items)
+{
+    if (items.empty())
+        return;
+    auto *mesh = const_cast<Impl::GpuMesh *>(m_impl->GetOrCreateMesh(items.front().mesh));
+    if (!mesh)
+        return;
+    std::vector<Mat4> models;
+    models.reserve(items.size());
+    for (const auto &item : items)
+        models.push_back(item.model);
+    m_impl->BindVertexArray(mesh->vao);
+    m_impl->BindBuffer(GL_ARRAY_BUFFER, mesh->instanceBuffer);
+    m_impl->BufferData(GL_ARRAY_BUFFER, static_cast<GLsizeiptr>(models.size() * sizeof(Mat4)), models.data(), GL_DYNAMIC_DRAW);
+    m_impl->Uniform1i(m_impl->shadowInstancedLocation, 1);
+    m_impl->UniformMatrix4fv(m_impl->shadowLightViewProjectionLocation, 1, GL_FALSE,
+                             m_impl->view.shadowViewProjections[m_impl->activeShadowCascade].Data());
+    const GLuint alphaTexture = m_impl->GetOrCreateTexture(items.front().texture, true);
+    m_impl->ActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, alphaTexture);
+    m_impl->Uniform1i(m_impl->shadowHasAlphaTextureLocation, alphaTexture ? 1 : 0);
+    m_impl->Uniform1f(m_impl->shadowOpacityLocation, items.front().material ? items.front().material->GetBaseColor().w : 1.0f);
+    m_impl->DrawElementsInstanced(GL_TRIANGLES, mesh->indexCount, GL_UNSIGNED_INT, nullptr, static_cast<GLsizei>(models.size()));
     m_impl->BindVertexArray(0);
 }
 
@@ -1198,7 +1369,17 @@ void SdlGlRenderDevice::BeginFrame(const FrameView &view)
     glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
     m_impl->UseProgram(m_impl->program);
-    m_impl->UniformMatrix4fv(m_impl->lightViewProjectionLocation, 1, GL_FALSE, view.lightViewProjection.Data());
+    const Mat4 viewProjection = view.projection * view.view;
+    m_impl->UniformMatrix4fv(m_impl->viewProjectionLocation, 1, GL_FALSE, viewProjection.Data());
+    m_impl->UniformMatrix4fv(m_impl->viewLocation, 1, GL_FALSE, view.view.Data());
+    for (std::size_t cascade = 0; cascade < FrameView::MaxShadowCascades; ++cascade)
+    {
+        m_impl->UniformMatrix4fv(m_impl->shadowViewProjectionLocations[cascade], 1, GL_FALSE, view.shadowViewProjections[cascade].Data());
+        m_impl->Uniform1f(m_impl->shadowCascadeSplitLocations[cascade], view.shadowCascadeSplits[cascade]);
+        m_impl->Uniform1i(m_impl->shadowMapLocations[cascade], static_cast<GLint>(8 + cascade));
+        m_impl->ActiveTexture(GL_TEXTURE0 + 8 + static_cast<GLenum>(cascade));
+        glBindTexture(GL_TEXTURE_2D, m_impl->shadowDepths[cascade]);
+    }
     m_impl->Uniform3f(m_impl->lightDirectionLocation, view.lightDirection.x, view.lightDirection.y, view.lightDirection.z);
     m_impl->Uniform3f(m_impl->lightColorLocation, view.lightColor.x, view.lightColor.y, view.lightColor.z);
     m_impl->Uniform1f(m_impl->lightIntensityLocation, view.lightIntensity);
@@ -1213,9 +1394,6 @@ void SdlGlRenderDevice::BeginFrame(const FrameView &view)
     }
     m_impl->Uniform3f(m_impl->cameraPositionLocation, view.cameraPosition.x, view.cameraPosition.y, view.cameraPosition.z);
     m_impl->Uniform1i(m_impl->textureLocation, 0);
-    m_impl->Uniform1i(m_impl->shadowMapLocation, 1);
-    m_impl->ActiveTexture(GL_TEXTURE1);
-    glBindTexture(GL_TEXTURE_2D, m_impl->shadowDepth);
     m_impl->ActiveTexture(GL_TEXTURE0);
 }
 
@@ -1241,6 +1419,7 @@ void SdlGlRenderDevice::Draw(const RenderItem &item)
     const float roughness = item.material ? item.material->GetRoughness() : 0.7f;
     const Vec3 emissive = item.material ? item.material->GetEmissive() : Vec3{};
     m_impl->UniformMatrix4fv(m_impl->mvpLocation, 1, GL_FALSE, mvp.Data());
+    m_impl->Uniform1i(m_impl->instancedLocation, 0);
     std::array<Mat4, 64> identityBones;
     for (auto &bone : identityBones)
         bone = Mat4::Identity();
@@ -1266,11 +1445,80 @@ void SdlGlRenderDevice::Draw(const RenderItem &item)
     bindTexture(item.roughnessTexture, 4, false, m_impl->roughnessTextureLocation, m_impl->hasRoughnessTextureLocation);
     bindTexture(item.aoTexture, 5, false, m_impl->aoTextureLocation, m_impl->hasAoTextureLocation);
     bindTexture(item.emissiveTexture, 6, true, m_impl->emissiveTextureLocation, m_impl->hasEmissiveTextureLocation);
-    bindTexture(m_impl->view.environmentTexture, 7, false, m_impl->environmentTextureLocation, m_impl->hasEnvironmentLocation);
+    bindTexture(item.packedTexture, 13, false, m_impl->packedTextureLocation, m_impl->hasPackedTextureLocation);
+    m_impl->Uniform1i(m_impl->packedLayoutRmaLocation, item.material && item.material->GetPackedTextureLayout() == "RMA" ? 1 : 0);
+    const auto irradiance = m_impl->view.environmentIrradiance ? m_impl->view.environmentIrradiance : m_impl->view.environmentTexture;
+    const auto prefilter = m_impl->view.environmentPrefilter ? m_impl->view.environmentPrefilter : m_impl->view.environmentTexture;
+    bindTexture(irradiance, 7, false, m_impl->environmentIrradianceLocation, -1);
+    bindTexture(prefilter, 11, false, m_impl->environmentPrefilterLocation, -1);
+    bindTexture(m_impl->view.environmentBrdfLut, 12, false, m_impl->environmentBrdfLocation, -1);
+    m_impl->Uniform1i(m_impl->hasEnvironmentLocation, irradiance && prefilter && m_impl->view.environmentBrdfLut && irradiance->IsReady() &&
+                                                              prefilter->IsReady() && m_impl->view.environmentBrdfLut->IsReady()
+                                                          ? 1
+                                                          : 0);
     m_impl->ActiveTexture(GL_TEXTURE0);
     m_impl->BindVertexArray(mesh->vao);
     glDrawElements(GL_TRIANGLES, mesh->indexCount, GL_UNSIGNED_INT, nullptr);
     m_impl->BindVertexArray(0);
+}
+
+void SdlGlRenderDevice::DrawInstanced(const std::vector<RenderItem> &items)
+{
+    if (items.empty())
+        return;
+    glDisable(GL_BLEND);
+    glDepthMask(GL_TRUE);
+    auto *mesh = const_cast<Impl::GpuMesh *>(m_impl->GetOrCreateMesh(items.front().mesh));
+    if (!mesh)
+        return;
+    std::vector<Mat4> models;
+    models.reserve(items.size());
+    for (const auto &item : items)
+        models.push_back(item.model);
+    m_impl->BindVertexArray(mesh->vao);
+    m_impl->BindBuffer(GL_ARRAY_BUFFER, mesh->instanceBuffer);
+    m_impl->BufferData(GL_ARRAY_BUFFER, static_cast<GLsizeiptr>(models.size() * sizeof(Mat4)), models.data(), GL_DYNAMIC_DRAW);
+    m_impl->Uniform1i(m_impl->instancedLocation, 1);
+    m_impl->UniformMatrix4fv(m_impl->modelLocation, 1, GL_FALSE, Mat4::Identity().Data());
+    std::array<Mat4, 64> identityBones;
+    for (auto &bone : identityBones)
+        bone = Mat4::Identity();
+    m_impl->UniformMatrix4fv(m_impl->bonesLocation, static_cast<GLsizei>(identityBones.size()), GL_FALSE, identityBones[0].Data());
+    const auto &first = items.front();
+    const Vec4 color = first.material ? first.material->GetBaseColor() : Vec4{0.3f, 0.7f, 1.0f, 1.0f};
+    const Vec3 emissive = first.material ? first.material->GetEmissive() : Vec3{};
+    m_impl->Uniform4f(m_impl->baseColorLocation, color.x, color.y, color.z, color.w);
+    m_impl->Uniform1f(m_impl->metallicLocation, first.material ? first.material->GetMetallic() : 0.0f);
+    m_impl->Uniform1f(m_impl->roughnessLocation, first.material ? first.material->GetRoughness() : 0.7f);
+    m_impl->Uniform3f(m_impl->emissiveLocation, emissive.x, emissive.y, emissive.z);
+    const auto bindTexture = [&](const std::shared_ptr<TextureResource> &resource, const int unit, const bool srgb,
+                                 const GLint samplerLocation, const GLint enabledLocation) {
+        const GLuint texture = m_impl->GetOrCreateTexture(resource, srgb);
+        m_impl->ActiveTexture(GL_TEXTURE0 + unit);
+        glBindTexture(GL_TEXTURE_2D, texture);
+        m_impl->Uniform1i(samplerLocation, unit);
+        m_impl->Uniform1i(enabledLocation, texture != 0 ? 1 : 0);
+    };
+    bindTexture(first.texture, 0, true, m_impl->textureLocation, m_impl->hasTextureLocation);
+    bindTexture(first.normalTexture, 2, false, m_impl->normalTextureLocation, m_impl->hasNormalTextureLocation);
+    bindTexture(first.metallicTexture, 3, false, m_impl->metallicTextureLocation, m_impl->hasMetallicTextureLocation);
+    bindTexture(first.roughnessTexture, 4, false, m_impl->roughnessTextureLocation, m_impl->hasRoughnessTextureLocation);
+    bindTexture(first.aoTexture, 5, false, m_impl->aoTextureLocation, m_impl->hasAoTextureLocation);
+    bindTexture(first.emissiveTexture, 6, true, m_impl->emissiveTextureLocation, m_impl->hasEmissiveTextureLocation);
+    bindTexture(first.packedTexture, 13, false, m_impl->packedTextureLocation, m_impl->hasPackedTextureLocation);
+    m_impl->Uniform1i(m_impl->packedLayoutRmaLocation, first.material && first.material->GetPackedTextureLayout() == "RMA" ? 1 : 0);
+    const auto irradiance = m_impl->view.environmentIrradiance ? m_impl->view.environmentIrradiance : m_impl->view.environmentTexture;
+    const auto prefilter = m_impl->view.environmentPrefilter ? m_impl->view.environmentPrefilter : m_impl->view.environmentTexture;
+    bindTexture(irradiance, 7, false, m_impl->environmentIrradianceLocation, -1);
+    bindTexture(prefilter, 11, false, m_impl->environmentPrefilterLocation, -1);
+    bindTexture(m_impl->view.environmentBrdfLut, 12, false, m_impl->environmentBrdfLocation, -1);
+    m_impl->Uniform1i(m_impl->hasEnvironmentLocation, irradiance && prefilter && m_impl->view.environmentBrdfLut && irradiance->IsReady() &&
+                                                              prefilter->IsReady() && m_impl->view.environmentBrdfLut->IsReady()
+                                                          ? 1
+                                                          : 0);
+    m_impl->DrawElementsInstanced(GL_TRIANGLES, mesh->indexCount, GL_UNSIGNED_INT, nullptr, static_cast<GLsizei>(models.size()));
+    m_impl->BindVertexArray(0);
+    m_impl->ActiveTexture(GL_TEXTURE0);
 }
 
 void SdlGlRenderDevice::DrawParticles(const std::vector<Particle> &particles)
@@ -1316,12 +1564,27 @@ void SdlGlRenderDevice::EndFrame()
     m_impl->ActiveTexture(GL_TEXTURE2);
     glBindTexture(GL_TEXTURE_2D, m_impl->sceneHdrColor);
     m_impl->Uniform1i(m_impl->toneTextureLocation, 2);
+    m_impl->ActiveTexture(GL_TEXTURE3);
+    glBindTexture(GL_TEXTURE_2D, m_impl->sceneDepth);
+    m_impl->Uniform1i(m_impl->toneDepthTextureLocation, 3);
+    m_impl->ActiveTexture(GL_TEXTURE4);
+    glBindTexture(GL_TEXTURE_2D, m_impl->historyHdrColor);
+    m_impl->Uniform1i(m_impl->toneHistoryTextureLocation, 4);
     m_impl->Uniform1f(m_impl->exposureLocation, m_impl->exposure);
     m_impl->Uniform2f(m_impl->inverseResolutionLocation, 1.0f / std::max(1, m_impl->sceneWidth), 1.0f / std::max(1, m_impl->sceneHeight));
     m_impl->Uniform1i(m_impl->fxaaEnabledLocation, m_impl->fxaaEnabled ? 1 : 0);
+    m_impl->Uniform1i(m_impl->bloomEnabledLocation, m_impl->bloomEnabled ? 1 : 0);
+    m_impl->Uniform1i(m_impl->ssaoEnabledLocation, m_impl->ssaoEnabled ? 1 : 0);
+    m_impl->Uniform1i(m_impl->taaEnabledLocation, m_impl->taaEnabled ? 1 : 0);
+    m_impl->Uniform1i(m_impl->historyValidLocation, m_impl->historyValid ? 1 : 0);
     m_impl->BindVertexArray(m_impl->fullScreenVao);
     glDrawArrays(GL_TRIANGLES, 0, 3);
     m_impl->BindVertexArray(0);
+    m_impl->BindFramebuffer(GL_FRAMEBUFFER, m_impl->sceneFramebuffer);
+    m_impl->ActiveTexture(GL_TEXTURE4);
+    glBindTexture(GL_TEXTURE_2D, m_impl->historyHdrColor);
+    glCopyTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 0, 0, m_impl->sceneWidth, m_impl->sceneHeight);
+    m_impl->historyValid = true;
     m_impl->ActiveTexture(GL_TEXTURE0);
     glEnable(GL_CULL_FACE);
     glEnable(GL_DEPTH_TEST);
@@ -1501,6 +1764,37 @@ void SdlGlRenderDevice::SetFxaaEnabled(const bool enabled)
 bool SdlGlRenderDevice::IsFxaaEnabled() const
 {
     return m_impl && m_impl->fxaaEnabled;
+}
+void SdlGlRenderDevice::SetBloomEnabled(const bool enabled)
+{
+    if (m_impl)
+        m_impl->bloomEnabled = enabled;
+}
+bool SdlGlRenderDevice::IsBloomEnabled() const
+{
+    return m_impl && m_impl->bloomEnabled;
+}
+void SdlGlRenderDevice::SetSsaoEnabled(const bool enabled)
+{
+    if (m_impl)
+        m_impl->ssaoEnabled = enabled;
+}
+bool SdlGlRenderDevice::IsSsaoEnabled() const
+{
+    return m_impl && m_impl->ssaoEnabled;
+}
+void SdlGlRenderDevice::SetTaaEnabled(const bool enabled)
+{
+    if (m_impl)
+    {
+        m_impl->taaEnabled = enabled;
+        if (!enabled)
+            m_impl->historyValid = false;
+    }
+}
+bool SdlGlRenderDevice::IsTaaEnabled() const
+{
+    return m_impl && m_impl->taaEnabled;
 }
 float SdlGlRenderDevice::GetLastGpuFrameMilliseconds() const
 {

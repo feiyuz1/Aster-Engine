@@ -38,6 +38,7 @@ struct InputState
 struct FrameView
 {
     static constexpr std::size_t MaxLights = 4;
+    static constexpr std::size_t MaxShadowCascades = 3;
     Mat4 view = Mat4::Identity();
     Mat4 projection = Mat4::Identity();
     Vec3 cameraPosition{0.0f, 0.0f, 5.0f};
@@ -45,11 +46,16 @@ struct FrameView
     Vec3 lightColor{1.0f, 1.0f, 1.0f};
     float lightIntensity = 1.0f;
     Mat4 lightViewProjection = Mat4::Identity();
+    std::array<Mat4, MaxShadowCascades> shadowViewProjections{};
+    std::array<float, MaxShadowCascades> shadowCascadeSplits{};
     std::array<Vec3, MaxLights> lightDirections{};
     std::array<Vec3, MaxLights> lightColors{};
     std::array<float, MaxLights> lightIntensities{};
     int lightCount = 0;
     std::shared_ptr<TextureResource> environmentTexture;
+    std::shared_ptr<TextureResource> environmentIrradiance;
+    std::shared_ptr<TextureResource> environmentPrefilter;
+    std::shared_ptr<TextureResource> environmentBrdfLut;
 };
 
 struct RenderItem
@@ -65,7 +71,9 @@ struct RenderItem
     std::shared_ptr<TextureResource> roughnessTexture;
     std::shared_ptr<TextureResource> aoTexture;
     std::shared_ptr<TextureResource> emissiveTexture;
+    std::shared_ptr<TextureResource> packedTexture;
     std::vector<Mat4> skinMatrices;
+    Aabb worldBounds{};
     bool transparent = false;
 };
 
@@ -87,11 +95,13 @@ class RenderDevice
     virtual const InputState &GetInputState() const = 0;
     virtual float GetAspectRatio() const = 0;
     virtual Vec2 GetViewportSize() const = 0;
-    virtual void BeginShadowPass(const FrameView &view) = 0;
+    virtual void BeginShadowPass(const FrameView &view, std::size_t cascadeIndex) = 0;
     virtual void DrawShadow(const RenderItem &item) = 0;
+    virtual void DrawShadowInstanced(const std::vector<RenderItem> &items) = 0;
     virtual void EndShadowPass() = 0;
     virtual void BeginFrame(const FrameView &view) = 0;
     virtual void Draw(const RenderItem &item) = 0;
+    virtual void DrawInstanced(const std::vector<RenderItem> &items) = 0;
     virtual void DrawParticles(const std::vector<Particle> &particles) = 0;
     virtual void EndFrame() = 0;
     virtual void DrawUi(const std::vector<UIDrawCommand> &commands) = 0;
@@ -110,11 +120,13 @@ class NullRenderDevice final : public RenderDevice
     const InputState &GetInputState() const override;
     float GetAspectRatio() const override;
     Vec2 GetViewportSize() const override;
-    void BeginShadowPass(const FrameView &view) override;
+    void BeginShadowPass(const FrameView &view, std::size_t cascadeIndex) override;
     void DrawShadow(const RenderItem &item) override;
+    void DrawShadowInstanced(const std::vector<RenderItem> &items) override;
     void EndShadowPass() override;
     void BeginFrame(const FrameView &view) override;
     void Draw(const RenderItem &item) override;
+    void DrawInstanced(const std::vector<RenderItem> &items) override;
     void DrawParticles(const std::vector<Particle> &particles) override;
     void EndFrame() override;
     void DrawUi(const std::vector<UIDrawCommand> &commands) override;
@@ -135,6 +147,7 @@ class RenderQueue
     void Sort();
     void Clear();
     const std::vector<RenderItem> &GetItems() const;
+    void ApplyConservativeOcclusion(const Vec3 &cameraPosition);
 
   private:
     std::vector<RenderItem> m_items;
@@ -180,6 +193,9 @@ class Renderer
     Vec3 m_cameraOverrideRotation{-10.0f, 0.0f, 0.0f};
     float m_cameraOverrideFov = 60.0f;
     std::string m_environmentPath;
+    std::string m_environmentIrradiancePath;
+    std::string m_environmentPrefilterPath;
+    std::string m_environmentBrdfPath;
     FrameProfile m_lastFrameProfile;
 };
 } // namespace MiniEngine
