@@ -234,6 +234,8 @@ void Renderer::BuildRenderQueue(World &world)
         item.entity = entity;
         item.distanceToCamera = distance;
         item.model = world.GetWorldMatrix(entity);
+        if (const auto *animation = world.GetComponent<AnimationComponent>(entity))
+            item.skinMatrices = animation->skinMatrices;
         item.mesh = std::move(mesh);
         item.transparent = transparent;
         if (material)

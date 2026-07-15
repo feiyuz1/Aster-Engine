@@ -1244,6 +1244,8 @@ void SdlGlRenderDevice::Draw(const RenderItem &item)
     std::array<Mat4, 64> identityBones;
     for (auto &bone : identityBones)
         bone = Mat4::Identity();
+    for (std::size_t index = 0; index < item.skinMatrices.size() && index < identityBones.size(); ++index)
+        identityBones[index] = item.skinMatrices[index];
     m_impl->UniformMatrix4fv(m_impl->bonesLocation, static_cast<GLsizei>(identityBones.size()), GL_FALSE, identityBones[0].Data());
     m_impl->UniformMatrix4fv(m_impl->modelLocation, 1, GL_FALSE, item.model.Data());
     m_impl->Uniform4f(m_impl->baseColorLocation, color.x, color.y, color.z, color.w);

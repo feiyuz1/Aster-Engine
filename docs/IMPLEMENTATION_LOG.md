@@ -2,7 +2,7 @@
 
 本文记录本轮开发对 TinyEngine 做过的主要更新，以及各功能采用的简要实现方式。内容按 Git 提交顺序整理，方便以后定位代码、回溯设计和继续开发。
 
-当前引擎版本：0.21.0
+当前引擎版本：0.22.0
 
 参考源码：Unreal Engine 5.3.2
 
@@ -355,6 +355,13 @@
 - MeshVertex、文本加载器和 `TNYMSH2` Cook 格式保留 BoneIndices/BoneWeights，同时兼容 `TNYMSH1`。
 - OpenGL VAO 增加 location 4/5，默认 Shader 在 GPU 计算四骨骼混合矩阵。
 - 当前上传 64 个 Identity Bind Pose，保证旧网格和权重网格兼容；下一步把 AnimationStateMachine 产出的 Skin Matrices 接入 RenderItem。
+
+## 24. 全局骨骼编号与逐实体 GPU Pose
+
+- Assimp 在模型级建立最多 64 根骨骼的稳定名称索引，多 Mesh 共用同一编号空间，避免局部编号错绑。
+- AnimationComponent 保存运行时 Skin Matrices；Renderer 将其复制进对应实体 RenderItem。
+- OpenGL 每次 Draw 上传该实体的 Bone Matrix，不足 64 根的位置补 Identity，因此静态/蒙皮实体可共用 Shader。
+- 当前仍需输出 Skeleton 层级、Inverse Bind 和 Assimp Clip，才能由导入动画自动填充这些矩阵。
 
 ## 当前仍未完成
 

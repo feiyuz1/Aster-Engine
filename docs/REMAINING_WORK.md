@@ -15,7 +15,7 @@
 
 ## P1 未完成
 
-- Assimp 四骨骼权重、Mesh/Cook 保留和 GPU Skinning 顶点通路已完成；仍缺层级/Inverse Bind/Clip 资产导入、逐实体 Skin Matrix 上传、Blend Tree 与 Animation Graph 编辑器。
+- Assimp 四骨骼权重、全模型统一编号、Mesh/Cook 保留、逐实体矩阵上传和 GPU Skinning 已完成；仍缺层级/Inverse Bind/Clip 资产导入及其自动采样绑定、Blend Tree 与 Animation Graph 编辑器。
 - 粒子 CPU 仿真和 OpenGL Billboard Renderer 已完成；仍缺纹理 Flipbook、批量实例化/GPU 仿真与特效编辑器。Bloom、SSAO、TAA、实例化和遮挡裁剪仍未完成；FXAA 与 LOD 已完成。
 - OGG 解码与长音频流式播放；空间音频、并发 Voice 和 Mixer/Bus 已完成。
 - 平台输入 Glyph 和手柄震动工具；输入映射资产、运行时重绑定和手柄热插拔已完成。

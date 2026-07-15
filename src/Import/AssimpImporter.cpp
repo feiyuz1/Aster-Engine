@@ -43,7 +43,8 @@ std::filesystem::path ResourcePath(const std::filesystem::path &file, const std:
     return options.resourcePrefix.empty() ? file.lexically_normal() : (options.resourcePrefix / relative).lexically_normal();
 }
 
-bool WriteMesh(const aiMesh &mesh, const std::filesystem::path &path, const float scale)
+bool WriteMesh(const aiMesh &mesh, const std::filesystem::path &path, const float scale,
+               const std::unordered_map<std::string, unsigned int> &globalBones)
 {
     std::ostringstream out;
     out << std::setprecision(9) << "TINY_MESH 2\n";
@@ -68,7 +69,11 @@ bool WriteMesh(const aiMesh &mesh, const std::filesystem::path &path, const floa
         float weights[4]{};
     };
     std::vector<Skin> skin(mesh.mNumVertices);
-    for (unsigned int boneIndex = 0; boneIndex < mesh.mNumBones && boneIndex < 64; ++boneIndex)
+    for (unsigned int boneIndex = 0; boneIndex < mesh.mNumBones; ++boneIndex)
+    {
+        const auto globalBone = globalBones.find(mesh.mBones[boneIndex]->mName.C_Str());
+        if (globalBone == globalBones.end() || globalBone->second >= 64)
+            continue;
         for (unsigned int weightIndex = 0; weightIndex < mesh.mBones[boneIndex]->mNumWeights; ++weightIndex)
         {
             const auto &weight = mesh.mBones[boneIndex]->mWeights[weightIndex];
@@ -84,10 +89,11 @@ bool WriteMesh(const aiMesh &mesh, const std::filesystem::path &path, const floa
                         vertex.indices[move] = vertex.indices[move - 1];
                     }
                     vertex.weights[slot] = weight.mWeight;
-                    vertex.indices[slot] = static_cast<float>(boneIndex);
+                    vertex.indices[slot] = static_cast<float>(globalBone->second);
                     break;
                 }
         }
+    }
     for (unsigned int index = 0; index < mesh.mNumVertices; ++index)
     {
         const float total = skin[index].weights[0] + skin[index].weights[1] + skin[index].weights[2] + skin[index].weights[3];
@@ -265,6 +271,14 @@ ModelImportResult AssimpImporter::ImportModel(const std::filesystem::path &sourc
     }
 
     const std::string baseName = SafeName(source.stem().string(), "Model");
+    std::unordered_map<std::string, unsigned int> globalBones;
+    for (unsigned int meshIndex = 0; meshIndex < scene->mNumMeshes; ++meshIndex)
+        for (unsigned int boneIndex = 0; boneIndex < scene->mMeshes[meshIndex]->mNumBones; ++boneIndex)
+        {
+            const std::string name = scene->mMeshes[meshIndex]->mBones[boneIndex]->mName.C_Str();
+            if (!globalBones.count(name) && globalBones.size() < 64)
+                globalBones[name] = static_cast<unsigned int>(globalBones.size());
+        }
     std::vector<std::filesystem::path> materialPaths(scene->mNumMaterials);
     for (unsigned int index = 0; index < scene->mNumMaterials; ++index)
     {
@@ -287,7 +301,7 @@ ModelImportResult AssimpImporter::ImportModel(const std::filesystem::path &sourc
         const aiMesh &mesh = *scene->mMeshes[index];
         const auto path =
             outputDirectory / (baseName + "_Mesh" + std::to_string(index) + "_" + SafeName(mesh.mName.C_Str(), "Mesh") + ".mesh");
-        if (!WriteMesh(mesh, path, options.scale))
+        if (!WriteMesh(mesh, path, options.scale, globalBones))
         {
             result.error = "Failed to write mesh: " + path.generic_string();
             return result;

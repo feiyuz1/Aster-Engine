@@ -65,6 +65,7 @@ struct RenderItem
     std::shared_ptr<TextureResource> roughnessTexture;
     std::shared_ptr<TextureResource> aoTexture;
     std::shared_ptr<TextureResource> emissiveTexture;
+    std::vector<Mat4> skinMatrices;
     bool transparent = false;
 };
 

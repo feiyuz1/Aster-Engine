@@ -2,7 +2,7 @@
 
 TinyEngine 是参考 Unreal Engine 5.3.2 模块职责、以 C++17 实现的轻量 3D 引擎。目标不是复制 UE 的 UObject/UHT、完整 RHI 或大型编辑器，而是形成“项目—资产—场景—运行时—渲染—打包—编辑器”的最小可用闭环。
 
-当前版本：0.21.0（Assimp 骨骼权重与 GPU Skinning 数据通路）。
+当前版本：0.22.0（全模型骨骼编号与逐实体 Skin Matrix 上传）。
 
 ## 已实现
 
