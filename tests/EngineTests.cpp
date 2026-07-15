@@ -1,3 +1,4 @@
+#include "MiniEngine/AI/BehaviorTree.hpp"
 #include "MiniEngine/Animation/SkeletalAnimation.hpp"
 #include "MiniEngine/Audio/AudioEngine.hpp"
 #include "MiniEngine/Automation/Automation.hpp"
@@ -5,6 +6,7 @@
 #include "MiniEngine/Build/TargetPlatform.hpp"
 #include "MiniEngine/Core/Config.hpp"
 #include "MiniEngine/Core/CrashReporter.hpp"
+#include "MiniEngine/Core/Module.hpp"
 #include "MiniEngine/Diagnostics/Diagnostics.hpp"
 #include "MiniEngine/ECS/Components.hpp"
 #include "MiniEngine/ECS/ECS.hpp"
@@ -15,6 +17,7 @@
 #include "MiniEngine/Input/InputSystem.hpp"
 #include "MiniEngine/Localization/Localization.hpp"
 #include "MiniEngine/Math/Math.hpp"
+#include "MiniEngine/Navigation/Navigation.hpp"
 #include "MiniEngine/Physics/PhysicsWorld.hpp"
 #include "MiniEngine/Platform/Platform.hpp"
 #include "MiniEngine/Project/Project.hpp"
@@ -31,6 +34,7 @@
 #include "MiniEngine/Task/JobSystem.hpp"
 #include "MiniEngine/UI/UISystem.hpp"
 #include "MiniEngine/VFX/ParticleSystem.hpp"
+#include "MiniEngine/World/WorldPartition.hpp"
 #ifdef TINYENGINE_HAS_ASSIMP
 #include "MiniEngine/Import/AssimpImporter.hpp"
 #endif
@@ -45,6 +49,38 @@
 namespace
 {
 int failures = 0;
+
+class TestModule final : public MiniEngine::IModule
+{
+  public:
+    TestModule(std::string name, std::vector<std::string> dependencies, std::vector<std::string> &events)
+        : m_name(std::move(name)), m_dependencies(std::move(dependencies)), m_events(events)
+    {
+    }
+    const char *GetName() const override
+    {
+        return m_name.c_str();
+    }
+    std::vector<std::string> GetDependencies() const override
+    {
+        return m_dependencies;
+    }
+    bool Startup() override
+    {
+        m_events.push_back("start:" + m_name);
+        return true;
+    }
+    void Shutdown() override
+    {
+        m_events.push_back("stop:" + m_name);
+    }
+
+  private:
+    std::string m_name;
+    std::vector<std::string> m_dependencies;
+    std::vector<std::string> &m_events;
+};
+
 void Check(const bool condition, const char *expression, const int line)
 {
     if (!condition)
@@ -514,6 +550,53 @@ int main()
     CHECK(particles.GetParticles().size() == 4 && particles.GetParticles().front().age > 0.49f);
     particles.Update(0.6f);
     CHECK(particles.GetParticles().empty());
+
+    NavigationGrid navigation;
+    CHECK(navigation.Configure({}, 5, 5, 1.0f));
+    for (int z = 0; z < 4; ++z)
+        CHECK(navigation.SetWalkable(2, z, false));
+    const auto path = navigation.FindPath({0.5f, 0.0f, 0.5f}, {4.5f, 0.0f, 0.5f}, false);
+    CHECK(!path.empty() && std::any_of(path.begin(), path.end(), [](const Vec3 &point) { return point.z > 4.0f; }));
+
+    BehaviorTree behavior;
+    behavior.GetBlackboard().Set("ready", true);
+    int actions = 0;
+    auto sequence = std::make_unique<SequenceNode>();
+    sequence->Add(std::make_unique<ConditionNode>([](const Blackboard &blackboard) {
+        const bool *ready = blackboard.Get<bool>("ready");
+        return ready && *ready;
+    }));
+    sequence->Add(std::make_unique<WaitNode>(0.1f));
+    sequence->Add(std::make_unique<ActionNode>([&actions](Blackboard &, float) {
+        ++actions;
+        return BehaviorStatus::Success;
+    }));
+    behavior.SetRoot(std::move(sequence));
+    CHECK(behavior.Tick(0.05f) == BehaviorStatus::Running);
+    CHECK(behavior.Tick(0.05f) == BehaviorStatus::Success && actions == 1);
+
+    WorldPartition partition;
+    CHECK(partition.RegisterCell({{0, 0}, {{0, -1, 0}, {10, 1, 10}}, "near.scene"}));
+    CHECK(partition.RegisterCell({{1, 0}, {{100, -1, 0}, {110, 1, 10}}, "far.scene"}));
+    partition.SetStreamingDistances(5.0f, 10.0f);
+    int loadedCells = 0, unloadedCells = 0;
+    const auto loadCell = [&loadedCells](const WorldPartitionCell &) {
+        ++loadedCells;
+        return true;
+    };
+    const auto unloadCell = [&unloadedCells](const WorldPartitionCell &) { ++unloadedCells; };
+    partition.Update({2, 0, 2}, loadCell, unloadCell);
+    CHECK(partition.GetLoadedCells().size() == 1 && loadedCells == 1);
+    partition.Update({105, 0, 2}, loadCell, unloadCell);
+    CHECK(partition.GetLoadedCells().size() == 1 && loadedCells == 2 && unloadedCells == 1);
+
+    std::vector<std::string> moduleEvents;
+    ModuleManager modules;
+    CHECK(modules.Register(std::make_unique<TestModule>("Gameplay", std::vector<std::string>{"Core"}, moduleEvents)));
+    CHECK(modules.Register(std::make_unique<TestModule>("Core", std::vector<std::string>{}, moduleEvents)));
+    CHECK(modules.StartupAll());
+    modules.ShutdownAll();
+    CHECK(moduleEvents == std::vector<std::string>({"start:Core", "start:Gameplay", "stop:Gameplay", "stop:Core"}));
 
     if (failures == 0)
         std::cout << "All TinyEngine tests passed\n";

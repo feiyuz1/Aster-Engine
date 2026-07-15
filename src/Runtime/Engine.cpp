@@ -91,9 +91,16 @@ bool Engine::Initialize(const std::filesystem::path &projectFile, const bool sta
             device->TrimGpuResources();
         return std::string{"GPU resource caches cleared"};
     });
-    m_context = {&m_logger,      &m_memoryManager,  &m_jobSystem,   &m_resourceManager, &m_world,        &m_renderer,
-                 &m_inputSystem, &m_physicsWorld,   &m_audioEngine, &m_scriptEngine,    &m_sceneManager, &m_projectSettings,
-                 &m_uiSystem,    &m_assetStreaming, &m_gameplay,    &m_diagnostics,     &m_vfxSystem};
+    m_context = {&m_logger,       &m_memoryManager,   &m_jobSystem,    &m_resourceManager, &m_world,
+                 &m_renderer,     &m_inputSystem,     &m_physicsWorld, &m_audioEngine,     &m_scriptEngine,
+                 &m_sceneManager, &m_projectSettings, &m_uiSystem,     &m_assetStreaming,  &m_gameplay,
+                 &m_diagnostics,  &m_vfxSystem,       &m_navigation,   &m_worldPartition,  &m_moduleManager};
+    if (!m_moduleManager.StartupAll())
+    {
+        m_logger.Error("Module startup failed because a dependency is missing, cyclic, or failed to initialize.");
+        Shutdown();
+        return false;
+    }
     bool sceneLoaded = false;
     if (projectLoaded)
         sceneLoaded = m_sceneManager.LoadScene(m_projectPakMounted ? m_projectSettings.startupScene
@@ -142,6 +149,9 @@ void Engine::Shutdown()
     m_running = false;
     if (m_gameInstance)
         m_gameInstance->OnShutdown();
+    m_moduleManager.ShutdownAll();
+    m_worldPartition.UnloadAll();
+    m_navigation.Clear();
     m_scriptEngine.Shutdown();
     m_gameplay.Shutdown();
     m_vfxSystem.Clear();
@@ -244,6 +254,11 @@ ProjectSettings &Engine::GetProjectSettings()
 void Engine::SetGameInstance(std::unique_ptr<GameInstance> gameInstance)
 {
     m_gameInstance = std::move(gameInstance);
+}
+
+ModuleManager &Engine::GetModuleManager()
+{
+    return m_moduleManager;
 }
 
 void Engine::Tick(const float rawDeltaTime)

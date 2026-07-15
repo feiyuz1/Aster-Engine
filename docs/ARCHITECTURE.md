@@ -1,6 +1,6 @@
 # TinyEngine 架构说明
 
-本文对应 TinyEngine 0.15.0，最后同步于 2026-07-15。
+本文对应 TinyEngine 0.16.0，最后同步于 2026-07-15。
 
 ## 依赖方向
 
@@ -92,6 +92,10 @@ Assimp 的 CPU/文件转换通过 `AssetImportQueue` 提交到 JobSystem，编�
 `RenderDevice` 统一暴露 GPU 驻留字节数、预算设置和缓存回收。OpenGL 后端统计 Mesh buffer 与 Texture payload；超预算时释放可重建的缓存对象，Diagnostics 通过 `r.GpuBudgetMB`、`r.TrimGpu` 和 `render.gpu_resident_bytes` 提供运行时控制与观测。
 
 骨骼动画层由 Skeleton、SkeletalClip、采样器、蒙皮矩阵生成和轻量条件状态机组成，不依赖渲染后端；当前尚未接入 Assimp 骨骼导入与 GPU skinning。VfxSystem 由 Engine 统一驱动，负责确定性的 CPU 粒子生命周期仿真，渲染提交是下一层职责。本地化层严格校验 UTF-8，使用 `TINYLOC 1` 字符串表完成语言回退和参数替换；FontFace 当前只负责加载并校验 TTF/OTF 容器。
+
+`NavigationGrid` 使用有代价 Cell 上的 A* 搜索，并在对角移动时检查相邻正交 Cell，避免穿过障碍角。AI 行为树保存运行中的组合节点游标，因此 Wait/Action 可跨帧继续；Blackboard 是类型受限的运行时共享状态。它们当前是游戏可直接使用的轻量实现，不等同于 Recast NavMesh、EQS 或可视化 Behavior Tree 编辑器。
+
+`WorldPartition` 只负责依据 XZ 距离和迟滞阈值决定 Cell 加载/卸载，具体场景合并通过回调交给游戏或资产层。`ModuleManager` 根据显式依赖拓扑启动，启动失败会逆序回滚；Engine 在核心服务就绪后启动模块，在子系统关闭前逆序停止模块。
 
 编辑器属性面板不直接依赖具体组件类型。`ReflectionRegistry` 登记组件存在性、增删回调、字段访问器、枚举项、数值范围和资产类型，Inspector 据此生成通用控件。资产浏览器拖放路径时先经 `AssetRegistry` 校验类型。编辑操作进入序列化快照 Undo 栈并设置脏标记；未保存场景每 30 秒写入项目 `Saved/EditorAutosave.scene`，启动后可显式恢复，正常保存会删除恢复文件。
 

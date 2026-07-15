@@ -2,7 +2,7 @@
 
 本文记录本轮开发对 TinyEngine 做过的主要更新，以及各功能采用的简要实现方式。内容按 Git 提交顺序整理，方便以后定位代码、回溯设计和继续开发。
 
-当前引擎版本：0.15.0
+当前引擎版本：0.16.0
 
 参考源码：Unreal Engine 5.3.2
 
@@ -283,6 +283,23 @@
 - GPU 预算只回收可从 CPU Resource 重建的 OpenGL 缓存，不销毁调用方持有的 CPU 资源。
 - 新内容模块保持后端无关：动画只产出矩阵，VFX 只产出粒子数据，本地化只产出 Unicode 文本，后续由 Renderer/UI 消费。
 - 当前骨骼数据仍由程序构造，FontFace 尚未栅格化 glyph，粒子尚未形成 DrawCommand；这些边界继续登记在未完成清单。
+
+## 18. 导航、AI、世界分区与模块生命周期
+
+更新内容：
+
+- 新增 `NavigationGrid`：世界坐标/Cell 转换、可走性、Traversal Cost、AABB 障碍标记和四/八邻域 A*。
+- 新增 AI Blackboard 与行为树：Action、Condition、Sequence、Selector、Wait 和跨帧运行状态。
+- 新增 `WorldPartition`：Cell 注册、距离流送、加载/卸载迟滞、统一卸载和稳定的已加载 Cell 查询。
+- 扩展 `ModuleManager`：依赖声明、缺失/循环检查、拓扑启动、失败回滚、逆序关闭和安全注销。
+- EngineContext 暴露 Navigation、WorldPartition、ModuleManager；Engine 管理模块和分区的生命周期。
+
+实现方式：
+
+- 导航搜索使用数组化 g-score/前驱表和优先队列，禁止对角穿角；当前目标是小型动态关卡，不构造多边形 NavMesh。
+- 行为组合节点只保存当前子节点索引，终态统一 Reset，避免每帧从根节点重复执行已经完成的 Wait 前置步骤。
+- WorldPartition 通过回调保持对 Scene/Resource 实现的解耦，加载成功才修改 Cell 状态。
+- 模块按注册顺序处理同层依赖，保证结果可复现；依赖决定的先后关系优先于注册顺序。
 
 ## 当前仍未完成
 

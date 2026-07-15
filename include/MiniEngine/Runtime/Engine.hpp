@@ -2,11 +2,13 @@
 
 #include "MiniEngine/Audio/AudioEngine.hpp"
 #include "MiniEngine/Core/Logger.hpp"
+#include "MiniEngine/Core/Module.hpp"
 #include "MiniEngine/Diagnostics/Diagnostics.hpp"
 #include "MiniEngine/ECS/ECS.hpp"
 #include "MiniEngine/Gameplay/Gameplay.hpp"
 #include "MiniEngine/Input/InputSystem.hpp"
 #include "MiniEngine/Memory/Allocators.hpp"
+#include "MiniEngine/Navigation/Navigation.hpp"
 #include "MiniEngine/Physics/PhysicsWorld.hpp"
 #include "MiniEngine/Platform/Platform.hpp"
 #include "MiniEngine/Project/Project.hpp"
@@ -17,6 +19,7 @@
 #include "MiniEngine/Task/JobSystem.hpp"
 #include "MiniEngine/UI/UISystem.hpp"
 #include "MiniEngine/VFX/ParticleSystem.hpp"
+#include "MiniEngine/World/WorldPartition.hpp"
 
 #include <cstdint>
 #include <filesystem>
@@ -43,6 +46,9 @@ struct EngineContext
     GameplayFramework *gameplay = nullptr;
     DiagnosticsService *diagnostics = nullptr;
     VfxSystem *vfxSystem = nullptr;
+    NavigationGrid *navigation = nullptr;
+    WorldPartition *worldPartition = nullptr;
+    ModuleManager *moduleManager = nullptr;
 };
 
 class Engine : private WorldListener
@@ -63,6 +69,7 @@ class Engine : private WorldListener
     SceneManager &GetSceneManager();
     ProjectSettings &GetProjectSettings();
     void SetGameInstance(std::unique_ptr<GameInstance> gameInstance);
+    ModuleManager &GetModuleManager();
 
   private:
     void Tick(float deltaTime);
@@ -85,6 +92,9 @@ class Engine : private WorldListener
     GameplayFramework m_gameplay;
     DiagnosticsService m_diagnostics;
     VfxSystem m_vfxSystem;
+    NavigationGrid m_navigation;
+    WorldPartition m_worldPartition;
+    ModuleManager m_moduleManager;
     ProjectSettings m_projectSettings;
     SceneManager m_sceneManager{&m_world};
     std::unique_ptr<GameInstance> m_gameInstance;

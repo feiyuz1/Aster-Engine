@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(TinyEngine VERSION 0.15.0 LANGUAGES C CXX)
+project(TinyEngine VERSION 0.16.0 LANGUAGES C CXX)
 
 option(TINYENGINE_BUILD_TESTS "Build TinyEngine tests" ON)
 option(TINYENGINE_BUILD_DEMO "Build TinyEngine demo" ON)
@@ -71,7 +71,10 @@ add_library(tinyengine STATIC
     src/ECS/Reflection.cpp
     src/ECS/SceneSerializer.cpp
     src/ECS/Systems.cpp
+    src/AI/BehaviorTree.cpp
     src/Animation/SkeletalAnimation.cpp
+    src/Navigation/Navigation.cpp
+    src/World/WorldPartition.cpp
     src/VFX/ParticleSystem.cpp
     src/Localization/Localization.cpp
     src/Gameplay/Gameplay.cpp
