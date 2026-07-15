@@ -351,7 +351,7 @@ void EditorApp::DrawInspector()
                 changed = ImGui::SliderFloat("Roughness", &roughness, 0.04f, 1.0f) || changed;
                 changed = ImGui::ColorEdit3("Emissive", &emissive.x) || changed;
                 changed = ImGui::Checkbox("Transparent", &transparent) || changed;
-                std::string shader = material->GetShaderPath(), albedo = material->GetTexturePath(),
+                std::string parent = material->GetParentPath(), shader = material->GetShaderPath(), albedo = material->GetTexturePath(),
                             normal = material->GetNormalTexturePath(), metallicMap = material->GetMetallicTexturePath();
                 std::string roughnessMap = material->GetRoughnessTexturePath(), ao = material->GetAoTexturePath(),
                             emissiveMap = material->GetEmissiveTexturePath();
@@ -364,6 +364,7 @@ void EditorApp::DrawInspector()
                         changed = true;
                     }
                 };
+                editPath("Parent", parent);
                 editPath("Shader", shader);
                 editPath("Albedo", albedo);
                 editPath("Normal", normal);
@@ -374,6 +375,8 @@ void EditorApp::DrawInspector()
                 if (changed)
                 {
                     std::ostringstream output;
+                    if (!parent.empty())
+                        output << "parent " << parent << '\n';
                     output << "color " << color.x << ' ' << color.y << ' ' << color.z << ' ' << color.w << "\nmetallic " << metallic
                            << "\nroughness " << roughness << "\nemissive " << emissive.x << ' ' << emissive.y << ' ' << emissive.z << '\n';
                     if (!shader.empty())

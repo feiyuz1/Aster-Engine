@@ -10,6 +10,7 @@
 #include <filesystem>
 #include <limits>
 #include <sstream>
+#include <unordered_set>
 
 #ifdef _WIN32
 #ifndef WIN32_LEAN_AND_MEAN
@@ -597,6 +598,22 @@ const std::string &ShaderResource::GetSource() const
 bool MaterialResource::Load(const std::string &path)
 {
     MarkLoading(path);
+    static thread_local std::unordered_set<std::string> loadingMaterials;
+    const std::string normalizedPath = PlatformFile::Normalize(path).generic_string();
+    if (!loadingMaterials.insert(normalizedPath).second)
+    {
+        SetState(ResourceState::Failed, "Cyclic material parent: " + path);
+        return false;
+    }
+    struct LoadingGuard
+    {
+        std::unordered_set<std::string> &paths;
+        std::string path;
+        ~LoadingGuard()
+        {
+            paths.erase(path);
+        }
+    } guard{loadingMaterials, normalizedPath};
     m_baseColor = {0.3f, 0.7f, 1.0f, 1.0f};
     m_metallic = 0.0f;
     m_roughness = 0.7f;
@@ -609,16 +626,62 @@ bool MaterialResource::Load(const std::string &path)
     m_roughnessTexturePath.clear();
     m_aoTexturePath.clear();
     m_emissiveTexturePath.clear();
-    std::istringstream stream(PlatformFile::ReadAllText(path));
-    if (!stream)
+    m_parentPath.clear();
+    const std::string source = PlatformFile::ReadAllText(path);
+    if (source.empty())
     {
         SetState(ResourceState::Failed, "Material file not found: " + path);
         return false;
     }
+    {
+        std::istringstream parentStream(source);
+        std::string parentKey;
+        while (parentStream >> parentKey)
+            if (parentKey == "parent")
+            {
+                parentStream >> m_parentPath;
+                break;
+            }
+            else
+            {
+                std::string ignored;
+                std::getline(parentStream, ignored);
+            }
+    }
+    if (!m_parentPath.empty())
+    {
+        std::filesystem::path parent = m_parentPath;
+        if (!PlatformFile::Exists(parent))
+            parent = std::filesystem::path(path).parent_path() / parent;
+        MaterialResource base;
+        if (!base.Load(parent.generic_string()))
+        {
+            SetState(ResourceState::Failed, "Cannot load material parent: " + m_parentPath);
+            return false;
+        }
+        m_baseColor = base.m_baseColor;
+        m_shaderPath = base.m_shaderPath;
+        m_texturePath = base.m_texturePath;
+        m_normalTexturePath = base.m_normalTexturePath;
+        m_metallicTexturePath = base.m_metallicTexturePath;
+        m_roughnessTexturePath = base.m_roughnessTexturePath;
+        m_aoTexturePath = base.m_aoTexturePath;
+        m_emissiveTexturePath = base.m_emissiveTexturePath;
+        m_metallic = base.m_metallic;
+        m_roughness = base.m_roughness;
+        m_emissive = base.m_emissive;
+        m_transparent = base.m_transparent;
+    }
+    std::istringstream stream(source);
     std::string key;
     while (stream >> key)
     {
-        if (key == "color")
+        if (key == "parent")
+        {
+            std::string ignored;
+            stream >> ignored;
+        }
+        else if (key == "color")
             stream >> m_baseColor.x >> m_baseColor.y >> m_baseColor.z >> m_baseColor.w;
         else if (key == "metallic")
             stream >> m_metallic;
@@ -666,13 +729,15 @@ void MaterialResource::Unload()
     m_roughnessTexturePath.clear();
     m_aoTexturePath.clear();
     m_emissiveTexturePath.clear();
+    m_parentPath.clear();
     SetState(ResourceState::Unloaded);
 }
 
 std::size_t MaterialResource::GetByteSize() const
 {
     return sizeof(*this) + m_path.size() + m_shaderPath.size() + m_texturePath.size() + m_normalTexturePath.size() +
-           m_metallicTexturePath.size() + m_roughnessTexturePath.size() + m_aoTexturePath.size() + m_emissiveTexturePath.size();
+           m_metallicTexturePath.size() + m_roughnessTexturePath.size() + m_aoTexturePath.size() + m_emissiveTexturePath.size() +
+           m_parentPath.size();
 }
 Vec4 MaterialResource::GetBaseColor() const
 {
@@ -721,5 +786,9 @@ Vec3 MaterialResource::GetEmissive() const
 bool MaterialResource::IsTransparent() const
 {
     return m_transparent || m_baseColor.w < 0.999f;
+}
+const std::string &MaterialResource::GetParentPath() const
+{
+    return m_parentPath;
 }
 } // namespace MiniEngine

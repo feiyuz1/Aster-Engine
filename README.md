@@ -2,7 +2,7 @@
 
 TinyEngine 是参考 Unreal Engine 5.3.2 模块职责、以 C++17 实现的轻量 3D 引擎。目标不是复制 UE 的 UObject/UHT、完整 RHI 或大型编辑器，而是形成“项目—资产—场景—运行时—渲染—打包—编辑器”的最小可用闭环。
 
-当前版本：0.17.0（网络快照/回放、Sequencer、地形与图片序列基础）。
+当前版本：0.18.0（P0 材质实例继承闭环）。
 
 ## 已实现
 
@@ -11,6 +11,7 @@ TinyEngine 是参考 Unreal Engine 5.3.2 模块职责、以 C++17 实现的轻�
 - 资产：Assimp 6.0.5 后台模型导入/重导入、进度与取消、稳定 GUID/`.meta`、依赖和导入参数、异步资源、清单增量 Cook、平台 Mesh/Texture 二进制编译、TPAK、VFS。
 - 图片：PPM，以及 Windows WIC 的 PNG/JPG/BMP/TIFF；Radiance HDR 保持线性浮点数据，GPU 使用 RGBA16F。
 - 渲染：SDL2 + OpenGL 3.3、RGBA16F Scene RenderTarget、ACES Tonemap/曝光、FXAA、2048² 方向光 PCF 阴影、最多四盏方向光、程序化天空与 HDR equirect 环境 IBL、完整 PBR 贴图、sRGB/Mipmap、距离 LOD、粗裁剪和透明队列。
+- 材质：文本 PBR 材质、六类贴图、透明模式，以及通过 `parent` 稀疏覆盖参数的材质实例；循环父级会在加载期拒绝。
 - 物理：固定步长、SAP、Box/Sphere/Capsule、Convex/TriangleMesh 包围体、层过滤、Trigger、Raycast/SphereCast/Overlap、连续子步、三轴冲量响应、Distance/Fixed Joint、带接地/碰顶/台阶尝试的轻量 CharacterController 和调试包围体。
 - 动画与音频：Transform Clip 插值、Clip 交叉淡化与 Root Motion；Skeleton/Bone、关键帧采样、蒙皮矩阵计算和条件状态机；多 Voice 实时混音、Master/SFX/Music/UI Bus、循环播放、距离衰减和左右声像。
 - 内容系统：严格 UTF-8 编解码、本地化字符串表/语言回退/参数替换、TTF/OTF 容器校验，以及带发射率、Burst、重力和生命周期曲线的 CPU 粒子仿真。

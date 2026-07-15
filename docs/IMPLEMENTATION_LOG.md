@@ -2,7 +2,7 @@
 
 本文记录本轮开发对 TinyEngine 做过的主要更新，以及各功能采用的简要实现方式。内容按 Git 提交顺序整理，方便以后定位代码、回溯设计和继续开发。
 
-当前引擎版本：0.17.0
+当前引擎版本：0.18.0
 
 参考源码：Unreal Engine 5.3.2
 
@@ -316,6 +316,21 @@
 - Sequencer 和媒体播放器不持有 Renderer/World，游戏可将采样结果应用到 ECS，编辑器也可复用同一时间轴。
 - HeightField 输出 `MeshVertex`/Index 数据但不直接创建 GPU 资源，保留 RenderDevice 边界。
 - 当前联网层不含 UDP/RPC/Prediction，媒体不含视频 Codec，地形不含 Chunk LOD；这些能力仍登记在未完成清单。
+
+## 20. P0 材质实例
+
+更新内容：
+
+- `MaterialResource` 支持 `parent <path>`，继承父材质的 Shader、PBR 参数、透明模式和所有贴图。
+- 子材质只覆盖自身出现的字段；父材质可以继续继承，形成轻量实例链。
+- 使用线程局部规范化路径集合检测循环依赖，失败时返回明确资源错误。
+- Material Inspector 增加 Parent 路径编辑，ResourceManager Reload 后立即生效。
+
+实现方式：
+
+- 先扫描 parent 并加载基值，再用同一解析器应用子文件字段，Renderer 无需区分普通材质和实例。
+- 实例继续使用 `.mat` 和现有 ResourceManager/AssetRegistry/Cook 流程，不引入第二套资产类型。
+- 测试验证父级 Metallic/Normal Map 继承与子级 Color/Roughness 覆盖。
 
 ## 当前仍未完成
 

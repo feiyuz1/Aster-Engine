@@ -1,6 +1,6 @@
 # TinyEngine 架构说明
 
-本文对应 TinyEngine 0.17.0，最后同步于 2026-07-15。
+本文对应 TinyEngine 0.18.0，最后同步于 2026-07-15。
 
 ## 依赖方向
 
@@ -113,6 +113,7 @@ Sequencer 的 Transform Track 与事件 Player 是后端无关的时间采样层
 - `TNYNET1` / `TNYRPLY1`：网络实体快照与复用同一快照格式的离线回放流。
 - `TINYINPUT 1`：逻辑 Axis/Action 到物理输入通道的多重映射。
 - `.mat`：`color`、`metallic`、`roughness`、`emissive`、`texture`、`blend`。
+- `.mat` 可选 `parent <path>`：先递归加载父材质，再以子文件中出现的字段覆盖；规范化路径集合阻止继承环。
 - `<asset>.meta`：32 位十六进制 GUID、类型、导入时间、设置和依赖。
 - `TPAK 1`：路径与 payload 的简单归档。
 - 新持久化组件必须同步 SceneSerializer 和测试。

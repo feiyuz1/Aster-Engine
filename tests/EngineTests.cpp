@@ -349,6 +349,12 @@ int main()
     CHECK(pbrMaterial.GetNormalTexturePath() == "Saved/Test.png" && pbrMaterial.GetMetallicTexturePath() == "Saved/Test.png");
     CHECK(pbrMaterial.GetRoughnessTexturePath() == "Saved/Test.png" && pbrMaterial.GetAoTexturePath() == "Saved/Test.png" &&
           pbrMaterial.GetEmissiveTexturePath() == "Saved/Test.png");
+    CHECK(PlatformFile::WriteAllText("Saved/TestInstance.mat", "parent Saved/TestPbr.mat\ncolor 0.9 0.1 0.2 1\nroughness 0.5\n"));
+    MaterialResource materialInstance;
+    CHECK(materialInstance.Load("Saved/TestInstance.mat"));
+    CHECK(materialInstance.GetParentPath() == "Saved/TestPbr.mat" && std::abs(materialInstance.GetBaseColor().x - 0.9f) < 0.001f &&
+          std::abs(materialInstance.GetMetallic() - 0.8f) < 0.001f && std::abs(materialInstance.GetRoughness() - 0.5f) < 0.001f &&
+          materialInstance.GetNormalTexturePath() == "Saved/Test.png");
     ShaderResource shader;
     CHECK(shader.Load("assets/shaders/default.vert"));
     CHECK(shader.GetSource().find("uLightViewProjection") != std::string::npos);

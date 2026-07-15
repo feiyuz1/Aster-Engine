@@ -120,6 +120,7 @@ class MaterialResource final : public Resource
     float GetRoughness() const;
     Vec3 GetEmissive() const;
     bool IsTransparent() const;
+    const std::string &GetParentPath() const;
 
   private:
     Vec4 m_baseColor{0.3f, 0.7f, 1.0f, 1.0f};
@@ -134,5 +135,6 @@ class MaterialResource final : public Resource
     float m_roughness = 0.7f;
     Vec3 m_emissive{};
     bool m_transparent = false;
+    std::string m_parentPath;
 };
 } // namespace MiniEngine
