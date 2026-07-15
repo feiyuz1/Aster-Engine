@@ -2,7 +2,7 @@
 
 本文记录本轮开发对 TinyEngine 做过的主要更新，以及各功能采用的简要实现方式。内容按 Git 提交顺序整理，方便以后定位代码、回溯设计和继续开发。
 
-当前引擎版本：0.18.0
+当前引擎版本：0.19.0
 
 参考源码：Unreal Engine 5.3.2
 
@@ -331,6 +331,16 @@
 - 先扫描 parent 并加载基值，再用同一解析器应用子文件字段，Renderer 无需区分普通材质和实例。
 - 实例继续使用 `.mat` 和现有 ResourceManager/AssetRegistry/Cook 流程，不引入第二套资产类型。
 - 测试验证父级 Metallic/Normal Map 继承与子级 Color/Roughness 覆盖。
+
+## 21. P0 粒子 Billboard 渲染
+
+更新内容：
+
+- `VfxSystem` 可汇总所有发射器的活动粒子，Renderer 在场景几何后统一提交。
+- RenderDevice 增加粒子绘制契约，Null 与 OpenGL 后端均实现。
+- OpenGL 增加世界空间 Billboard Shader：由 View Matrix 反推相机 Right/Up，按粒子位置和尺寸生成六顶点 Quad。
+- Fragment Shader 提供圆形裁剪和软边 Alpha；绘制阶段保留深度测试、关闭深度写入并使用 Alpha Blend。
+- Demo 场景增加火花发射器，测试验证三粒子会形成三次后端绘制计数。
 
 ## 当前仍未完成
 

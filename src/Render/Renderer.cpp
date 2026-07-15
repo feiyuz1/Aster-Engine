@@ -4,6 +4,7 @@
 #include "MiniEngine/ECS/Components.hpp"
 #include "MiniEngine/ECS/ECS.hpp"
 #include "MiniEngine/Resource/ResourceManager.hpp"
+#include "MiniEngine/VFX/ParticleSystem.hpp"
 
 #include <algorithm>
 #include <chrono>
@@ -48,6 +49,9 @@ void NullRenderDevice::BeginFrame(const FrameView &)
 {
 }
 void NullRenderDevice::Draw(const RenderItem &)
+{
+}
+void NullRenderDevice::DrawParticles(const std::vector<Particle> &)
 {
 }
 void NullRenderDevice::EndFrame()
@@ -263,6 +267,13 @@ void Renderer::RenderFrame(World &world)
     m_device->BeginFrame(m_frameView);
     for (const auto &item : m_renderQueue.GetItems())
         m_device->Draw(item);
+    std::size_t particleCount = 0;
+    if (m_vfxSystem)
+    {
+        const auto particles = m_vfxSystem->BuildParticleList();
+        particleCount = particles.size();
+        m_device->DrawParticles(particles);
+    }
     if (m_uiSystem)
     {
         const Vec2 viewport = m_device->GetViewportSize();
@@ -274,7 +285,7 @@ void Renderer::RenderFrame(World &world)
         m_overlayCallback();
     m_device->Present();
     const auto sceneEnd = std::chrono::steady_clock::now();
-    m_lastDrawCalls = m_renderQueue.GetItems().size();
+    m_lastDrawCalls = m_renderQueue.GetItems().size() + particleCount;
     const auto milliseconds = [](const auto start, const auto end) {
         return std::chrono::duration<float, std::milli>(end - start).count();
     };
@@ -303,6 +314,10 @@ void Renderer::SetOverlayCallback(std::function<void()> callback)
 void Renderer::SetUISystem(UISystem *uiSystem)
 {
     m_uiSystem = uiSystem;
+}
+void Renderer::SetVfxSystem(VfxSystem *vfxSystem)
+{
+    m_vfxSystem = vfxSystem;
 }
 std::size_t Renderer::GetLastCulledCount() const
 {

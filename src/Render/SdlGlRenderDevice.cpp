@@ -2,6 +2,7 @@
 
 #include "MiniEngine/Platform/Platform.hpp"
 #include "MiniEngine/Render/ShaderPipeline.hpp"
+#include "MiniEngine/VFX/ParticleSystem.hpp"
 
 #define SDL_MAIN_HANDLED
 #ifdef _WIN32
@@ -201,6 +202,37 @@ constexpr const char *UiFragmentShaderSource = R"GLSL(
             out vec4 outColor;
             void main() { outColor = uHasUiTexture != 0 ? texture(uUiTexture, vUv) * uColor : uColor; }
         )GLSL";
+
+constexpr const char *ParticleVertexShaderSource = R"GLSL(
+            #version 330 core
+            uniform mat4 uParticleView;
+            uniform mat4 uParticleProjection;
+            uniform vec3 uParticlePosition;
+            uniform float uParticleSize;
+            out vec2 vParticleUv;
+            void main()
+            {
+                vec2 corners[6] = vec2[6](vec2(-1,-1), vec2(1,-1), vec2(1,1), vec2(-1,-1), vec2(1,1), vec2(-1,1));
+                vec2 corner = corners[gl_VertexID];
+                mat3 cameraRotation = transpose(mat3(uParticleView));
+                vec3 world = uParticlePosition + (cameraRotation[0] * corner.x + cameraRotation[1] * corner.y) * uParticleSize;
+                gl_Position = uParticleProjection * uParticleView * vec4(world, 1.0);
+                vParticleUv = corner * 0.5 + 0.5;
+            }
+        )GLSL";
+
+constexpr const char *ParticleFragmentShaderSource = R"GLSL(
+            #version 330 core
+            in vec2 vParticleUv;
+            uniform vec4 uParticleColor;
+            out vec4 outColor;
+            void main()
+            {
+                float distanceToCenter = length(vParticleUv - vec2(0.5));
+                if (distanceToCenter > 0.5) discard;
+                outColor = vec4(uParticleColor.rgb, uParticleColor.a * smoothstep(0.5, 0.35, distanceToCenter));
+            }
+        )GLSL";
 } // namespace
 
 struct SdlGlRenderDevice::Impl
@@ -252,7 +284,7 @@ struct SdlGlRenderDevice::Impl
     SDL_GLContext context = nullptr;
     InputState input;
     FrameView view;
-    GLuint program = 0, shadowProgram = 0, toneProgram = 0, uiProgram = 0, fullScreenVao = 0;
+    GLuint program = 0, shadowProgram = 0, toneProgram = 0, uiProgram = 0, particleProgram = 0, fullScreenVao = 0;
     GLuint uiVao = 0, uiVertexBuffer = 0, uiIndexBuffer = 0, fontAtlas = 0;
     GLuint sceneFramebuffer = 0, toneFramebuffer = 0, sceneHdrColor = 0, sceneColor = 0, sceneDepth = 0;
     GLuint shadowFramebuffer = 0, shadowDepth = 0;
@@ -280,6 +312,8 @@ struct SdlGlRenderDevice::Impl
     GLint environmentTextureLocation = -1, hasEnvironmentLocation = -1;
     GLint shadowMvpLocation = -1, toneTextureLocation = -1, exposureLocation = -1, inverseResolutionLocation = -1, fxaaEnabledLocation = -1;
     GLint uiViewportLocation = -1, uiColorLocation = -1, uiTextureLocation = -1, uiHasTextureLocation = -1;
+    GLint particleViewLocation = -1, particleProjectionLocation = -1, particlePositionLocation = -1, particleSizeLocation = -1,
+          particleColorLocation = -1;
     FileWatcher vertexShaderWatcher, fragmentShaderWatcher;
     std::unordered_map<std::string, FileWatcher> shaderDependencyWatchers;
     std::filesystem::path vertexShaderPath{"assets/shaders/default.vert"}, fragmentShaderPath{"assets/shaders/default.frag"};
@@ -652,7 +686,8 @@ struct SdlGlRenderDevice::Impl
         shadowProgram = CreateLinkedProgram(ShadowVertexShaderSource, ShadowFragmentShaderSource);
         toneProgram = CreateLinkedProgram(ToneVertexShaderSource, ToneFragmentShaderSource);
         uiProgram = CreateLinkedProgram(UiVertexShaderSource, UiFragmentShaderSource);
-        if (!shadowProgram || !toneProgram || !uiProgram)
+        particleProgram = CreateLinkedProgram(ParticleVertexShaderSource, ParticleFragmentShaderSource);
+        if (!shadowProgram || !toneProgram || !uiProgram || !particleProgram)
             return false;
         shadowMvpLocation = GetUniformLocation(shadowProgram, "uLightMvp");
         toneTextureLocation = GetUniformLocation(toneProgram, "uHdrTexture");
@@ -664,6 +699,11 @@ struct SdlGlRenderDevice::Impl
         uiColorLocation = GetUniformLocation(uiProgram, "uColor");
         uiTextureLocation = GetUniformLocation(uiProgram, "uUiTexture");
         uiHasTextureLocation = GetUniformLocation(uiProgram, "uHasUiTexture");
+        particleViewLocation = GetUniformLocation(particleProgram, "uParticleView");
+        particleProjectionLocation = GetUniformLocation(particleProgram, "uParticleProjection");
+        particlePositionLocation = GetUniformLocation(particleProgram, "uParticlePosition");
+        particleSizeLocation = GetUniformLocation(particleProgram, "uParticleSize");
+        particleColorLocation = GetUniformLocation(particleProgram, "uParticleColor");
         GenVertexArrays(1, &uiVao);
         BindVertexArray(uiVao);
         GenBuffers(1, &uiVertexBuffer);
@@ -922,6 +962,11 @@ void SdlGlRenderDevice::Shutdown()
         {
             m_impl->DeleteProgram(m_impl->uiProgram);
             m_impl->uiProgram = 0;
+        }
+        if (m_impl->particleProgram)
+        {
+            m_impl->DeleteProgram(m_impl->particleProgram);
+            m_impl->particleProgram = 0;
         }
         if (m_impl->fullScreenVao)
         {
@@ -1208,6 +1253,29 @@ void SdlGlRenderDevice::Draw(const RenderItem &item)
     m_impl->BindVertexArray(mesh->vao);
     glDrawElements(GL_TRIANGLES, mesh->indexCount, GL_UNSIGNED_INT, nullptr);
     m_impl->BindVertexArray(0);
+}
+
+void SdlGlRenderDevice::DrawParticles(const std::vector<Particle> &particles)
+{
+    if (!m_impl || particles.empty())
+        return;
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    glDepthMask(GL_FALSE);
+    m_impl->UseProgram(m_impl->particleProgram);
+    m_impl->UniformMatrix4fv(m_impl->particleViewLocation, 1, GL_FALSE, m_impl->view.view.Data());
+    m_impl->UniformMatrix4fv(m_impl->particleProjectionLocation, 1, GL_FALSE, m_impl->view.projection.Data());
+    m_impl->BindVertexArray(m_impl->fullScreenVao);
+    for (const auto &particle : particles)
+    {
+        m_impl->Uniform3f(m_impl->particlePositionLocation, particle.position.x, particle.position.y, particle.position.z);
+        m_impl->Uniform1f(m_impl->particleSizeLocation, std::max(0.001f, particle.size));
+        m_impl->Uniform4f(m_impl->particleColorLocation, particle.color.x, particle.color.y, particle.color.z, particle.color.w);
+        glDrawArrays(GL_TRIANGLES, 0, 6);
+    }
+    m_impl->BindVertexArray(0);
+    glDepthMask(GL_TRUE);
+    glDisable(GL_BLEND);
 }
 
 void SdlGlRenderDevice::EndFrame()

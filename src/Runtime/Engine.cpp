@@ -53,6 +53,7 @@ bool Engine::Initialize(const std::filesystem::path &projectFile, const bool sta
     m_renderer.SetLogger(&m_logger);
     m_renderer.SetResourceManager(&m_resourceManager);
     m_renderer.SetUISystem(&m_uiSystem);
+    m_renderer.SetVfxSystem(&m_vfxSystem);
     if (projectLoaded && !m_projectSettings.environmentTexture.empty())
         m_renderer.SetEnvironmentPath(m_projectPakMounted
                                           ? m_projectSettings.environmentTexture.generic_string()
@@ -341,6 +342,17 @@ void Engine::SetupDemoScene()
 
     m_assetStreaming.Request<MeshResource>("assets/player.mesh", true);
     m_assetStreaming.Request<MaterialResource>("assets/default.mat", true);
+    ParticleEmitterSettings demoParticles;
+    demoParticles.maximumParticles = 64;
+    demoParticles.emissionRate = 6.0f;
+    demoParticles.lifetime = 1.5f;
+    demoParticles.speed = 1.2f;
+    demoParticles.gravity = {0.0f, -0.4f, 0.0f};
+    demoParticles.startColor = {1.0f, 0.55f, 0.12f, 0.9f};
+    demoParticles.endColor = {0.8f, 0.1f, 0.02f, 0.0f};
+    const auto emitterId = m_vfxSystem.CreateEmitter(demoParticles);
+    if (auto *emitter = m_vfxSystem.FindEmitter(emitterId))
+        emitter->SetPosition({0.0f, 0.25f, 0.0f});
     m_uiSystem.AddPanel("demo.hud", {16.0f, 16.0f, 270.0f, 112.0f}, {0.05f, 0.08f, 0.13f, 0.88f});
     m_uiSystem.SetLayout("demo.hud", UILayout::Vertical, 6.0f, 10.0f);
     m_uiSystem.AddLabel("demo.title", "TinyEngine Runtime UI", {0.0f, 0.0f, 200.0f, 30.0f}).fontSize = 18.0f;

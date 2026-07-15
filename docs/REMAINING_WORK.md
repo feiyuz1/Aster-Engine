@@ -16,7 +16,7 @@
 ## P1 未完成
 
 - Assimp 骨骼/权重/Clip 导入、GPU 蒙皮、Blend Tree 与 Animation Graph 编辑器；Skeleton、关键帧采样、蒙皮矩阵、条件状态机、Transform Clip、交叉淡化和 Root Motion 已完成。
-- 粒子 Renderer/GPU 仿真与特效编辑器、Bloom、SSAO、TAA、实例化和遮挡裁剪；CPU 粒子生命周期仿真、FXAA 与 LOD 已完成。
+- 粒子 CPU 仿真和 OpenGL Billboard Renderer 已完成；仍缺纹理 Flipbook、批量实例化/GPU 仿真与特效编辑器。Bloom、SSAO、TAA、实例化和遮挡裁剪仍未完成；FXAA 与 LOD 已完成。
 - OGG 解码与长音频流式播放；空间音频、并发 Voice 和 Mixer/Bus 已完成。
 - 平台输入 Glyph 和手柄震动工具；输入映射资产、运行时重绑定和手柄热插拔已完成。
 - Lua/C# 或稳定的原生插件 ABI。

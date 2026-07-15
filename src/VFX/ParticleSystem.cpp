@@ -109,4 +109,12 @@ void VfxSystem::Clear()
 {
     m_emitters.clear();
 }
+
+std::vector<Particle> VfxSystem::BuildParticleList() const
+{
+    std::vector<Particle> result;
+    for (const auto &pair : m_emitters)
+        result.insert(result.end(), pair.second.GetParticles().begin(), pair.second.GetParticles().end());
+    return result;
+}
 } // namespace MiniEngine

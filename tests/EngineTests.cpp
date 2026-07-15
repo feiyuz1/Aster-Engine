@@ -198,6 +198,14 @@ int main()
     CHECK(lightingRenderer.Initialize(std::make_unique<NullRenderDevice>()));
     lightingRenderer.BuildRenderQueue(lightingWorld);
     CHECK(lightingRenderer.GetFrameView().lightCount == static_cast<int>(FrameView::MaxLights));
+    VfxSystem renderVfx;
+    ParticleEmitterSettings renderParticleSettings;
+    renderParticleSettings.emissionRate = 0.0f;
+    const auto renderEmitter = renderVfx.CreateEmitter(renderParticleSettings);
+    renderVfx.FindEmitter(renderEmitter)->Burst(3);
+    lightingRenderer.SetVfxSystem(&renderVfx);
+    lightingRenderer.RenderFrame(lightingWorld);
+    CHECK(lightingRenderer.GetLastDrawCallCount() == 3);
     lightingRenderer.Shutdown();
 
     ProjectSettings project;

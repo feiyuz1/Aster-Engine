@@ -63,6 +63,7 @@ class VfxSystem
     bool DestroyEmitter(std::uint64_t id);
     void Update(float deltaTime);
     void Clear();
+    std::vector<Particle> BuildParticleList() const;
 
   private:
     std::unordered_map<std::uint64_t, ParticleEmitter> m_emitters;

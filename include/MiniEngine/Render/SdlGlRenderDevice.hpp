@@ -25,6 +25,7 @@ class SdlGlRenderDevice final : public RenderDevice
     void EndShadowPass() override;
     void BeginFrame(const FrameView &view) override;
     void Draw(const RenderItem &item) override;
+    void DrawParticles(const std::vector<Particle> &particles) override;
     void EndFrame() override;
     void DrawUi(const std::vector<UIDrawCommand> &commands) override;
     void Present() override;

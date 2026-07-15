@@ -17,6 +17,8 @@ namespace MiniEngine
 class Logger;
 class ResourceManager;
 class World;
+class VfxSystem;
+struct Particle;
 
 struct InputState
 {
@@ -89,6 +91,7 @@ class RenderDevice
     virtual void EndShadowPass() = 0;
     virtual void BeginFrame(const FrameView &view) = 0;
     virtual void Draw(const RenderItem &item) = 0;
+    virtual void DrawParticles(const std::vector<Particle> &particles) = 0;
     virtual void EndFrame() = 0;
     virtual void DrawUi(const std::vector<UIDrawCommand> &commands) = 0;
     virtual void Present() = 0;
@@ -111,6 +114,7 @@ class NullRenderDevice final : public RenderDevice
     void EndShadowPass() override;
     void BeginFrame(const FrameView &view) override;
     void Draw(const RenderItem &item) override;
+    void DrawParticles(const std::vector<Particle> &particles) override;
     void EndFrame() override;
     void DrawUi(const std::vector<UIDrawCommand> &commands) override;
     void Present() override;
@@ -151,6 +155,7 @@ class Renderer
     RenderDevice *GetDevice();
     void SetOverlayCallback(std::function<void()> callback);
     void SetUISystem(UISystem *uiSystem);
+    void SetVfxSystem(VfxSystem *vfxSystem);
     std::size_t GetLastCulledCount() const;
     std::size_t GetLastLodSwitchCount() const;
     const FrameProfile &GetLastFrameProfile() const;
@@ -168,6 +173,7 @@ class Renderer
     std::size_t m_lastLodSwitches = 0;
     std::function<void()> m_overlayCallback;
     UISystem *m_uiSystem = nullptr;
+    VfxSystem *m_vfxSystem = nullptr;
     bool m_cameraOverrideEnabled = false;
     Vec3 m_cameraOverridePosition{0.0f, 2.5f, 7.0f};
     Vec3 m_cameraOverrideRotation{-10.0f, 0.0f, 0.0f};
