@@ -1,6 +1,7 @@
 #include "MiniEngine/Resource/Resource.hpp"
 
 #include "MiniEngine/Platform/Platform.hpp"
+#include "MiniEngine/Serialization/Archive.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -225,6 +226,44 @@ bool TextureResource::Load(const std::string &path)
     m_floatData.clear();
     m_width = m_height = 0;
     const auto bytes = PlatformFile::ReadAllBytes(path);
+    if (bytes.size() >= 8 && std::equal(bytes.begin(), bytes.begin() + 8, "TNYTEX1\0"))
+    {
+        BinaryReader reader(bytes);
+        char signature[8]{};
+        std::uint32_t width = 0, height = 0;
+        std::uint64_t valueCount = 0;
+        bool hdr = false;
+        if (!reader.ReadBytes(signature, sizeof(signature)) || !reader.ReadU32(width) || !reader.ReadU32(height) || !reader.ReadBool(hdr) ||
+            !reader.ReadU64(valueCount) || width == 0 || height == 0 || width > 32768 || height > 32768 ||
+            valueCount != static_cast<std::uint64_t>(width) * height * 4)
+        {
+            SetState(ResourceState::Failed, "Invalid compiled texture: " + path);
+            return false;
+        }
+        m_width = static_cast<int>(width);
+        m_height = static_cast<int>(height);
+        if (hdr)
+        {
+            m_floatData.resize(static_cast<std::size_t>(valueCount));
+            for (float &value : m_floatData)
+                if (!reader.ReadFloat(value))
+                {
+                    SetState(ResourceState::Failed, "Truncated compiled HDR texture: " + path);
+                    return false;
+                }
+        }
+        else
+        {
+            m_data.resize(static_cast<std::size_t>(valueCount));
+            if (!reader.ReadBytes(m_data.data(), m_data.size()))
+            {
+                SetState(ResourceState::Failed, "Truncated compiled texture: " + path);
+                return false;
+            }
+        }
+        SetState(ResourceState::Loaded);
+        return true;
+    }
     std::string extension = std::filesystem::path(path).extension().string();
     std::transform(extension.begin(), extension.end(), extension.begin(),
                    [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
@@ -335,7 +374,49 @@ int TextureResource::GetHeight() const
 bool MeshResource::Load(const std::string &path)
 {
     MarkLoading(path);
-    std::istringstream stream(PlatformFile::ReadAllText(path));
+    const auto bytes = PlatformFile::ReadAllBytes(path);
+    if (bytes.size() >= 8 && std::equal(bytes.begin(), bytes.begin() + 8, "TNYMSH1\0"))
+    {
+        BinaryReader reader(bytes);
+        char signature[8]{};
+        std::uint64_t vertexCount = 0, indexCount = 0;
+        if (!reader.ReadBytes(signature, sizeof(signature)) || !reader.ReadU64(vertexCount) || !reader.ReadU64(indexCount) ||
+            vertexCount > 10'000'000 || indexCount > 30'000'000)
+        {
+            SetState(ResourceState::Failed, "Invalid compiled mesh: " + path);
+            return false;
+        }
+        m_vertices.assign(static_cast<std::size_t>(vertexCount), {});
+        m_indices.assign(static_cast<std::size_t>(indexCount), 0);
+        m_bounds.minimum = {FLT_MAX, FLT_MAX, FLT_MAX};
+        m_bounds.maximum = {-FLT_MAX, -FLT_MAX, -FLT_MAX};
+        for (auto &vertex : m_vertices)
+        {
+            if (!reader.ReadFloat(vertex.position.x) || !reader.ReadFloat(vertex.position.y) || !reader.ReadFloat(vertex.position.z) ||
+                !reader.ReadFloat(vertex.normal.x) || !reader.ReadFloat(vertex.normal.y) || !reader.ReadFloat(vertex.normal.z) ||
+                !reader.ReadFloat(vertex.uv.x) || !reader.ReadFloat(vertex.uv.y) || !reader.ReadFloat(vertex.tangent.x) ||
+                !reader.ReadFloat(vertex.tangent.y) || !reader.ReadFloat(vertex.tangent.z))
+            {
+                SetState(ResourceState::Failed, "Truncated compiled mesh: " + path);
+                return false;
+            }
+            m_bounds.minimum.x = std::min(m_bounds.minimum.x, vertex.position.x);
+            m_bounds.minimum.y = std::min(m_bounds.minimum.y, vertex.position.y);
+            m_bounds.minimum.z = std::min(m_bounds.minimum.z, vertex.position.z);
+            m_bounds.maximum.x = std::max(m_bounds.maximum.x, vertex.position.x);
+            m_bounds.maximum.y = std::max(m_bounds.maximum.y, vertex.position.y);
+            m_bounds.maximum.z = std::max(m_bounds.maximum.z, vertex.position.z);
+        }
+        for (auto &index : m_indices)
+            if (!reader.ReadU32(index) || index >= vertexCount)
+            {
+                SetState(ResourceState::Failed, "Invalid compiled mesh indices: " + path);
+                return false;
+            }
+        SetState(ResourceState::Loaded);
+        return true;
+    }
+    std::istringstream stream(std::string(bytes.begin(), bytes.end()));
     if (!stream)
     {
         SetState(ResourceState::Failed, "Mesh file not found: " + path);

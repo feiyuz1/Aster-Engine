@@ -328,6 +328,63 @@ Vec3 PhysicsWorld::MoveCharacter(World &world, const Entity entity, const Vec3 &
     return transform->position - start;
 }
 
+CharacterMoveResult PhysicsWorld::MoveCharacterController(World &world, const Entity entity, const Vec3 &displacement,
+                                                          const float stepHeight, const float skinWidth) const
+{
+    CharacterMoveResult result;
+    auto *transform = world.GetComponent<TransformComponent>(entity);
+    const auto *collider = world.GetComponent<ColliderComponent>(entity);
+    if (!transform || !collider)
+        return result;
+    const Vec3 start = transform->position;
+    const Vec3 horizontal{displacement.x, 0.0f, displacement.z};
+    Vec3 horizontalApplied = MoveCharacter(world, entity, horizontal, skinWidth);
+    const bool blocked = std::abs(horizontalApplied.x - horizontal.x) > 0.0001f || std::abs(horizontalApplied.z - horizontal.z) > 0.0001f;
+    if (blocked && stepHeight > 0.0f)
+    {
+        transform->position = start;
+        const Vec3 raised = MoveCharacter(world, entity, {0.0f, stepHeight, 0.0f}, skinWidth);
+        const Vec3 steppedHorizontal = MoveCharacter(world, entity, horizontal, skinWidth);
+        if (raised.y > stepHeight * 0.9f && std::abs(steppedHorizontal.x - horizontal.x) < 0.0001f &&
+            std::abs(steppedHorizontal.z - horizontal.z) < 0.0001f)
+        {
+            float remainingDrop = stepHeight;
+            const float dropIncrement = std::max(0.01f, skinWidth);
+            while (remainingDrop > 0.0001f)
+            {
+                const float drop = std::min(dropIncrement, remainingDrop);
+                if (MoveCharacter(world, entity, {0.0f, -drop, 0.0f}, skinWidth).y > -drop + 0.0001f)
+                    break;
+                remainingDrop -= drop;
+            }
+            horizontalApplied = transform->position - start;
+            result.stepped = true;
+        }
+        else
+        {
+            transform->position = start;
+            horizontalApplied = MoveCharacter(world, entity, horizontal, skinWidth);
+        }
+    }
+    const Vec3 verticalApplied = MoveCharacter(world, entity, {0.0f, displacement.y, 0.0f}, skinWidth);
+    result.hitCeiling = displacement.y > 0.0f && verticalApplied.y < displacement.y - 0.0001f;
+    result.appliedDisplacement = transform->position - start;
+    const float probeRadius = collider->shape == ColliderShape::Sphere || collider->shape == ColliderShape::Capsule
+                                  ? collider->radius
+                                  : std::max(0.05f, std::min(collider->halfExtents.x, collider->halfExtents.z));
+    Vec3 probeOrigin = transform->position;
+    if (collider->shape == ColliderShape::Capsule)
+        probeOrigin.y -= collider->height * 0.5f;
+    else if (collider->shape == ColliderShape::Box)
+        probeOrigin.y -= std::max(0.0f, collider->halfExtents.y - probeRadius * 0.9f);
+    RaycastHit groundHit;
+    result.grounded = SphereCast(world, {probeOrigin, {0.0f, -1.0f, 0.0f}}, probeRadius * 0.9f, std::max(0.08f, skinWidth * 4.0f),
+                                 groundHit, {0xffffffffu, false, entity});
+    if (displacement.y < 0.0f && verticalApplied.y > displacement.y + 0.0001f)
+        result.grounded = true;
+    return result;
+}
+
 const std::vector<CollisionEvent> &PhysicsWorld::GetEvents() const
 {
     return m_events;

@@ -59,6 +59,17 @@ void NullRenderDevice::DrawUi(const std::vector<UIDrawCommand> &)
 void NullRenderDevice::Present()
 {
 }
+std::size_t NullRenderDevice::GetResidentGpuBytes() const
+{
+    return 0;
+}
+void NullRenderDevice::SetGpuMemoryBudget(const std::size_t bytes)
+{
+    m_gpuBudget = bytes;
+}
+void NullRenderDevice::TrimGpuResources()
+{
+}
 
 void RenderQueue::AddItem(const RenderItem &item)
 {

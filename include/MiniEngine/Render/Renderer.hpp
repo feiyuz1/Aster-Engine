@@ -92,6 +92,9 @@ class RenderDevice
     virtual void EndFrame() = 0;
     virtual void DrawUi(const std::vector<UIDrawCommand> &commands) = 0;
     virtual void Present() = 0;
+    virtual std::size_t GetResidentGpuBytes() const = 0;
+    virtual void SetGpuMemoryBudget(std::size_t bytes) = 0;
+    virtual void TrimGpuResources() = 0;
 };
 
 class NullRenderDevice final : public RenderDevice
@@ -111,9 +114,13 @@ class NullRenderDevice final : public RenderDevice
     void EndFrame() override;
     void DrawUi(const std::vector<UIDrawCommand> &commands) override;
     void Present() override;
+    std::size_t GetResidentGpuBytes() const override;
+    void SetGpuMemoryBudget(std::size_t bytes) override;
+    void TrimGpuResources() override;
 
   private:
     InputState m_inputState;
+    std::size_t m_gpuBudget = 0;
 };
 
 class RenderQueue

@@ -1,4 +1,5 @@
 #include "MiniEngine/Build/TargetPlatform.hpp"
+#include "MiniEngine/Build/AssetCompiler.hpp"
 
 #include "MiniEngine/Platform/Platform.hpp"
 #include "MiniEngine/Project/Project.hpp"
@@ -117,6 +118,11 @@ PlatformCookResult TargetPlatformCooker::Cook(const PlatformCookOptions &options
     cookOptions.include = [excluded](const std::filesystem::path &path) {
         const std::string extension = Lower(path.extension().string());
         return std::find(excluded.begin(), excluded.end(), extension) == excluded.end();
+    };
+    cookOptions.transform = [](const std::filesystem::path &source, const std::filesystem::path &destination, std::string &message) {
+        const auto compiled = PlatformAssetCompiler::Compile(source, destination);
+        message = compiled.error;
+        return compiled.success;
     };
     result.assets = AssetCooker::Cook(project.Resolve(project.assetDirectory), cookedAssets, assetArchive, cookOptions);
     if (!result.assets.success)

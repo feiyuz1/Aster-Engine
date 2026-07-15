@@ -2,7 +2,7 @@
 
 本文记录本轮开发对 TinyEngine 做过的主要更新，以及各功能采用的简要实现方式。内容按 Git 提交顺序整理，方便以后定位代码、回溯设计和继续开发。
 
-当前引擎版本：0.14.0
+当前引擎版本：0.15.0
 
 参考源码：Unreal Engine 5.3.2
 
@@ -265,11 +265,30 @@
 - CharacterController 使用语义输入和现有 `MoveCharacter`，避免在 Engine 主循环中继续保留 Demo 专用移动代码。
 - Commandlet 不创建 SDL/OpenGL 窗口，适合 CI、内容审计和批量迁移；平台 Cook 复用 AssetCooker、ShaderPipeline 与 PakArchive。
 
+## 17. 平台资产编译、GPU 预算与内容系统基础
+
+更新内容：
+
+- 新增 `PlatformAssetCompiler`，在 TargetPlatform Cook 中把 Texture 和 Mesh 转换为可直接加载的 `TNYTEX1` / `TNYMSH1` 二进制，并保持其他资产的复制行为。
+- `Resource` 加载器同时兼容编辑期源格式与 Cook 后二进制格式；测试覆盖独立编译和 TPAK 挂载后的资源读取。
+- `RenderDevice` 增加 GPU 驻留统计、预算和主动 Trim；OpenGL 后端统计 Mesh/Texture 缓存，Engine 提供 CVar、命令和 Stat。
+- CharacterController 增加水平移动、台阶尝试、垂直碰撞、接地和碰顶结果。
+- 新增骨骼层级、关键帧采样、蒙皮矩阵生成和条件状态机基础 API。
+- 新增严格 UTF-8 编解码、本地化字符串表、locale 回退、参数替换和 TTF/OTF 容器加载校验。
+- 新增 CPU 粒子发射器和 `VfxSystem`，支持连续发射、Burst、容量限制、重力、颜色/尺寸生命周期，并接入 Engine Tick/Shutdown。
+
+实现方式：
+
+- Cook 转换以 `AssetCooker::transform` 回调插入现有增量 Cook，不让资源层依赖平台命令行工具。
+- GPU 预算只回收可从 CPU Resource 重建的 OpenGL 缓存，不销毁调用方持有的 CPU 资源。
+- 新内容模块保持后端无关：动画只产出矩阵，VFX 只产出粒子数据，本地化只产出 Unicode 文本，后续由 Renderer/UI 消费。
+- 当前骨骼数据仍由程序构造，FontFace 尚未栅格化 glyph，粒子尚未形成 DrawCommand；这些边界继续登记在未完成清单。
+
 ## 当前仍未完成
 
 - Cubemap 离线预过滤/BRDF LUT、级联阴影、实例化和遮挡裁剪；HDR IBL、FXAA、LOD 和 GPU profiler 已完成。
-- 精确 Mesh 窄相位/可选 Jolt、完整 Sweep/Slide CharacterController。
-- 骨骼蒙皮与状态机、OGG 流式音频、Unicode 字体和高级 UI 排版。
+- 精确 Mesh 窄相位/可选 Jolt、完整斜坡 Sweep/Slide CharacterController。
+- Assimp 骨骼导入/GPU 蒙皮、OGG 流式音频、字体栅格化与复杂 UI 排版。
 - 多选/框选、Gizmo local/world 和 Shader 文本编辑器；多场景与 Material 编辑已完成。
 - 格式 CI 检查、渲染截图对比和逐分配内存追踪；基础无头 Commandlet、数据迁移、CI、崩溃报告、许可证清单和发布包冒烟已完成。
 

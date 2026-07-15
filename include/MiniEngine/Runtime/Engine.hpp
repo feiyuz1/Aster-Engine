@@ -16,6 +16,7 @@
 #include "MiniEngine/Script/ScriptEngine.hpp"
 #include "MiniEngine/Task/JobSystem.hpp"
 #include "MiniEngine/UI/UISystem.hpp"
+#include "MiniEngine/VFX/ParticleSystem.hpp"
 
 #include <cstdint>
 #include <filesystem>
@@ -41,6 +42,7 @@ struct EngineContext
     AssetStreamingManager *assetStreaming = nullptr;
     GameplayFramework *gameplay = nullptr;
     DiagnosticsService *diagnostics = nullptr;
+    VfxSystem *vfxSystem = nullptr;
 };
 
 class Engine : private WorldListener
@@ -82,6 +84,7 @@ class Engine : private WorldListener
     UISystem m_uiSystem;
     GameplayFramework m_gameplay;
     DiagnosticsService m_diagnostics;
+    VfxSystem m_vfxSystem;
     ProjectSettings m_projectSettings;
     SceneManager m_sceneManager{&m_world};
     std::unique_ptr<GameInstance> m_gameInstance;

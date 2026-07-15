@@ -77,13 +77,23 @@ bool Engine::Initialize(const std::filesystem::path &projectFile, const bool sta
         "asset.StreamingBudgetMB", 256, "Runtime resource memory budget in MiB", false, [this](const ConsoleValue &value) {
             m_assetStreaming.SetMemoryBudget(static_cast<std::size_t>(std::max(1, std::get<int>(value))) * 1024u * 1024u);
         });
+    console.RegisterVariable(
+        "r.GpuBudgetMB", 512, "OpenGL mesh and texture memory budget in MiB", false, [this](const ConsoleValue &value) {
+            if (auto *device = m_renderer.GetDevice())
+                device->SetGpuMemoryBudget(static_cast<std::size_t>(std::max(1, std::get<int>(value))) * 1024u * 1024u);
+        });
     console.RegisterCommand("asset.gc", [this](const std::vector<std::string> &) {
         m_resourceManager.GarbageCollect();
         return std::string{"Resource garbage collection complete"};
     });
+    console.RegisterCommand("r.TrimGpu", [this](const std::vector<std::string> &) {
+        if (auto *device = m_renderer.GetDevice())
+            device->TrimGpuResources();
+        return std::string{"GPU resource caches cleared"};
+    });
     m_context = {&m_logger,      &m_memoryManager,  &m_jobSystem,   &m_resourceManager, &m_world,        &m_renderer,
                  &m_inputSystem, &m_physicsWorld,   &m_audioEngine, &m_scriptEngine,    &m_sceneManager, &m_projectSettings,
-                 &m_uiSystem,    &m_assetStreaming, &m_gameplay,    &m_diagnostics};
+                 &m_uiSystem,    &m_assetStreaming, &m_gameplay,    &m_diagnostics,     &m_vfxSystem};
     bool sceneLoaded = false;
     if (projectLoaded)
         sceneLoaded = m_sceneManager.LoadScene(m_projectPakMounted ? m_projectSettings.startupScene
@@ -134,6 +144,7 @@ void Engine::Shutdown()
         m_gameInstance->OnShutdown();
     m_scriptEngine.Shutdown();
     m_gameplay.Shutdown();
+    m_vfxSystem.Clear();
     m_audioEngine.Shutdown();
     m_renderer.Shutdown();
     m_physicsWorld.Clear();
@@ -252,6 +263,7 @@ void Engine::Tick(const float rawDeltaTime)
         if (m_gameInstance)
             m_gameInstance->OnUpdate(deltaTime);
         m_world.Update(deltaTime);
+        m_vfxSystem.Update(deltaTime);
         const float fixedStep = m_projectSettings.fixedStep;
         m_fixedAccumulator = std::min(m_fixedAccumulator + deltaTime, 0.25f);
         while (m_fixedAccumulator >= fixedStep)
@@ -267,6 +279,8 @@ void Engine::Tick(const float rawDeltaTime)
     stats.Set("frame.delta_ms", rawDeltaTime * 1000.0);
     stats.Set("render.total_ms", profile.totalMilliseconds);
     stats.Set("render.draw_calls", static_cast<double>(m_renderer.GetLastDrawCallCount()));
+    stats.Set("render.gpu_resident_bytes",
+              m_renderer.GetDevice() ? static_cast<double>(m_renderer.GetDevice()->GetResidentGpuBytes()) : 0.0);
     stats.Set("asset.resident_bytes", static_cast<double>(m_assetStreaming.GetResidentBytes()));
     stats.Set("job.outstanding", static_cast<double>(m_jobSystem.GetOutstandingJobCount()));
     m_memoryManager.ResetFrame();

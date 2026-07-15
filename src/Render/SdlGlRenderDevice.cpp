@@ -332,6 +332,7 @@ struct SdlGlRenderDevice::Impl
     {
         GLuint vao = 0, vertexBuffer = 0, indexBuffer = 0;
         GLsizei indexCount = 0;
+        std::size_t byteSize = 0;
     };
     struct UiVertex
     {
@@ -340,7 +341,35 @@ struct SdlGlRenderDevice::Impl
     };
     std::unordered_map<std::string, GpuMesh> meshes;
     std::unordered_map<std::string, GLuint> textures;
+    std::unordered_map<std::string, std::size_t> textureBytes;
     std::unordered_map<std::string, std::shared_ptr<TextureResource>> uiTextureResources;
+    std::size_t gpuMemoryBudget = 512ull * 1024ull * 1024ull;
+
+    std::size_t GetResidentBytes() const
+    {
+        std::size_t total = 0;
+        for (const auto &pair : meshes)
+            total += pair.second.byteSize;
+        for (const auto &pair : textureBytes)
+            total += pair.second;
+        return total;
+    }
+
+    void DestroyCachedResources()
+    {
+        for (const auto &pair : meshes)
+        {
+            DeleteBuffers(1, &pair.second.vertexBuffer);
+            DeleteBuffers(1, &pair.second.indexBuffer);
+            DeleteVertexArrays(1, &pair.second.vao);
+        }
+        meshes.clear();
+        for (const auto &pair : textures)
+            glDeleteTextures(1, &pair.second);
+        textures.clear();
+        textureBytes.clear();
+        uiTextureResources.clear();
+    }
 
     bool LoadFunctions()
     {
@@ -694,10 +723,13 @@ struct SdlGlRenderDevice::Impl
         GenBuffers(1, &mesh.vertexBuffer);
         BindBuffer(GL_ARRAY_BUFFER, mesh.vertexBuffer);
         const auto &vertices = resource->GetVertices();
+        const auto &indices = resource->GetIndices();
+        const std::size_t requiredBytes = vertices.size() * sizeof(MeshVertex) + indices.size() * sizeof(std::uint32_t);
+        if (GetResidentBytes() + requiredBytes > gpuMemoryBudget)
+            DestroyCachedResources();
         BufferData(GL_ARRAY_BUFFER, static_cast<GLsizeiptr>(vertices.size() * sizeof(MeshVertex)), vertices.data(), GL_STATIC_DRAW);
         GenBuffers(1, &mesh.indexBuffer);
         BindBuffer(GL_ELEMENT_ARRAY_BUFFER, mesh.indexBuffer);
-        const auto &indices = resource->GetIndices();
         BufferData(GL_ELEMENT_ARRAY_BUFFER, static_cast<GLsizeiptr>(indices.size() * sizeof(std::uint32_t)), indices.data(),
                    GL_STATIC_DRAW);
         VertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(MeshVertex), reinterpret_cast<void *>(offsetof(MeshVertex, position)));
@@ -712,6 +744,7 @@ struct SdlGlRenderDevice::Impl
         EnableVertexAttribArray(3);
         BindVertexArray(0);
         mesh.indexCount = static_cast<GLsizei>(indices.size());
+        mesh.byteSize = requiredBytes;
         return &meshes.emplace(resource->GetPath(), mesh).first->second;
     }
 
@@ -723,6 +756,9 @@ struct SdlGlRenderDevice::Impl
         const auto found = textures.find(key);
         if (found != textures.end())
             return found->second;
+        const std::size_t requiredBytes = resource->GetByteSize();
+        if (GetResidentBytes() + requiredBytes > gpuMemoryBudget)
+            DestroyCachedResources();
         GLuint texture = 0;
         glGenTextures(1, &texture);
         glBindTexture(GL_TEXTURE_2D, texture);
@@ -740,6 +776,7 @@ struct SdlGlRenderDevice::Impl
         GenerateMipmap(GL_TEXTURE_2D);
         glBindTexture(GL_TEXTURE_2D, 0);
         textures[key] = texture;
+        textureBytes[key] = requiredBytes;
         return texture;
     }
 
@@ -860,6 +897,7 @@ void SdlGlRenderDevice::Shutdown()
         for (const auto &pair : m_impl->textures)
             glDeleteTextures(1, &pair.second);
         m_impl->textures.clear();
+        m_impl->textureBytes.clear();
         if (m_impl->fontAtlas)
         {
             glDeleteTextures(1, &m_impl->fontAtlas);
@@ -1289,6 +1327,23 @@ void SdlGlRenderDevice::Present()
 {
     if (m_impl && m_impl->window)
         SDL_GL_SwapWindow(m_impl->window);
+}
+
+std::size_t SdlGlRenderDevice::GetResidentGpuBytes() const
+{
+    return m_impl ? m_impl->GetResidentBytes() : 0;
+}
+
+void SdlGlRenderDevice::SetGpuMemoryBudget(const std::size_t bytes)
+{
+    if (m_impl)
+        m_impl->gpuMemoryBudget = std::max<std::size_t>(bytes, 1024 * 1024);
+}
+
+void SdlGlRenderDevice::TrimGpuResources()
+{
+    if (m_impl && m_impl->context)
+        m_impl->DestroyCachedResources();
 }
 void *SdlGlRenderDevice::GetNativeWindow() const
 {

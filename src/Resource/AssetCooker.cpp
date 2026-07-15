@@ -104,10 +104,13 @@ CookResult AssetCooker::Cook(const std::filesystem::path &assetDirectory, const 
         else
         {
             std::filesystem::create_directories(destination.parent_path(), error);
-            std::filesystem::copy_file(sources[index], destination, std::filesystem::copy_options::overwrite_existing, error);
-            if (error)
+            std::string transformError;
+            const bool transformed = options.transform ? options.transform(sources[index], destination, transformError) : false;
+            if (!options.transform)
+                std::filesystem::copy_file(sources[index], destination, std::filesystem::copy_options::overwrite_existing, error);
+            if ((options.transform && !transformed) || error)
             {
-                result.errors.push_back(key + ": " + error.message());
+                result.errors.push_back(key + ": " + (transformError.empty() ? error.message() : transformError));
                 error.clear();
             }
             else

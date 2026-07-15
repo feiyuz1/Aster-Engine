@@ -1,5 +1,7 @@
+#include "MiniEngine/Animation/SkeletalAnimation.hpp"
 #include "MiniEngine/Audio/AudioEngine.hpp"
 #include "MiniEngine/Automation/Automation.hpp"
+#include "MiniEngine/Build/AssetCompiler.hpp"
 #include "MiniEngine/Build/TargetPlatform.hpp"
 #include "MiniEngine/Core/Config.hpp"
 #include "MiniEngine/Core/CrashReporter.hpp"
@@ -11,6 +13,7 @@
 #include "MiniEngine/ECS/Systems.hpp"
 #include "MiniEngine/Gameplay/Gameplay.hpp"
 #include "MiniEngine/Input/InputSystem.hpp"
+#include "MiniEngine/Localization/Localization.hpp"
 #include "MiniEngine/Math/Math.hpp"
 #include "MiniEngine/Physics/PhysicsWorld.hpp"
 #include "MiniEngine/Platform/Platform.hpp"
@@ -27,6 +30,7 @@
 #include "MiniEngine/Serialization/Archive.hpp"
 #include "MiniEngine/Task/JobSystem.hpp"
 #include "MiniEngine/UI/UISystem.hpp"
+#include "MiniEngine/VFX/ParticleSystem.hpp"
 #ifdef TINYENGINE_HAS_ASSIMP
 #include "MiniEngine/Import/AssimpImporter.hpp"
 #endif
@@ -242,6 +246,10 @@ int main()
     CHECK(mesh.GetIndices().size() == 3);
     CHECK(Length(mesh.GetVertices().front().tangent) > 0.9f &&
           std::abs(Dot(mesh.GetVertices().front().normal, mesh.GetVertices().front().tangent)) < 0.001f);
+    const auto compiledMeshResult = PlatformAssetCompiler::Compile("assets/player.mesh", "Saved/CompiledPlayer.mesh");
+    CHECK(compiledMeshResult.success && compiledMeshResult.type == CompiledAssetType::Mesh);
+    MeshResource compiledMesh;
+    CHECK(compiledMesh.Load("Saved/CompiledPlayer.mesh") && compiledMesh.GetVertices().size() == mesh.GetVertices().size());
 #ifdef TINYENGINE_HAS_ASSIMP
     CHECK(PlatformFile::WriteAllText("Saved/ImportTriangle.obj",
                                      "o Triangle\nv 0 0 0\nv 2 0 0\nv 0 2 0\nvt 0 0\nvt 1 0\nvt 0 1\nf 1/1 2/2 3/3\n"));
@@ -269,6 +277,10 @@ int main()
     TextureResource texture;
     CHECK(texture.Load("assets/default.ppm"));
     CHECK(texture.GetWidth() == 2 && texture.GetHeight() == 2 && texture.GetData().size() == 16);
+    const auto compiledTextureResult = PlatformAssetCompiler::Compile("assets/default.ppm", "Saved/CompiledDefault.ppm");
+    CHECK(compiledTextureResult.success && compiledTextureResult.type == CompiledAssetType::Texture);
+    TextureResource compiledTexture;
+    CHECK(compiledTexture.Load("Saved/CompiledDefault.ppm") && compiledTexture.GetData() == texture.GetData());
     const std::vector<std::uint8_t> pngBytes{0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48,
                                              0x44, 0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00,
                                              0x00, 0x1f, 0x15, 0xc4, 0x89, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x44, 0x41, 0x54, 0x08,
@@ -354,6 +366,11 @@ int main()
     VersionedDocument cookManifest;
     CHECK(VersionedTextArchive::Deserialize(PlatformFile::ReadAllText(platformCook.manifest), cookManifest));
     CHECK(cookManifest.fields["platform"] == "Windows" && cookManifest.fields["configuration"] == "Shipping");
+    PlatformFile::ClearMounts();
+    CHECK(PlatformFile::MountPak(platformCook.archive));
+    MeshResource platformMesh;
+    CHECK(platformMesh.Load("assets/player.mesh") && platformMesh.GetVertices().size() == 3);
+    PlatformFile::ClearMounts();
     CommandletRegistry commandlets;
     RegisterBuiltInCommandlets(commandlets);
     CHECK(commandlets.Run("ValidateAssets", {"assets"}).exitCode == 0);
@@ -380,6 +397,11 @@ int main()
     CHECK(physics.SphereCast(physicsScene, {{0.0f, 3.0f, 0.0f}, {0.0f, -1.0f, 0.0f}}, 0.25f, 10.0f, queryHit));
     CHECK(!physics.Overlap(physicsScene, {{-1.0f, -1.0f, -1.0f}, {1.0f, 1.0f, 1.0f}}).empty());
     CHECK(physics.GetDebugBoxes().size() == 2 && Length(queryHit.normal) > 0.9f);
+    const Entity character = physicsScene.CreateEntity("Character");
+    physicsScene.GetComponent<TransformComponent>(character)->position = {2.0f, 1.3f, 0.0f};
+    physicsScene.AddComponent(character, ColliderComponent{ColliderShape::Capsule, {0.4f, 0.9f, 0.4f}, 0.4f, 1.8f});
+    const auto characterMove = physics.MoveCharacterController(physicsScene, character, {0.5f, 0.0f, 0.0f});
+    CHECK(characterMove.appliedDisplacement.x > 0.49f && characterMove.grounded);
     World jointWorld;
     const Entity jointFirst = jointWorld.CreateEntity("JointFirst"), jointSecond = jointWorld.CreateEntity("JointSecond");
     jointWorld.GetComponent<TransformComponent>(jointFirst)->position = {0.0f, 0.0f, 0.0f};
@@ -402,6 +424,19 @@ int main()
     animationWorld.Update(0.5f);
     CHECK(std::abs(animationWorld.GetComponent<TransformComponent>(animatedEntity)->position.x - 5.0f) < 0.01f);
     animationWorld.Shutdown();
+
+    Skeleton skeleton{{{"Root", -1, Mat4::Identity()}, {"Hand", 0, Mat4::Identity()}}};
+    CHECK(skeleton.IsValid() && skeleton.FindBone("Hand") == 1);
+    auto skeletalClip = std::make_shared<SkeletalClip>();
+    skeletalClip->name = "Wave";
+    skeletalClip->duration = 1.0f;
+    skeletalClip->keyframes = {{0.0f, {BonePose{}, BonePose{}}}, {1.0f, {BonePose{{1.0f, 0.0f, 0.0f}}, BonePose{{0.0f, 1.0f, 0.0f}}}}};
+    const auto halfPose = skeletalClip->Sample(0.5f, skeleton.bones.size());
+    CHECK(halfPose.size() == 2 && std::abs(halfPose[0].position.x - 0.5f) < 0.001f);
+    CHECK(BuildSkinMatrices(skeleton, halfPose).size() == 2);
+    AnimationStateMachine stateMachine;
+    CHECK(stateMachine.AddState("Wave", skeletalClip));
+    CHECK(stateMachine.Update(0.25f, 2).size() == 2);
 
     Config config;
     config.Set("render.vsync", "true");
@@ -459,6 +494,26 @@ int main()
     layoutUi.SetDpiScale(2.0f);
     const auto &scaledCommands = layoutUi.BuildDrawList();
     CHECK(scaledCommands[0].rect.width == 600.0f && scaledCommands[1].fontSize == 36.0f && scaledCommands[1].clipRect.width > 0.0f);
+
+    std::vector<std::uint32_t> codepoints;
+    const std::string unicodeText = "Tiny引擎";
+    CHECK(Utf8::Decode(unicodeText, codepoints) && codepoints.size() == 6 && Utf8::Encode(codepoints) == unicodeText);
+    StringTable strings;
+    strings.Set("en", "welcome", "Hello {0}");
+    strings.Set("zh-CN", "welcome", "你好，{0}");
+    CHECK(strings.Save("Saved/Test.loc"));
+    StringTable loadedStrings;
+    CHECK(loadedStrings.Load("Saved/Test.loc") && loadedStrings.Format("zh-CN", "welcome", {"Tiny"}) == "你好，Tiny");
+    ParticleEmitterSettings particleSettings;
+    particleSettings.maximumParticles = 8;
+    particleSettings.emissionRate = 0.0f;
+    particleSettings.lifetime = 1.0f;
+    ParticleEmitter particles(particleSettings);
+    particles.Burst(4);
+    particles.Update(0.5f);
+    CHECK(particles.GetParticles().size() == 4 && particles.GetParticles().front().age > 0.49f);
+    particles.Update(0.6f);
+    CHECK(particles.GetParticles().empty());
 
     if (failures == 0)
         std::cout << "All TinyEngine tests passed\n";

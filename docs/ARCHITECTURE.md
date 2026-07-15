@@ -1,6 +1,6 @@
 # TinyEngine 架构说明
 
-本文对应 TinyEngine 0.14.0，最后同步于 2026-07-15。
+本文对应 TinyEngine 0.15.0，最后同步于 2026-07-15。
 
 ## 依赖方向
 
@@ -85,9 +85,13 @@ Assimp 的 CPU/文件转换通过 `AssetImportQueue` 提交到 JobSystem，编�
 
 `AssetStreamingManager` 在 `ResourceManager` 之上返回类型化 `AssetHandle<T>`，用 `.meta` 依赖构造传递闭包，并按最近访问、Pin 状态和字节预算淘汰只剩缓存引用的资源。它不越过 ResourceManager 直接销毁仍被调用方持有的对象。
 
-`GameplayFramework` 管理 GameMode、Timer 和玩家 Pawn；`CharacterControllerComponent` 将语义输入转换为速度，再复用 `PhysicsWorld::MoveCharacter`。通用运行逻辑不再硬编码在 `Engine::Tick`。Diagnostics 提供类型化 CVar、命令和线程安全 Stat；Engine 注册时间缩放、FXAA、流送预算和资源 GC，并逐帧写入渲染、资源和 Job 统计。
+`GameplayFramework` 管理 GameMode、Timer 和玩家 Pawn；`CharacterControllerComponent` 将语义输入转换为速度，再调用 `PhysicsWorld::MoveCharacterController` 得到台阶、接地和碰顶结果。通用运行逻辑不再硬编码在 `Engine::Tick`。Diagnostics 提供类型化 CVar、命令和线程安全 Stat；Engine 注册时间缩放、FXAA、CPU/GPU 资源预算和资源回收，并逐帧写入渲染、资源和 Job 统计。
 
-无头 `tinyengine_commandlet` 当前提供 `ValidateAssets`、`ValidateScenes`、`MigrateScenes` 和 `CookProject`。TargetPlatform Cook 对源资产执行平台过滤、离线展开 Shader variant、生成 `Game.tpak` 和版本化 `PlatformCook.manifest`；Windows/Linux Profile 已存在，压缩纹理编译器仍属于后续平台工具链。
+无头 `tinyengine_commandlet` 当前提供 `ValidateAssets`、`ValidateScenes`、`MigrateScenes` 和 `CookProject`。TargetPlatform Cook 对源资产执行平台过滤，将 Mesh/Texture 编译为确定性的运行时二进制，离线展开 Shader variant，并生成 `Game.tpak` 和版本化 `PlatformCook.manifest`；Windows/Linux Profile 已存在，BCn/KTX2 等硬件压缩仍属于后续平台工具链。
+
+`RenderDevice` 统一暴露 GPU 驻留字节数、预算设置和缓存回收。OpenGL 后端统计 Mesh buffer 与 Texture payload；超预算时释放可重建的缓存对象，Diagnostics 通过 `r.GpuBudgetMB`、`r.TrimGpu` 和 `render.gpu_resident_bytes` 提供运行时控制与观测。
+
+骨骼动画层由 Skeleton、SkeletalClip、采样器、蒙皮矩阵生成和轻量条件状态机组成，不依赖渲染后端；当前尚未接入 Assimp 骨骼导入与 GPU skinning。VfxSystem 由 Engine 统一驱动，负责确定性的 CPU 粒子生命周期仿真，渲染提交是下一层职责。本地化层严格校验 UTF-8，使用 `TINYLOC 1` 字符串表完成语言回退和参数替换；FontFace 当前只负责加载并校验 TTF/OTF 容器。
 
 编辑器属性面板不直接依赖具体组件类型。`ReflectionRegistry` 登记组件存在性、增删回调、字段访问器、枚举项、数值范围和资产类型，Inspector 据此生成通用控件。资产浏览器拖放路径时先经 `AssetRegistry` 校验类型。编辑操作进入序列化快照 Undo 栈并设置脏标记；未保存场景每 30 秒写入项目 `Saved/EditorAutosave.scene`，启动后可显式恢复，正常保存会删除恢复文件。
 
@@ -96,6 +100,8 @@ Assimp 的 CPU/文件转换通过 `AssetImportQueue` 提交到 JobSystem，编�
 - `TINYSCENE 7`：场景和 Prefab 文本格式，增加 Pawn/CharacterController，并继续读取 1–6 版。
 - `TINYARCHIVE`：带格式名、版本号和有序字段的通用文本 Archive；二进制 Archive 固定使用小端编码和有界字符串。
 - `TinyEnginePlatformCook 1`：平台、配置、纹理/Shader 格式、启动场景和变体数量清单。
+- `TNYTEX1` / `TNYMSH1`：平台 Cook 产出的 Texture/Mesh 小端运行时二进制。
+- `TINYLOC 1`：按 locale/key 组织、支持回退和参数替换的本地化字符串表。
 - `TINYINPUT 1`：逻辑 Axis/Action 到物理输入通道的多重映射。
 - `.mat`：`color`、`metallic`、`roughness`、`emissive`、`texture`、`blend`。
 - `<asset>.meta`：32 位十六进制 GUID、类型、导入时间、设置和依赖。

@@ -140,7 +140,13 @@ void GameplayFramework::Update(const float deltaTime)
             const Vec3 displacement = controller.velocity * deltaTime;
             Vec3 applied = displacement;
             if (m_physics && m_world->HasComponent<ColliderComponent>(entity))
-                applied = m_physics->MoveCharacter(*m_world, entity, displacement);
+            {
+                const auto move = m_physics->MoveCharacterController(*m_world, entity, displacement);
+                applied = move.appliedDisplacement;
+                controller.grounded = move.grounded;
+                if (move.hitCeiling)
+                    controller.velocity.y = 0.0f;
+            }
             else if (auto *transform = m_world->GetComponent<TransformComponent>(entity))
                 transform->position += displacement;
             if (displacement.y < 0.0f && std::abs(applied.y - displacement.y) > 0.0001f)

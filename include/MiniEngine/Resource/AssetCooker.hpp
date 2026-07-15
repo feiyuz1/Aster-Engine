@@ -24,6 +24,7 @@ struct CookOptions
     std::atomic<bool> *cancel = nullptr;
     std::function<void(float, const std::string &)> progress;
     std::function<bool(const std::filesystem::path &)> include;
+    std::function<bool(const std::filesystem::path &, const std::filesystem::path &, std::string &)> transform;
 };
 
 class AssetCooker

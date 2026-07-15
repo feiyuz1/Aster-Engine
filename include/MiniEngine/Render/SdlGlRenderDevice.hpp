@@ -28,6 +28,9 @@ class SdlGlRenderDevice final : public RenderDevice
     void EndFrame() override;
     void DrawUi(const std::vector<UIDrawCommand> &commands) override;
     void Present() override;
+    std::size_t GetResidentGpuBytes() const override;
+    void SetGpuMemoryBudget(std::size_t bytes) override;
+    void TrimGpuResources() override;
     void *GetNativeWindow() const;
     void *GetGlContext() const;
     void SetEventCallback(std::function<void(const void *)> callback);
