@@ -94,6 +94,16 @@ float DistanceToSegment(const ImVec2 point, const ImVec2 start, const ImVec2 end
     const float dx = point.x - (start.x + segment.x * t), dy = point.y - (start.y + segment.y * t);
     return std::sqrt(dx * dx + dy * dy);
 }
+
+bool InputString(const char *label, std::string &value, const std::size_t capacity = 512)
+{
+    std::vector<char> buffer(capacity, '\0');
+    std::strncpy(buffer.data(), value.c_str(), buffer.size() - 1);
+    if (!ImGui::InputText(label, buffer.data(), buffer.size(), ImGuiInputTextFlags_EnterReturnsTrue))
+        return false;
+    value = buffer.data();
+    return true;
+}
 } // namespace
 
 bool EditorApp::Initialize(const std::filesystem::path &projectFile)
@@ -172,6 +182,7 @@ void EditorApp::Draw()
     DrawSceneView();
     DrawAssets();
     DrawConsole();
+    DrawAnimationEditor();
     ImGuiIO &io = ImGui::GetIO();
     if (!io.WantTextInput && io.KeyCtrl)
     {
@@ -875,6 +886,45 @@ void EditorApp::DrawAssets()
     ImGui::SetNextWindowPos({viewport->WorkPos.x, top}, ImGuiCond_Always);
     ImGui::SetNextWindowSize({halfWidth, viewport->WorkPos.y + viewport->WorkSize.y - top}, ImGuiCond_Always);
     ImGui::Begin("Assets");
+    if (!m_engine.IsPlaying())
+    {
+        const auto createUniquePath = [this](const std::string &stem, const std::string &extension) {
+            const auto root = m_engine.GetProjectSettings().Resolve(m_engine.GetProjectSettings().assetDirectory);
+            for (int suffix = 0;; ++suffix)
+            {
+                const auto name = stem + (suffix == 0 ? std::string{} : std::to_string(suffix)) + extension;
+                const auto path = root / name;
+                if (!std::filesystem::exists(path))
+                    return path;
+            }
+        };
+        if (ImGui::Button("+ Blend Tree"))
+        {
+            BlendTree1D tree;
+            tree.samples = {{0.0f, "assets/player.skanim"}};
+            const auto path = createUniquePath("NewBlendTree", ".blendtree");
+            if (SaveBlendTreeAsset(tree, path))
+            {
+                m_engine.GetContext().resourceManager->GetAssetRegistry().Scan(path.parent_path());
+                m_selectedAsset = path.generic_string();
+            }
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("+ Animation Graph"))
+        {
+            AnimationGraph graph;
+            graph.entryState = "Idle";
+            graph.parameters = {{"Speed", 0.0f}};
+            graph.states = {{"Idle", "assets/player.skanim"}};
+            const auto path = createUniquePath("NewAnimationGraph", ".animgraph");
+            if (SaveAnimationGraphAsset(graph, path))
+            {
+                m_engine.GetContext().resourceManager->GetAssetRegistry().Scan(path.parent_path());
+                m_selectedAsset = path.generic_string();
+            }
+        }
+        ImGui::Separator();
+    }
 #ifdef TINYENGINE_HAS_ASSIMP
     if (m_activeImportTask != 0)
     {
@@ -929,6 +979,21 @@ void EditorApp::DrawAssets()
         }
         if (const auto flip = selectedInfo->importSettings.find("flipUvs"); flip != selectedInfo->importSettings.end())
             options.flipUvs = flip->second == "true";
+        if (const auto compress = selectedInfo->importSettings.find("compressAnimations"); compress != selectedInfo->importSettings.end())
+            options.compressAnimations = compress->second == "true";
+        const auto readFloatSetting = [&selectedInfo](const char *name, float &value) {
+            if (const auto setting = selectedInfo->importSettings.find(name); setting != selectedInfo->importSettings.end())
+                try
+                {
+                    value = std::stof(setting->second);
+                }
+                catch (...)
+                {
+                }
+        };
+        readFloatSetting("animationPositionTolerance", options.animationPositionTolerance);
+        readFloatSetting("animationRotationToleranceDegrees", options.animationRotationToleranceDegrees);
+        readFloatSetting("animationScaleTolerance", options.animationScaleTolerance);
         const std::filesystem::path output = std::filesystem::path(selectedInfo->path).parent_path();
         const auto projectRoot = m_engine.GetProjectSettings().projectFile.empty()
                                      ? std::filesystem::current_path()
@@ -944,9 +1009,17 @@ void EditorApp::DrawAssets()
         static char sourcePath[1024]{};
         static float scale = 1.0f;
         static bool flipUvs = false;
+        static bool compressAnimations = true;
+        static float positionTolerance = 0.001f, rotationTolerance = 0.1f, scaleTolerance = 0.001f;
         ImGui::InputText("Source", sourcePath, sizeof(sourcePath));
         ImGui::DragFloat("Scale", &scale, 0.01f, 0.0001f, 1000.0f);
         ImGui::Checkbox("Flip UVs", &flipUvs);
+        ImGui::Checkbox("Compress Animations", &compressAnimations);
+        ImGui::BeginDisabled(!compressAnimations);
+        ImGui::DragFloat("Position Error", &positionTolerance, 0.0001f, 0.0f, 1.0f, "%.5f");
+        ImGui::DragFloat("Rotation Error (deg)", &rotationTolerance, 0.01f, 0.0f, 45.0f, "%.3f");
+        ImGui::DragFloat("Scale Error", &scaleTolerance, 0.0001f, 0.0f, 1.0f, "%.5f");
+        ImGui::EndDisabled();
         if (ImGui::Button("Import") && sourcePath[0] != '\0')
         {
             const std::filesystem::path source(sourcePath);
@@ -956,6 +1029,10 @@ void EditorApp::DrawAssets()
             ModelImportOptions options;
             options.scale = scale;
             options.flipUvs = flipUvs;
+            options.compressAnimations = compressAnimations;
+            options.animationPositionTolerance = positionTolerance;
+            options.animationRotationToleranceDegrees = rotationTolerance;
+            options.animationScaleTolerance = scaleTolerance;
             options.resourcePrefix = relativeOutput;
             m_activeImportTask = m_importQueue.Submit(source, output, options);
             m_messages.emplace_back("Queued model import: " + source.generic_string());
@@ -998,6 +1075,248 @@ void EditorApp::DrawAssets()
             ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left))
             OpenSceneDocument(asset.path);
         ImGui::PopID();
+    }
+    ImGui::End();
+}
+
+void EditorApp::DrawAnimationEditor()
+{
+    if (m_selectedAsset.empty())
+        return;
+    const std::string extension = std::filesystem::path(m_selectedAsset).extension().string();
+    if (extension != ".skanim" && extension != ".blendtree" && extension != ".animgraph")
+        return;
+    if (m_openAnimationAsset != m_selectedAsset)
+    {
+        m_openAnimationAsset.clear();
+        bool loaded = false;
+        if (extension == ".skanim")
+            loaded = LoadSkeletalClipAsset(m_selectedAsset, m_editSkeletalClip);
+        else if (extension == ".blendtree")
+            loaded = LoadBlendTreeAsset(m_selectedAsset, m_editBlendTree);
+        else
+            loaded = LoadAnimationGraphAsset(m_selectedAsset, m_editAnimationGraph);
+        if (!loaded)
+        {
+            m_messages.emplace_back("Cannot open animation asset: " + m_selectedAsset);
+            return;
+        }
+        m_openAnimationAsset = m_selectedAsset;
+    }
+
+    ImGui::SetNextWindowSize({720.0f, 520.0f}, ImGuiCond_FirstUseEver);
+    if (!ImGui::Begin("Animation Graph / Events"))
+    {
+        ImGui::End();
+        return;
+    }
+    ImGui::TextWrapped("%s", m_openAnimationAsset.c_str());
+    ImGui::Separator();
+    if (extension == ".skanim")
+    {
+        ImGui::Text("Clip: %s | %.3f sec | %zu bones", m_editSkeletalClip.name.c_str(), m_editSkeletalClip.duration,
+                    m_editSkeletalClip.IsCompressed()      ? m_editSkeletalClip.tracks.size()
+                    : m_editSkeletalClip.keyframes.empty() ? 0
+                                                           : m_editSkeletalClip.keyframes.front().localPose.size());
+        ImGui::Text("Storage: %s", m_editSkeletalClip.IsCompressed() ? "compressed curves" : "raw sampled poses");
+        ImGui::BeginDisabled(m_editSkeletalClip.IsCompressed());
+        if (ImGui::Button("Compress Curves"))
+        {
+            const auto stats = m_editSkeletalClip.Compress();
+            m_messages.emplace_back("Animation curve keys: " + std::to_string(stats.originalCurveKeys) + " -> " +
+                                    std::to_string(stats.compressedCurveKeys));
+        }
+        ImGui::EndDisabled();
+        ImGui::SeparatorText("Events");
+        int remove = -1;
+        for (std::size_t index = 0; index < m_editSkeletalClip.events.size(); ++index)
+        {
+            auto &event = m_editSkeletalClip.events[index];
+            ImGui::PushID(static_cast<int>(index));
+            ImGui::SetNextItemWidth(90.0f);
+            ImGui::DragFloat("Time", &event.time, 0.01f, 0.0f, m_editSkeletalClip.duration);
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(150.0f);
+            InputString("Name", event.name, 128);
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(220.0f);
+            InputString("Payload", event.payload, 256);
+            ImGui::SameLine();
+            if (ImGui::SmallButton("X"))
+                remove = static_cast<int>(index);
+            ImGui::PopID();
+        }
+        if (remove >= 0)
+            m_editSkeletalClip.events.erase(m_editSkeletalClip.events.begin() + remove);
+        if (ImGui::Button("+ Event"))
+            m_editSkeletalClip.events.push_back({0.0f, "Event", {}});
+        ImGui::SameLine();
+        if (ImGui::Button("Save Clip"))
+        {
+            std::sort(m_editSkeletalClip.events.begin(), m_editSkeletalClip.events.end(),
+                      [](const AnimationEvent &left, const AnimationEvent &right) { return left.time < right.time; });
+            if (SaveSkeletalClipAsset(m_editSkeletalClip, m_openAnimationAsset))
+                m_messages.emplace_back("Saved animation events: " + m_openAnimationAsset);
+        }
+    }
+    else if (extension == ".blendtree")
+    {
+        InputString("Parameter", m_editBlendTree.parameter, 128);
+        ImGui::SeparatorText("1D Samples");
+        int remove = -1;
+        for (std::size_t index = 0; index < m_editBlendTree.samples.size(); ++index)
+        {
+            auto &sample = m_editBlendTree.samples[index];
+            ImGui::PushID(static_cast<int>(index));
+            ImGui::SetNextItemWidth(120.0f);
+            ImGui::DragFloat("Threshold", &sample.threshold, 0.05f);
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(390.0f);
+            InputString("Clip", sample.clipPath);
+            ImGui::SameLine();
+            if (ImGui::SmallButton("X"))
+                remove = static_cast<int>(index);
+            ImGui::PopID();
+        }
+        if (remove >= 0)
+            m_editBlendTree.samples.erase(m_editBlendTree.samples.begin() + remove);
+        if (ImGui::Button("+ Sample"))
+            m_editBlendTree.samples.push_back(
+                {m_editBlendTree.samples.empty() ? 0.0f : m_editBlendTree.samples.back().threshold + 1.0f, "assets/player.skanim"});
+        ImGui::SameLine();
+        if (ImGui::Button("Save Blend Tree"))
+        {
+            std::sort(m_editBlendTree.samples.begin(), m_editBlendTree.samples.end(),
+                      [](const BlendTreeSample &left, const BlendTreeSample &right) { return left.threshold < right.threshold; });
+            if (SaveBlendTreeAsset(m_editBlendTree, m_openAnimationAsset))
+                m_messages.emplace_back("Saved blend tree: " + m_openAnimationAsset);
+            else
+                m_messages.emplace_back("Blend tree requires unique thresholds and valid clip paths");
+        }
+    }
+    else
+    {
+        InputString("Entry State", m_editAnimationGraph.entryState, 128);
+        ImGui::SeparatorText("Graph Preview");
+        const ImVec2 origin = ImGui::GetCursorScreenPos();
+        const float nodeWidth = 120.0f, spacing = 160.0f, nodeHeight = 52.0f;
+        ImDrawList *drawList = ImGui::GetWindowDrawList();
+        for (const auto &transition : m_editAnimationGraph.transitions)
+        {
+            const auto from = std::find_if(m_editAnimationGraph.states.begin(), m_editAnimationGraph.states.end(),
+                                           [&transition](const AnimationGraphState &state) { return state.name == transition.from; });
+            const auto to = std::find_if(m_editAnimationGraph.states.begin(), m_editAnimationGraph.states.end(),
+                                         [&transition](const AnimationGraphState &state) { return state.name == transition.to; });
+            if (from != m_editAnimationGraph.states.end() && to != m_editAnimationGraph.states.end())
+            {
+                const float fromX = origin.x + static_cast<float>(from - m_editAnimationGraph.states.begin()) * spacing + nodeWidth;
+                const float toX = origin.x + static_cast<float>(to - m_editAnimationGraph.states.begin()) * spacing;
+                drawList->AddLine({fromX, origin.y + nodeHeight * 0.5f}, {toX, origin.y + nodeHeight * 0.5f}, IM_COL32(255, 190, 70, 255),
+                                  2.0f);
+            }
+        }
+        for (std::size_t index = 0; index < m_editAnimationGraph.states.size(); ++index)
+        {
+            const auto &state = m_editAnimationGraph.states[index];
+            const ImVec2 minimum{origin.x + static_cast<float>(index) * spacing, origin.y};
+            const ImVec2 maximum{minimum.x + nodeWidth, minimum.y + nodeHeight};
+            drawList->AddRectFilled(minimum, maximum,
+                                    state.name == m_editAnimationGraph.entryState ? IM_COL32(50, 125, 80, 255) : IM_COL32(55, 65, 80, 255),
+                                    6.0f);
+            drawList->AddRect(minimum, maximum, IM_COL32(150, 170, 200, 255), 6.0f);
+            drawList->AddText({minimum.x + 8.0f, minimum.y + 8.0f}, IM_COL32_WHITE, state.name.c_str());
+            drawList->AddText({minimum.x + 8.0f, minimum.y + 28.0f}, IM_COL32(180, 190, 205, 255),
+                              std::filesystem::path(state.motionPath).filename().string().c_str());
+        }
+        ImGui::Dummy({std::max(1.0f, static_cast<float>(m_editAnimationGraph.states.size()) * spacing), nodeHeight + 10.0f});
+
+        ImGui::SeparatorText("Parameters");
+        int removeParameter = -1;
+        for (std::size_t index = 0; index < m_editAnimationGraph.parameters.size(); ++index)
+        {
+            auto &parameter = m_editAnimationGraph.parameters[index];
+            ImGui::PushID(static_cast<int>(index));
+            ImGui::SetNextItemWidth(220.0f);
+            InputString("Name", parameter.name, 128);
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(120.0f);
+            ImGui::DragFloat("Default", &parameter.defaultValue, 0.05f);
+            ImGui::SameLine();
+            if (ImGui::SmallButton("X"))
+                removeParameter = static_cast<int>(index);
+            ImGui::PopID();
+        }
+        if (removeParameter >= 0)
+            m_editAnimationGraph.parameters.erase(m_editAnimationGraph.parameters.begin() + removeParameter);
+        if (ImGui::Button("+ Parameter"))
+            m_editAnimationGraph.parameters.push_back({"Parameter" + std::to_string(m_editAnimationGraph.parameters.size()), 0.0f});
+
+        ImGui::SeparatorText("States");
+        int removeState = -1;
+        for (std::size_t index = 0; index < m_editAnimationGraph.states.size(); ++index)
+        {
+            auto &state = m_editAnimationGraph.states[index];
+            ImGui::PushID(static_cast<int>(index));
+            ImGui::SetNextItemWidth(180.0f);
+            InputString("State", state.name, 128);
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(360.0f);
+            InputString("Motion", state.motionPath);
+            ImGui::SameLine();
+            if (ImGui::SmallButton("X"))
+                removeState = static_cast<int>(index);
+            ImGui::PopID();
+        }
+        if (removeState >= 0)
+            m_editAnimationGraph.states.erase(m_editAnimationGraph.states.begin() + removeState);
+        if (ImGui::Button("+ State"))
+            m_editAnimationGraph.states.push_back({"State" + std::to_string(m_editAnimationGraph.states.size()), "assets/player.skanim"});
+
+        ImGui::SeparatorText("Transitions");
+        static const char *comparisonNames[] = {"<", "<=", ">", ">=", "==", "!="};
+        int removeTransition = -1;
+        for (std::size_t index = 0; index < m_editAnimationGraph.transitions.size(); ++index)
+        {
+            auto &transition = m_editAnimationGraph.transitions[index];
+            ImGui::PushID(static_cast<int>(index));
+            ImGui::SetNextItemWidth(100.0f);
+            InputString("From", transition.from, 128);
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(100.0f);
+            InputString("To", transition.to, 128);
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(110.0f);
+            InputString("Param", transition.parameter, 128);
+            ImGui::SameLine();
+            int comparison = static_cast<int>(transition.comparison);
+            ImGui::SetNextItemWidth(55.0f);
+            if (ImGui::Combo("Op", &comparison, comparisonNames, 6))
+                transition.comparison = static_cast<AnimationGraphComparison>(comparison);
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(75.0f);
+            ImGui::DragFloat("Value", &transition.threshold, 0.05f);
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(75.0f);
+            ImGui::DragFloat("Blend", &transition.blendSeconds, 0.01f, 0.0f, 10.0f);
+            ImGui::SameLine();
+            if (ImGui::SmallButton("X"))
+                removeTransition = static_cast<int>(index);
+            ImGui::PopID();
+        }
+        if (removeTransition >= 0)
+            m_editAnimationGraph.transitions.erase(m_editAnimationGraph.transitions.begin() + removeTransition);
+        if (ImGui::Button("+ Transition") && !m_editAnimationGraph.states.empty() && !m_editAnimationGraph.parameters.empty())
+            m_editAnimationGraph.transitions.push_back({m_editAnimationGraph.states.front().name, m_editAnimationGraph.states.back().name,
+                                                        m_editAnimationGraph.parameters.front().name, AnimationGraphComparison::Greater,
+                                                        0.5f, 0.15f});
+        ImGui::SameLine();
+        if (ImGui::Button("Save Animation Graph"))
+        {
+            if (SaveAnimationGraphAsset(m_editAnimationGraph, m_openAnimationAsset))
+                m_messages.emplace_back("Saved animation graph: " + m_openAnimationAsset);
+            else
+                m_messages.emplace_back("Animation graph has invalid states, parameters, entry, or transitions");
+        }
     }
     ImGui::End();
 }

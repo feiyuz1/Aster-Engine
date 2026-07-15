@@ -2,7 +2,7 @@
 
 本文记录本轮开发对 TinyEngine 做过的主要更新，以及各功能采用的简要实现方式。内容按 Git 提交顺序整理，方便以后定位代码、回溯设计和继续开发。
 
-当前引擎版本：0.23.0
+当前引擎版本：0.24.0
 
 参考源码：Unreal Engine 5.3.2
 
@@ -372,11 +372,21 @@
 - AnimationSystem 缓存资产、逐帧采样 Local Pose、构建 Skin Matrices，再沿 RenderItem/OpenGL 通路上传。
 - 场景升级到 `TINYSCENE 8` 持久化 Skeleton 路径，继续兼容 1–7。
 
+## 26. 压缩曲线、动画事件、Blend Tree、Animation Graph 与兼容矩阵
+
+- `TINY_SKANIM 2` 将完整 Pose 重采样结果转换为逐骨骼 Position/Rotation/Scale 曲线，并用误差受控的递归关键帧约简独立压缩三个通道；位置、角度和缩放容差可在 Assimp 导入参数中配置。
+- Clip 事件保存时间、名称和 Payload；运行时正确处理正向、反向、循环跨界和多圈事件，`AnimationSystem` 同时提供组件帧事件列表与实体级回调。
+- 新增 `TINY_BLENDTREE 1`：按一个浮点参数查找相邻阈值 Clip 并混合 Local Pose，事件取当前主导样本。
+- 新增 `TINY_ANIMGRAPH 1` 与 `AnimationGraphPlayer`：参数比较、状态转换、Motion（Clip 或 Blend Tree）采样和跨状态交叉淡化。
+- AnimationComponent 增加 Graph 路径、驱动参数和值；场景升级为 `TINYSCENE 9`，继续读取 1–8。
+- Dear ImGui 编辑器可创建 Blend Tree/Animation Graph，编辑 Clip 事件、压缩曲线、样本、参数、状态、转换，并绘制状态节点和连线预览。
+- 新增独立 Assimp 真实资产测试，覆盖带骨骼动画 FBX、复杂多 Mesh FBX、带皮肤动画 glTF 2.0 和 34 Mesh PBR glTF；每次测试生成兼容报告并校验产物格式。
+
 ## 当前仍未完成
 
 - Cubemap 离线预过滤/BRDF LUT、级联阴影、实例化和遮挡裁剪；HDR IBL、FXAA、LOD 和 GPU profiler 已完成。
 - 精确 Mesh 窄相位/可选 Jolt、完整斜坡 Sweep/Slide CharacterController。
-- Assimp 骨骼导入/GPU 蒙皮、OGG 流式音频、字体栅格化与复杂 UI 排版。
+- 动画重定向、IK、2D Blend Space、OGG 流式音频与复杂 UI 排版。
 - 多选/框选、Gizmo local/world 和 Shader 文本编辑器；多场景与 Material 编辑已完成。
 - 格式 CI 检查、渲染截图对比和逐分配内存追踪；基础无头 Commandlet、数据迁移、CI、崩溃报告、许可证清单和发布包冒烟已完成。
 

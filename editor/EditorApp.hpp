@@ -1,5 +1,6 @@
 #pragma once
 
+#include "MiniEngine/Animation/SkeletalAnimation.hpp"
 #include "MiniEngine/Runtime/Engine.hpp"
 #ifdef TINYENGINE_HAS_ASSIMP
 #include "MiniEngine/Import/AssimpImporter.hpp"
@@ -29,6 +30,7 @@ class EditorApp
     void DrawSceneView();
     void DrawAssets();
     void DrawConsole();
+    void DrawAnimationEditor();
     void DrawSceneTabs();
     void RecordUndo();
     void Undo();
@@ -72,6 +74,10 @@ class EditorApp
     float m_gizmoAccumulatedMotion = 0.0f;
     float m_gizmoAppliedMotion = 0.0f;
     std::string m_selectedAsset;
+    std::string m_openAnimationAsset;
+    SkeletalClip m_editSkeletalClip;
+    BlendTree1D m_editBlendTree;
+    AnimationGraph m_editAnimationGraph;
     bool m_sceneDirty = false;
     double m_lastAutosaveTime = 0.0;
     bool m_lastTitleDirty = false;

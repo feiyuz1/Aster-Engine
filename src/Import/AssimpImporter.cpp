@@ -317,6 +317,14 @@ ModelImportResult AssimpImporter::ImportModel(const std::filesystem::path &sourc
         result.error = importer.GetErrorString();
         return result;
     }
+    result.compatibility.sourceMeshes = scene->mNumMeshes;
+    result.compatibility.sourceMaterials = scene->mNumMaterials;
+    result.compatibility.sourceAnimations = scene->mNumAnimations;
+    for (unsigned int meshIndex = 0; meshIndex < scene->mNumMeshes; ++meshIndex)
+    {
+        result.compatibility.importedMeshVertices += scene->mMeshes[meshIndex]->mNumVertices;
+        result.compatibility.importedTriangles += scene->mMeshes[meshIndex]->mNumFaces;
+    }
 
     const std::string baseName = SafeName(source.stem().string(), "Model");
     std::unordered_set<std::string> boneNames;
@@ -332,6 +340,11 @@ ModelImportResult AssimpImporter::ImportModel(const std::filesystem::path &sourc
             indexBones(*node.mChildren[index]);
     };
     indexBones(*scene->mRootNode);
+    result.compatibility.importedBones = globalBones.size();
+    result.compatibility.truncatedBoneCount = boneNames.size() > globalBones.size() ? boneNames.size() - globalBones.size() : 0;
+    if (result.compatibility.truncatedBoneCount > 0)
+        result.warnings.push_back("Skeleton exceeded the 64 bone GPU limit; " + std::to_string(result.compatibility.truncatedBoneCount) +
+                                  " bones were omitted");
     std::filesystem::path skeletonPath;
     Skeleton importedSkeleton;
     if (!globalBones.empty())
@@ -411,12 +424,30 @@ ModelImportResult AssimpImporter::ImportModel(const std::filesystem::path &sourc
                 }
                 clip.keyframes.push_back(std::move(key));
             }
+            if (clip.duration <= 0.0f)
+            {
+                result.warnings.push_back("Skipped zero-duration animation: " + clip.name);
+                continue;
+            }
+            if (options.compressAnimations)
+            {
+                const auto stats = clip.Compress(
+                    {options.animationPositionTolerance, options.animationRotationToleranceDegrees, options.animationScaleTolerance});
+                result.compatibility.animationCompressionRatio =
+                    result.compatibility.importedAnimationClips == 0
+                        ? stats.ratio
+                        : (result.compatibility.animationCompressionRatio * result.compatibility.importedAnimationClips + stats.ratio) /
+                              static_cast<float>(result.compatibility.importedAnimationClips + 1);
+            }
             const auto clipPath = outputDirectory / (baseName + "_" + clip.name + ".skanim");
             if (SaveSkeletalClipAsset(clip, clipPath))
             {
                 skeletalClipPaths.push_back(clipPath);
                 result.assets.push_back({"Animation", clipPath});
+                ++result.compatibility.importedAnimationClips;
             }
+            else
+                result.warnings.push_back("Failed to serialize animation: " + clip.name);
         }
     std::vector<std::filesystem::path> materialPaths(scene->mNumMaterials);
     for (unsigned int index = 0; index < scene->mNumMaterials; ++index)
@@ -512,6 +543,13 @@ ModelImportResult AssimpImporter::ImportModel(const std::filesystem::path &sourc
     registry.SetImportSetting(result.prefabPath.generic_string(), "scale", std::to_string(options.scale));
     registry.SetImportSetting(result.prefabPath.generic_string(), "flipUvs", options.flipUvs ? "true" : "false");
     registry.SetImportSetting(result.prefabPath.generic_string(), "optimizeMeshes", options.optimizeMeshes ? "true" : "false");
+    registry.SetImportSetting(result.prefabPath.generic_string(), "compressAnimations", options.compressAnimations ? "true" : "false");
+    registry.SetImportSetting(result.prefabPath.generic_string(), "animationPositionTolerance",
+                              std::to_string(options.animationPositionTolerance));
+    registry.SetImportSetting(result.prefabPath.generic_string(), "animationRotationToleranceDegrees",
+                              std::to_string(options.animationRotationToleranceDegrees));
+    registry.SetImportSetting(result.prefabPath.generic_string(), "animationScaleTolerance",
+                              std::to_string(options.animationScaleTolerance));
     for (const auto &asset : result.assets)
         registry.MarkImported(asset.path.generic_string());
     result.success = true;

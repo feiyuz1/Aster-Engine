@@ -47,8 +47,10 @@
 #include <atomic>
 #include <cmath>
 #include <iostream>
+#include <memory>
 #include <stdexcept>
 #include <string>
+#include <unordered_map>
 
 namespace
 {
@@ -164,6 +166,13 @@ int main()
     world.AddComponent(replacement, LodComponent{"assets/player.mesh", "assets/player.mesh", 10.0f, 30.0f});
     world.AddComponent(replacement, PawnComponent{});
     world.AddComponent(replacement, CharacterControllerComponent{});
+    AnimationComponent serializedAnimation;
+    serializedAnimation.clipPath = "Saved/Compressed.skanim";
+    serializedAnimation.skeletonPath = "Saved/Test.skeleton";
+    serializedAnimation.graphPath = "Saved/Locomotion.animgraph";
+    serializedAnimation.graphParameter = "Speed";
+    serializedAnimation.graphParameterValue = 2.5f;
+    world.AddComponent(replacement, serializedAnimation);
     CHECK(SceneSerializer::Save(world, "Saved/Test.scene"));
     World loaded;
     CHECK(SceneSerializer::Load(loaded, "Saved/Test.scene"));
@@ -183,6 +192,12 @@ int main()
         loadedCharacter =
             loadedCharacter || (loaded.HasComponent<PawnComponent>(entity) && loaded.HasComponent<CharacterControllerComponent>(entity));
     CHECK(loadedCharacter);
+    bool loadedAnimationGraph = false;
+    for (const Entity entity : loaded.GetEntityManager().GetAliveEntities())
+        if (const auto *animation = loaded.GetComponent<AnimationComponent>(entity))
+            loadedAnimationGraph = animation->graphPath == "Saved/Locomotion.animgraph" && animation->graphParameter == "Speed" &&
+                                   std::abs(animation->graphParameterValue - 2.5f) < 0.001f;
+    CHECK(loadedAnimationGraph);
     const std::string snapshot = SceneSerializer::Serialize(loaded);
     loaded.CreateEntity("Temporary");
     CHECK(SceneSerializer::Deserialize(loaded, snapshot));
@@ -499,16 +514,88 @@ int main()
     Skeleton loadedSkeleton;
     SkeletalClip loadedSkeletalClip;
     CHECK(LoadSkeletonAsset("Saved/Test.skeleton", loadedSkeleton) && LoadSkeletalClipAsset("Saved/Test.skanim", loadedSkeletalClip));
+    SkeletalClip compressedClip;
+    compressedClip.name = "Compressed";
+    compressedClip.duration = 1.0f;
+    compressedClip.events = {{0.25f, "Footstep", "left"}, {0.75f, "Footstep", "right"}};
+    compressedClip.keyframes = {{0.0f, {BonePose{}, BonePose{}}},
+                                {0.5f, {BonePose{{0.5f, 0.0f, 0.0f}}, BonePose{{0.0f, 0.5f, 0.0f}}}},
+                                {1.0f, {BonePose{{1.0f, 0.0f, 0.0f}}, BonePose{{0.0f, 1.0f, 0.0f}}}}};
+    const auto compression = compressedClip.Compress();
+    CHECK(compressedClip.IsCompressed() && compression.compressedCurveKeys < compression.originalCurveKeys);
+    CHECK(std::abs(compressedClip.Sample(0.5f, 2).front().position.x - 0.5f) < 0.001f);
+    CHECK(compressedClip.GatherEvents(0.1f, 0.8f, true).size() == 2);
+    CHECK(compressedClip.GatherEvents(0.8f, 1.3f, true).size() == 1);
+    CHECK(compressedClip.GatherEvents(0.8f, 0.2f, false).size() == 2);
+    CHECK(SaveSkeletalClipAsset(compressedClip, "Saved/Compressed.skanim"));
+    SkeletalClip reloadedCompressed;
+    CHECK(LoadSkeletalClipAsset("Saved/Compressed.skanim", reloadedCompressed) && reloadedCompressed.IsCompressed() &&
+          reloadedCompressed.events.size() == 2);
+
+    auto idleClip = std::make_shared<SkeletalClip>(*skeletalClip);
+    auto runClip = std::make_shared<SkeletalClip>(*skeletalClip);
+    runClip->name = "Run";
+    runClip->keyframes[0].localPose[0].position.x = 10.0f;
+    runClip->keyframes[1].localPose[0].position.x = 11.0f;
+    CHECK(SaveSkeletalClipAsset(*idleClip, "Saved/BlendIdle.skanim") && SaveSkeletalClipAsset(*runClip, "Saved/BlendRun.skanim"));
+    BlendTree1D blendTree;
+    blendTree.parameter = "Speed";
+    blendTree.samples = {{0.0f, "Saved/BlendIdle.skanim"}, {10.0f, "Saved/BlendRun.skanim"}};
+    CHECK(SaveBlendTreeAsset(blendTree, "Saved/Locomotion.blendtree"));
+    BlendTree1D loadedBlendTree;
+    CHECK(LoadBlendTreeAsset("Saved/Locomotion.blendtree", loadedBlendTree));
+    const std::unordered_map<std::string, std::shared_ptr<SkeletalClip>> blendClips = {{"Saved/BlendIdle.skanim", idleClip},
+                                                                                       {"Saved/BlendRun.skanim", runClip}};
+    const auto blendedPose = loadedBlendTree.Sample(5.0f, 0.5f, 2, [&blendClips](const std::string &path) {
+        const auto found = blendClips.find(path);
+        return found == blendClips.end() ? nullptr : found->second.get();
+    });
+    CHECK(std::abs(blendedPose.front().position.x - 5.5f) < 0.001f && loadedBlendTree.DominantClip(9.0f) == "Saved/BlendRun.skanim");
+
+    AnimationGraph graph;
+    graph.entryState = "Idle";
+    graph.parameters = {{"Speed", 0.0f}};
+    graph.states = {{"Idle", "Saved/BlendIdle.skanim"}, {"Run", "Saved/BlendRun.skanim"}};
+    graph.transitions = {{"Idle", "Run", "Speed", AnimationGraphComparison::Greater, 0.5f, 0.2f}};
+    CHECK(SaveAnimationGraphAsset(graph, "Saved/Locomotion.animgraph"));
+    AnimationGraph loadedGraph;
+    CHECK(LoadAnimationGraphAsset("Saved/Locomotion.animgraph", loadedGraph));
+    AnimationGraphPlayer graphPlayer;
+    CHECK(graphPlayer.SetGraph(std::make_shared<AnimationGraph>(loadedGraph)));
+    graphPlayer.SetParameter("Speed", 1.0f);
+    CHECK(graphPlayer
+                  .Update(0.1f, 2,
+                          [&blendClips](const std::string &path, const float time, const std::size_t bones) {
+                              const auto found = blendClips.find(path);
+                              return found == blendClips.end() ? std::vector<BonePose>(bones) : found->second->Sample(time, bones);
+                          })
+                  .size() == 2 &&
+          graphPlayer.GetState() == "Run");
     World skeletalWorld;
-    skeletalWorld.GetSystemManager().RegisterSystem<AnimationSystem>();
+    auto *skeletalSystem = skeletalWorld.GetSystemManager().RegisterSystem<AnimationSystem>();
+    int dispatchedAnimationEvents = 0;
+    skeletalSystem->SetEventCallback([&dispatchedAnimationEvents](Entity, const AnimationEvent &event) {
+        if (event.name == "Footstep")
+            ++dispatchedAnimationEvents;
+    });
     const Entity skeletalEntity = skeletalWorld.CreateEntity("Skeletal");
     AnimationComponent skeletalAnimation;
-    skeletalAnimation.clipPath = "Saved/Test.skanim";
+    skeletalAnimation.clipPath = "Saved/Compressed.skanim";
     skeletalAnimation.skeletonPath = "Saved/Test.skeleton";
     skeletalWorld.AddComponent(skeletalEntity, skeletalAnimation);
+    const Entity graphEntity = skeletalWorld.CreateEntity("GraphSkeletal");
+    AnimationComponent graphAnimation;
+    graphAnimation.skeletonPath = "Saved/Test.skeleton";
+    graphAnimation.graphPath = "Saved/Locomotion.animgraph";
+    graphAnimation.graphParameter = "Speed";
+    graphAnimation.graphParameterValue = 1.0f;
+    skeletalWorld.AddComponent(graphEntity, graphAnimation);
     skeletalWorld.Initialize();
     skeletalWorld.Update(0.5f);
-    CHECK(skeletalWorld.GetComponent<AnimationComponent>(skeletalEntity)->skinMatrices.size() == 2);
+    CHECK(skeletalWorld.GetComponent<AnimationComponent>(skeletalEntity)->skinMatrices.size() == 2 && dispatchedAnimationEvents == 1 &&
+          skeletalWorld.GetComponent<AnimationComponent>(skeletalEntity)->firedEvents.size() == 1);
+    CHECK(skeletalWorld.GetComponent<AnimationComponent>(graphEntity)->graphState == "Run" &&
+          skeletalWorld.GetComponent<AnimationComponent>(graphEntity)->skinMatrices.size() == 2);
     skeletalWorld.Shutdown();
     AnimationStateMachine stateMachine;
     CHECK(stateMachine.AddState("Wave", skeletalClip));

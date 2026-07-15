@@ -1,6 +1,6 @@
 # TinyEngine 架构说明
 
-本文对应 TinyEngine 0.23.0，最后同步于 2026-07-16。
+本文对应 TinyEngine 0.24.0，最后同步于 2026-07-16。
 
 ## 依赖方向
 
@@ -91,7 +91,7 @@ Assimp 的 CPU/文件转换通过 `AssetImportQueue` 提交到 JobSystem，编�
 
 `RenderDevice` 统一暴露 GPU 驻留字节数、预算设置和缓存回收。OpenGL 后端统计 Mesh buffer 与 Texture payload；超预算时释放可重建的缓存对象，Diagnostics 通过 `r.GpuBudgetMB`、`r.TrimGpu` 和 `render.gpu_resident_bytes` 提供运行时控制与观测。
 
-骨骼动画层由 Skeleton、SkeletalClip、采样器、蒙皮矩阵生成和轻量条件状态机组成，不依赖渲染后端；当前尚未接入 Assimp 骨骼导入与 GPU skinning。VfxSystem 由 Engine 统一驱动 CPU 生命周期仿真，Renderer 汇总粒子，OpenGL 后端用相机 Right/Up 构造世界空间 Billboard，并以软边圆形透明片元提交。本地化层严格校验 UTF-8，使用 `TINYLOC 1` 字符串表完成语言回退和参数替换；FontFace 当前只负责加载并校验 TTF/OTF 容器。
+骨骼动画层由 Skeleton、SkeletalClip、独立 Position/Rotation/Scale 压缩曲线、事件游标、1D Blend Tree、Animation Graph Player 和蒙皮矩阵生成组成，不依赖渲染后端。Assimp 在 Authoring 阶段导出 Skeleton/Clip，运行时只读取轻量资产；AnimationSystem 采样并向 RenderItem 提交逐实体 Skin Matrices，OpenGL 完成四权重 GPU Skinning。VfxSystem 由 Engine 统一驱动 CPU 生命周期仿真，Renderer 汇总粒子，OpenGL 后端用相机 Right/Up 构造世界空间 Billboard，并以软边圆形透明片元提交。本地化层严格校验 UTF-8，使用 `TINYLOC 1` 字符串表完成语言回退和参数替换。
 
 `NavigationGrid` 使用有代价 Cell 上的 A* 搜索，并在对角移动时检查相邻正交 Cell，避免穿过障碍角。AI 行为树保存运行中的组合节点游标，因此 Wait/Action 可跨帧继续；Blackboard 是类型受限的运行时共享状态。它们当前是游戏可直接使用的轻量实现，不等同于 Recast NavMesh、EQS 或可视化 Behavior Tree 编辑器。
 
@@ -105,8 +105,10 @@ Sequencer 的 Transform Track 与事件 Player 是后端无关的时间采样层
 
 ## 数据格式与约束
 
-- `TINYSCENE 8`：Animation 增加 Skeleton 路径，并继续读取 1–7 版。
-- `TINY_SKELETON 1` / `TINY_SKANIM 1`：骨骼层级与 Inverse Bind，以及按完整 Local Pose 组织的骨骼动画关键帧。
+- `TINYSCENE 9`：Animation 增加 Animation Graph、驱动参数和值，并继续读取 1–8 版。
+- `TINY_SKELETON 1` / `TINY_SKANIM 2`：骨骼层级与 Inverse Bind；Clip v2 支持 raw 完整 Pose、逐骨骼独立 P/R/S 压缩曲线和事件，并兼容读取 v1。
+- `TINY_BLENDTREE 1`：按单个浮点参数排列阈值样本，在相邻 SkeletalClip 间插值。
+- `TINY_ANIMGRAPH 1`：参数、状态、Motion 路径、比较条件、转换和交叉淡化时间。
 - `TINYARCHIVE`：带格式名、版本号和有序字段的通用文本 Archive；二进制 Archive 固定使用小端编码和有界字符串。
 - `TinyEnginePlatformCook 1`：平台、配置、纹理/Shader 格式、启动场景和变体数量清单。
 - `TNYTEX1` / `TNYMSH2`：平台 Cook 产出的 Texture/Mesh 小端运行时二进制；Mesh v2 增加四骨骼索引和归一化权重，并兼容读取 v1。

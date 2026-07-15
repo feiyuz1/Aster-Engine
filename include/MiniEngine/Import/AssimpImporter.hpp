@@ -16,6 +16,10 @@ struct ModelImportOptions
     bool generateSmoothNormals = true;
     bool flipUvs = false;
     bool optimizeMeshes = true;
+    bool compressAnimations = true;
+    float animationPositionTolerance = 0.001f;
+    float animationRotationToleranceDegrees = 0.1f;
+    float animationScaleTolerance = 0.001f;
     std::filesystem::path resourcePrefix;
 };
 
@@ -25,12 +29,26 @@ struct ImportedAsset
     std::filesystem::path path;
 };
 
+struct ModelCompatibilityReport
+{
+    std::size_t sourceMeshes = 0;
+    std::size_t sourceMaterials = 0;
+    std::size_t sourceAnimations = 0;
+    std::size_t importedBones = 0;
+    std::size_t importedAnimationClips = 0;
+    std::size_t importedMeshVertices = 0;
+    std::size_t importedTriangles = 0;
+    std::size_t truncatedBoneCount = 0;
+    float animationCompressionRatio = 1.0f;
+};
+
 struct ModelImportResult
 {
     bool success = false;
     std::filesystem::path prefabPath;
     std::vector<ImportedAsset> assets;
     std::vector<std::string> warnings;
+    ModelCompatibilityReport compatibility;
     std::string error;
 };
 

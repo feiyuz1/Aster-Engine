@@ -4,7 +4,9 @@
 #include <algorithm>
 #include <cmath>
 #include <iomanip>
+#include <limits>
 #include <sstream>
+#include <unordered_set>
 
 namespace MiniEngine
 {
@@ -18,6 +20,108 @@ Vec3 Lerp(const Vec3 &left, const Vec3 &right, const float alpha)
 BonePose Lerp(const BonePose &left, const BonePose &right, const float alpha)
 {
     return {Lerp(left.position, right.position, alpha), Lerp(left.rotation, right.rotation, alpha), Lerp(left.scale, right.scale, alpha)};
+}
+
+float CurveError(const Vec3 &actual, const Vec3 &expected, const bool angular)
+{
+    const auto difference = [angular](const float left, const float right) {
+        float value = std::abs(left - right);
+        if (angular)
+        {
+            value = std::fmod(value, 360.0f);
+            value = std::min(value, 360.0f - value);
+        }
+        return value;
+    };
+    return std::max({difference(actual.x, expected.x), difference(actual.y, expected.y), difference(actual.z, expected.z)});
+}
+
+void ReduceCurveRange(const std::vector<Vec3CurveKey> &source, const std::size_t first, const std::size_t last, const float tolerance,
+                      const bool angular, std::vector<bool> &kept)
+{
+    if (last <= first + 1)
+        return;
+    const float span = source[last].time - source[first].time;
+    float maximumError = -1.0f;
+    std::size_t maximumIndex = first;
+    for (std::size_t index = first + 1; index < last; ++index)
+    {
+        const float alpha = span > 0.0f ? (source[index].time - source[first].time) / span : 0.0f;
+        const float error = CurveError(source[index].value, Lerp(source[first].value, source[last].value, alpha), angular);
+        if (error > maximumError)
+        {
+            maximumError = error;
+            maximumIndex = index;
+        }
+    }
+    if (maximumError <= tolerance)
+        return;
+    kept[maximumIndex] = true;
+    ReduceCurveRange(source, first, maximumIndex, tolerance, angular, kept);
+    ReduceCurveRange(source, maximumIndex, last, tolerance, angular, kept);
+}
+
+std::vector<Vec3CurveKey> ReduceCurve(const std::vector<Vec3CurveKey> &source, const float tolerance, const bool angular = false)
+{
+    if (source.size() <= 2)
+        return source;
+    std::vector<bool> kept(source.size(), false);
+    kept.front() = kept.back() = true;
+    ReduceCurveRange(source, 0, source.size() - 1, std::max(0.0f, tolerance), angular, kept);
+    std::vector<Vec3CurveKey> result;
+    for (std::size_t index = 0; index < source.size(); ++index)
+        if (kept[index])
+            result.push_back(source[index]);
+    return result;
+}
+
+bool IsCurveValid(const std::vector<Vec3CurveKey> &curve, const float duration)
+{
+    if (curve.empty())
+        return false;
+    float previous = -1.0f;
+    for (const auto &key : curve)
+    {
+        if (key.time < previous || key.time < 0.0f || key.time > duration)
+            return false;
+        previous = key.time;
+    }
+    return true;
+}
+
+Vec3 SampleCurve(const std::vector<Vec3CurveKey> &curve, const float time)
+{
+    const auto upper =
+        std::upper_bound(curve.begin(), curve.end(), time, [](const float value, const Vec3CurveKey &key) { return value < key.time; });
+    if (upper == curve.begin())
+        return curve.front().value;
+    if (upper == curve.end())
+        return curve.back().value;
+    const auto &right = *upper;
+    const auto &left = *(upper - 1);
+    const float alpha = right.time > left.time ? (time - left.time) / (right.time - left.time) : 0.0f;
+    return Lerp(left.value, right.value, alpha);
+}
+
+bool Compare(const float value, const AnimationGraphComparison comparison, const float threshold)
+{
+    constexpr float epsilon = 0.0001f;
+    switch (comparison)
+    {
+    case AnimationGraphComparison::Less:
+        return value < threshold;
+    case AnimationGraphComparison::LessEqual:
+        return value <= threshold;
+    case AnimationGraphComparison::Greater:
+        return value > threshold;
+    case AnimationGraphComparison::GreaterEqual:
+        return value >= threshold;
+    case AnimationGraphComparison::Equal:
+        return std::abs(value - threshold) <= epsilon;
+    case AnimationGraphComparison::NotEqual:
+        return std::abs(value - threshold) > epsilon;
+    }
+    return false;
 }
 } // namespace
 
@@ -39,26 +143,54 @@ int Skeleton::FindBone(const std::string &name) const
 
 bool SkeletalClip::IsValid(const std::size_t boneCount) const
 {
-    if (duration <= 0.0f || keyframes.empty())
+    if (duration <= 0.0f || boneCount == 0 || (keyframes.empty() == tracks.empty()))
         return false;
-    float previous = -1.0f;
-    for (const auto &keyframe : keyframes)
+    if (!keyframes.empty())
     {
-        if (keyframe.time < previous || keyframe.time < 0.0f || keyframe.time > duration || keyframe.localPose.size() != boneCount)
-            return false;
-        previous = keyframe.time;
+        float previous = -1.0f;
+        for (const auto &keyframe : keyframes)
+        {
+            if (keyframe.time < previous || keyframe.time < 0.0f || keyframe.time > duration || keyframe.localPose.size() != boneCount)
+                return false;
+            previous = keyframe.time;
+        }
     }
+    if (!tracks.empty())
+    {
+        if (tracks.size() != boneCount)
+            return false;
+        for (const auto &track : tracks)
+            if (!IsCurveValid(track.positions, duration) || !IsCurveValid(track.rotations, duration) ||
+                !IsCurveValid(track.scales, duration))
+                return false;
+    }
+    for (const auto &event : events)
+        if (event.time < 0.0f || event.time > duration || event.name.empty())
+            return false;
     return true;
 }
 
 std::vector<BonePose> SkeletalClip::Sample(float time, const std::size_t boneCount) const
 {
+    return Sample(time, boneCount, looping);
+}
+
+std::vector<BonePose> SkeletalClip::Sample(float time, const std::size_t boneCount, const bool shouldLoop) const
+{
     if (!IsValid(boneCount))
         return std::vector<BonePose>(boneCount);
-    if (looping)
+    if (shouldLoop)
         time = std::fmod(std::max(0.0f, time), duration);
     else
         time = std::clamp(time, 0.0f, duration);
+    if (!tracks.empty())
+    {
+        std::vector<BonePose> result(boneCount);
+        for (std::size_t index = 0; index < boneCount; ++index)
+            result[index] = {SampleCurve(tracks[index].positions, time), SampleCurve(tracks[index].rotations, time),
+                             SampleCurve(tracks[index].scales, time)};
+        return result;
+    }
     const auto upper = std::upper_bound(keyframes.begin(), keyframes.end(), time,
                                         [](const float value, const SkeletalKeyframe &key) { return value < key.time; });
     if (upper == keyframes.begin())
@@ -71,6 +203,86 @@ std::vector<BonePose> SkeletalClip::Sample(float time, const std::size_t boneCou
     std::vector<BonePose> result(boneCount);
     for (std::size_t index = 0; index < boneCount; ++index)
         result[index] = Lerp(left.localPose[index], right.localPose[index], alpha);
+    return result;
+}
+
+bool SkeletalClip::IsCompressed() const
+{
+    return !tracks.empty();
+}
+
+SkeletalCompressionStats SkeletalClip::Compress(const SkeletalCompressionSettings &settings)
+{
+    SkeletalCompressionStats stats;
+    if (keyframes.empty() || keyframes.front().localPose.empty())
+        return stats;
+    const std::size_t boneCount = keyframes.front().localPose.size();
+    if (!IsValid(boneCount))
+        return stats;
+    stats.originalCurveKeys = keyframes.size() * boneCount * 3;
+    std::vector<CompressedBoneTrack> compressed(boneCount);
+    for (std::size_t bone = 0; bone < boneCount; ++bone)
+    {
+        for (const auto &frame : keyframes)
+        {
+            compressed[bone].positions.push_back({frame.time, frame.localPose[bone].position});
+            compressed[bone].rotations.push_back({frame.time, frame.localPose[bone].rotation});
+            compressed[bone].scales.push_back({frame.time, frame.localPose[bone].scale});
+        }
+        compressed[bone].positions = ReduceCurve(compressed[bone].positions, settings.positionTolerance);
+        compressed[bone].rotations = ReduceCurve(compressed[bone].rotations, settings.rotationToleranceDegrees, true);
+        compressed[bone].scales = ReduceCurve(compressed[bone].scales, settings.scaleTolerance);
+        stats.compressedCurveKeys += compressed[bone].positions.size() + compressed[bone].rotations.size() + compressed[bone].scales.size();
+    }
+    tracks = std::move(compressed);
+    keyframes.clear();
+    stats.ratio =
+        stats.originalCurveKeys > 0 ? static_cast<float>(stats.compressedCurveKeys) / static_cast<float>(stats.originalCurveKeys) : 1.0f;
+    return stats;
+}
+
+std::vector<AnimationEvent> SkeletalClip::GatherEvents(const float previousTime, const float currentTime, const bool shouldLoop) const
+{
+    std::vector<AnimationEvent> result;
+    if (events.empty() || previousTime == currentTime)
+        return result;
+    const auto appendRange = [&](const float start, const float end, const bool forward) {
+        if (forward)
+        {
+            for (const auto &event : events)
+                if (event.time > start && event.time <= end)
+                    result.push_back(event);
+        }
+        else
+            for (auto event = events.rbegin(); event != events.rend(); ++event)
+                if (event->time < start && event->time >= end)
+                    result.push_back(*event);
+    };
+    if (!shouldLoop || duration <= 0.0f)
+    {
+        appendRange(std::clamp(previousTime, 0.0f, duration), std::clamp(currentTime, 0.0f, duration), currentTime > previousTime);
+        return result;
+    }
+    const bool forward = currentTime > previousTime;
+    const int firstCycle = static_cast<int>(std::floor(std::min(previousTime, currentTime) / duration));
+    const int lastCycle = static_cast<int>(std::floor(std::max(previousTime, currentTime) / duration));
+    const int maximumCycles = 1024;
+    if (forward)
+        for (int cycle = firstCycle; cycle <= lastCycle && cycle - firstCycle < maximumCycles; ++cycle)
+            for (const auto &event : events)
+            {
+                const float occurrence = cycle * duration + event.time;
+                if (occurrence > previousTime && occurrence <= currentTime)
+                    result.push_back(event);
+            }
+    else
+        for (int cycle = lastCycle; cycle >= firstCycle && lastCycle - cycle < maximumCycles; --cycle)
+            for (auto event = events.rbegin(); event != events.rend(); ++event)
+            {
+                const float occurrence = cycle * duration + event->time;
+                if (occurrence < previousTime && occurrence >= currentTime)
+                    result.push_back(*event);
+            }
     return result;
 }
 
@@ -134,18 +346,39 @@ bool LoadSkeletonAsset(const std::filesystem::path &path, Skeleton &skeleton)
 
 bool SaveSkeletalClipAsset(const SkeletalClip &clip, const std::filesystem::path &path)
 {
-    if (clip.keyframes.empty() || !clip.IsValid(clip.keyframes.front().localPose.size()))
+    const std::size_t boneCount = !clip.tracks.empty()     ? clip.tracks.size()
+                                  : clip.keyframes.empty() ? 0
+                                                           : clip.keyframes.front().localPose.size();
+    if (!clip.IsValid(boneCount))
         return false;
     std::ostringstream output;
-    output << "TINY_SKANIM 1\nclip " << std::quoted(clip.name) << ' ' << clip.duration << ' ' << clip.looping << ' '
-           << clip.keyframes.front().localPose.size() << '\n';
-    for (const auto &key : clip.keyframes)
+    output << std::setprecision(9) << "TINY_SKANIM 2\nclip " << std::quoted(clip.name) << ' ' << clip.duration << ' ' << clip.looping << ' '
+           << boneCount << ' ' << (clip.IsCompressed() ? "compressed" : "raw") << '\n';
+    for (const auto &event : clip.events)
+        output << "event " << event.time << ' ' << std::quoted(event.name) << ' ' << std::quoted(event.payload) << '\n';
+    if (!clip.IsCompressed())
+        for (const auto &key : clip.keyframes)
+        {
+            output << "key " << key.time << '\n';
+            for (const auto &pose : key.localPose)
+                output << "pose " << pose.position.x << ' ' << pose.position.y << ' ' << pose.position.z << ' ' << pose.rotation.x << ' '
+                       << pose.rotation.y << ' ' << pose.rotation.z << ' ' << pose.scale.x << ' ' << pose.scale.y << ' ' << pose.scale.z
+                       << '\n';
+        }
+    else
     {
-        output << "key " << key.time << '\n';
-        for (const auto &pose : key.localPose)
-            output << "pose " << pose.position.x << ' ' << pose.position.y << ' ' << pose.position.z << ' ' << pose.rotation.x << ' '
-                   << pose.rotation.y << ' ' << pose.rotation.z << ' ' << pose.scale.x << ' ' << pose.scale.y << ' ' << pose.scale.z
-                   << '\n';
+        for (std::size_t index = 0; index < clip.tracks.size(); ++index)
+        {
+            output << "track " << index << '\n';
+            const auto writeCurve = [&output](const char *token, const std::vector<Vec3CurveKey> &curve) {
+                for (const auto &key : curve)
+                    output << token << ' ' << key.time << ' ' << key.value.x << ' ' << key.value.y << ' ' << key.value.z << '\n';
+            };
+            writeCurve("position", clip.tracks[index].positions);
+            writeCurve("rotation", clip.tracks[index].rotations);
+            writeCurve("scale", clip.tracks[index].scales);
+            output << "endtrack\n";
+        }
     }
     return PlatformFile::WriteAllText(path, output.str());
 }
@@ -158,26 +391,311 @@ bool LoadSkeletalClipAsset(const std::filesystem::path &path, SkeletalClip &clip
     std::size_t boneCount = 0;
     SkeletalClip result;
     if (!(input >> magic >> version >> token >> std::quoted(result.name) >> result.duration >> result.looping >> boneCount) ||
-        magic != "TINY_SKANIM" || version != 1 || token != "clip" || boneCount > 64)
+        magic != "TINY_SKANIM" || (version != 1 && version != 2) || token != "clip" || boneCount > 64)
+        return false;
+    std::string storage = "raw";
+    if (version >= 2 && !(input >> storage))
+        return false;
+    if (storage == "compressed")
+        result.tracks.resize(boneCount);
+    else if (storage != "raw")
         return false;
     while (input >> token)
     {
-        if (token != "key")
-            return false;
-        SkeletalKeyframe key;
-        input >> key.time;
-        key.localPose.resize(boneCount);
-        for (auto &pose : key.localPose)
-            if (!(input >> token >> pose.position.x >> pose.position.y >> pose.position.z >> pose.rotation.x >> pose.rotation.y >>
-                  pose.rotation.z >> pose.scale.x >> pose.scale.y >> pose.scale.z) ||
-                token != "pose")
+        if (token == "event" && version >= 2)
+        {
+            AnimationEvent event;
+            if (!(input >> event.time >> std::quoted(event.name) >> std::quoted(event.payload)))
                 return false;
-        result.keyframes.push_back(std::move(key));
+            result.events.push_back(std::move(event));
+        }
+        else if (token == "key" && storage == "raw")
+        {
+            SkeletalKeyframe key;
+            input >> key.time;
+            key.localPose.resize(boneCount);
+            for (auto &pose : key.localPose)
+                if (!(input >> token >> pose.position.x >> pose.position.y >> pose.position.z >> pose.rotation.x >> pose.rotation.y >>
+                      pose.rotation.z >> pose.scale.x >> pose.scale.y >> pose.scale.z) ||
+                    token != "pose")
+                    return false;
+            result.keyframes.push_back(std::move(key));
+        }
+        else if (token == "track" && storage == "compressed")
+        {
+            std::size_t trackIndex = 0;
+            if (!(input >> trackIndex) || trackIndex >= result.tracks.size())
+                return false;
+            auto &track = result.tracks[trackIndex];
+            while (input >> token && token != "endtrack")
+            {
+                Vec3CurveKey key;
+                if (!(input >> key.time >> key.value.x >> key.value.y >> key.value.z))
+                    return false;
+                if (token == "position")
+                    track.positions.push_back(key);
+                else if (token == "rotation")
+                    track.rotations.push_back(key);
+                else if (token == "scale")
+                    track.scales.push_back(key);
+                else
+                    return false;
+            }
+            if (token != "endtrack")
+                return false;
+        }
+        else
+            return false;
     }
+    std::sort(result.events.begin(), result.events.end(),
+              [](const AnimationEvent &left, const AnimationEvent &right) { return left.time < right.time; });
     if (!result.IsValid(boneCount))
         return false;
     clip = std::move(result);
     return true;
+}
+
+bool BlendTree1D::IsValid() const
+{
+    if (parameter.empty() || samples.empty())
+        return false;
+    float previous = -std::numeric_limits<float>::infinity();
+    for (const auto &sample : samples)
+    {
+        if (sample.clipPath.empty() || sample.threshold <= previous)
+            return false;
+        previous = sample.threshold;
+    }
+    return true;
+}
+
+std::vector<BonePose> BlendTree1D::Sample(const float value, const float time, const std::size_t boneCount,
+                                          const SkeletalClipResolver &resolver) const
+{
+    if (!IsValid() || !resolver)
+        return std::vector<BonePose>(boneCount);
+    const auto upper = std::upper_bound(samples.begin(), samples.end(), value,
+                                        [](const float threshold, const BlendTreeSample &sample) { return threshold < sample.threshold; });
+    const BlendTreeSample &right = upper == samples.end() ? samples.back() : *upper;
+    const BlendTreeSample &left = upper == samples.begin() ? samples.front() : *(upper - 1);
+    const SkeletalClip *leftClip = resolver(left.clipPath);
+    const SkeletalClip *rightClip = resolver(right.clipPath);
+    if (!leftClip && !rightClip)
+        return std::vector<BonePose>(boneCount);
+    if (!leftClip)
+        return rightClip->Sample(time, boneCount);
+    if (!rightClip || &left == &right)
+        return leftClip->Sample(time, boneCount);
+    auto result = leftClip->Sample(time, boneCount);
+    const auto rightPose = rightClip->Sample(time, boneCount);
+    const float alpha = std::clamp((value - left.threshold) / (right.threshold - left.threshold), 0.0f, 1.0f);
+    for (std::size_t index = 0; index < result.size(); ++index)
+        result[index] = Lerp(result[index], rightPose[index], alpha);
+    return result;
+}
+
+std::string BlendTree1D::DominantClip(const float value) const
+{
+    if (!IsValid())
+        return {};
+    return std::min_element(samples.begin(), samples.end(),
+                            [value](const BlendTreeSample &left, const BlendTreeSample &right) {
+                                return std::abs(left.threshold - value) < std::abs(right.threshold - value);
+                            })
+        ->clipPath;
+}
+
+bool SaveBlendTreeAsset(const BlendTree1D &tree, const std::filesystem::path &path)
+{
+    if (!tree.IsValid())
+        return false;
+    std::ostringstream output;
+    output << std::setprecision(9) << "TINY_BLENDTREE 1\nparameter " << std::quoted(tree.parameter) << '\n';
+    for (const auto &sample : tree.samples)
+        output << "sample " << sample.threshold << ' ' << std::quoted(sample.clipPath) << '\n';
+    return PlatformFile::WriteAllText(path, output.str());
+}
+
+bool LoadBlendTreeAsset(const std::filesystem::path &path, BlendTree1D &tree)
+{
+    std::istringstream input(PlatformFile::ReadAllText(path));
+    std::string magic, token;
+    int version = 0;
+    BlendTree1D result;
+    if (!(input >> magic >> version) || magic != "TINY_BLENDTREE" || version != 1)
+        return false;
+    while (input >> token)
+    {
+        if (token == "parameter")
+            input >> std::quoted(result.parameter);
+        else if (token == "sample")
+        {
+            BlendTreeSample sample;
+            input >> sample.threshold >> std::quoted(sample.clipPath);
+            result.samples.push_back(std::move(sample));
+        }
+        else
+            return false;
+        if (!input)
+            return false;
+    }
+    std::sort(result.samples.begin(), result.samples.end(),
+              [](const BlendTreeSample &left, const BlendTreeSample &right) { return left.threshold < right.threshold; });
+    if (!result.IsValid())
+        return false;
+    tree = std::move(result);
+    return true;
+}
+
+bool AnimationGraph::IsValid() const
+{
+    if (entryState.empty() || states.empty() || !FindState(entryState))
+        return false;
+    std::unordered_set<std::string> stateNames, parameterNames;
+    for (const auto &parameter : parameters)
+        if (parameter.name.empty() || !parameterNames.insert(parameter.name).second)
+            return false;
+    for (const auto &state : states)
+        if (state.name.empty() || state.motionPath.empty() || !stateNames.insert(state.name).second)
+            return false;
+    for (const auto &transition : transitions)
+        if (!stateNames.count(transition.from) || !stateNames.count(transition.to) || !parameterNames.count(transition.parameter) ||
+            transition.blendSeconds < 0.0f)
+            return false;
+    return true;
+}
+
+const AnimationGraphState *AnimationGraph::FindState(const std::string &name) const
+{
+    const auto found = std::find_if(states.begin(), states.end(), [&name](const AnimationGraphState &state) { return state.name == name; });
+    return found == states.end() ? nullptr : &*found;
+}
+
+bool SaveAnimationGraphAsset(const AnimationGraph &graph, const std::filesystem::path &path)
+{
+    if (!graph.IsValid())
+        return false;
+    std::ostringstream output;
+    output << std::setprecision(9) << "TINY_ANIMGRAPH 1\nentry " << std::quoted(graph.entryState) << '\n';
+    for (const auto &parameter : graph.parameters)
+        output << "parameter " << std::quoted(parameter.name) << ' ' << parameter.defaultValue << '\n';
+    for (const auto &state : graph.states)
+        output << "state " << std::quoted(state.name) << ' ' << std::quoted(state.motionPath) << '\n';
+    for (const auto &transition : graph.transitions)
+        output << "transition " << std::quoted(transition.from) << ' ' << std::quoted(transition.to) << ' '
+               << std::quoted(transition.parameter) << ' ' << static_cast<int>(transition.comparison) << ' ' << transition.threshold << ' '
+               << transition.blendSeconds << '\n';
+    return PlatformFile::WriteAllText(path, output.str());
+}
+
+bool LoadAnimationGraphAsset(const std::filesystem::path &path, AnimationGraph &graph)
+{
+    std::istringstream input(PlatformFile::ReadAllText(path));
+    std::string magic, token;
+    int version = 0;
+    AnimationGraph result;
+    if (!(input >> magic >> version) || magic != "TINY_ANIMGRAPH" || version != 1)
+        return false;
+    while (input >> token)
+    {
+        if (token == "entry")
+            input >> std::quoted(result.entryState);
+        else if (token == "parameter")
+        {
+            AnimationGraphParameter parameter;
+            input >> std::quoted(parameter.name) >> parameter.defaultValue;
+            result.parameters.push_back(std::move(parameter));
+        }
+        else if (token == "state")
+        {
+            AnimationGraphState state;
+            input >> std::quoted(state.name) >> std::quoted(state.motionPath);
+            result.states.push_back(std::move(state));
+        }
+        else if (token == "transition")
+        {
+            AnimationGraphTransition transition;
+            int comparison = 0;
+            input >> std::quoted(transition.from) >> std::quoted(transition.to) >> std::quoted(transition.parameter) >> comparison >>
+                transition.threshold >> transition.blendSeconds;
+            if (comparison < 0 || comparison > static_cast<int>(AnimationGraphComparison::NotEqual))
+                return false;
+            transition.comparison = static_cast<AnimationGraphComparison>(comparison);
+            result.transitions.push_back(std::move(transition));
+        }
+        else
+            return false;
+        if (!input)
+            return false;
+    }
+    if (!result.IsValid())
+        return false;
+    graph = std::move(result);
+    return true;
+}
+
+bool AnimationGraphPlayer::SetGraph(std::shared_ptr<const AnimationGraph> graph)
+{
+    if (!graph || !graph->IsValid())
+        return false;
+    m_graph = std::move(graph);
+    m_parameters.clear();
+    for (const auto &parameter : m_graph->parameters)
+        m_parameters[parameter.name] = parameter.defaultValue;
+    m_state = m_graph->entryState;
+    m_previousState.clear();
+    m_time = m_previousTime = m_blendTime = m_blendDuration = 0.0f;
+    return true;
+}
+
+void AnimationGraphPlayer::SetParameter(const std::string &name, const float value)
+{
+    if (m_graph && m_parameters.count(name))
+        m_parameters[name] = value;
+}
+
+std::vector<BonePose> AnimationGraphPlayer::Update(const float deltaTime, const std::size_t boneCount, const MotionSampler &sampler)
+{
+    if (!m_graph || !sampler)
+        return std::vector<BonePose>(boneCount);
+    for (const auto &transition : m_graph->transitions)
+        if (transition.from == m_state && Compare(m_parameters[transition.parameter], transition.comparison, transition.threshold))
+        {
+            m_previousState = m_state;
+            m_previousTime = m_time;
+            m_state = transition.to;
+            m_time = 0.0f;
+            m_blendDuration = transition.blendSeconds;
+            m_blendTime = 0.0f;
+            break;
+        }
+    const float step = std::max(0.0f, deltaTime);
+    m_time += step;
+    auto pose = sampler(m_graph->FindState(m_state)->motionPath, m_time, boneCount);
+    if (!m_previousState.empty() && m_blendDuration > 0.0f)
+    {
+        m_previousTime += step;
+        m_blendTime += step;
+        const auto previous = sampler(m_graph->FindState(m_previousState)->motionPath, m_previousTime, boneCount);
+        const float alpha = std::clamp(m_blendTime / m_blendDuration, 0.0f, 1.0f);
+        for (std::size_t index = 0; index < pose.size(); ++index)
+            pose[index] = Lerp(previous[index], pose[index], alpha);
+        if (alpha >= 1.0f)
+            m_previousState.clear();
+    }
+    else if (!m_previousState.empty())
+        m_previousState.clear();
+    return pose;
+}
+
+const std::string &AnimationGraphPlayer::GetState() const
+{
+    return m_state;
+}
+
+float AnimationGraphPlayer::GetTime() const
+{
+    return m_time;
 }
 
 bool AnimationStateMachine::AddState(std::string name, std::shared_ptr<SkeletalClip> clip)

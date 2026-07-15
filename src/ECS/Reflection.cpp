@@ -206,6 +206,10 @@ ReflectionRegistry::ReflectionRegistry()
     animation.properties.push_back(MakeProperty("Blend Duration", ReflectedPropertyType::Float, &AnimationComponent::blendDuration));
     Range(animation.properties.back(), 0.0f, 60.0f, 0.05f);
     animation.properties.push_back(MakeProperty("Root Motion", ReflectedPropertyType::Bool, &AnimationComponent::rootMotion));
+    animation.properties.push_back(MakeProperty("Animation Graph", ReflectedPropertyType::String, &AnimationComponent::graphPath));
+    animation.properties.back().assetType = "AnimationGraph";
+    animation.properties.push_back(MakeProperty("Graph Parameter", ReflectedPropertyType::String, &AnimationComponent::graphParameter));
+    animation.properties.push_back(MakeProperty("Graph Value", ReflectedPropertyType::Float, &AnimationComponent::graphParameterValue));
     m_components.push_back(std::move(animation));
 
     auto audio = MakeComponent<AudioSourceComponent>("Audio Source");

@@ -43,6 +43,10 @@ std::string AssetType(const std::string &extension)
         return "Animation";
     if (extension == ".skeleton")
         return "Skeleton";
+    if (extension == ".blendtree")
+        return "BlendTree";
+    if (extension == ".animgraph")
+        return "AnimationGraph";
     if (extension == ".input")
         return "Input";
     if (extension == ".ttf" || extension == ".otf")

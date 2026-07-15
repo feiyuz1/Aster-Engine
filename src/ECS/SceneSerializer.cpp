@@ -20,7 +20,7 @@ std::string SceneSerializer::Serialize(const World &world)
     for (std::size_t index = 0; index < entities.size(); ++index)
         ids[entities[index]] = index + 1;
     std::ostringstream out;
-    out << "TINYSCENE 8\n";
+    out << "TINYSCENE 9\n";
     for (const Entity entity : entities)
     {
         const auto *name = world.GetComponent<NameComponent>(entity);
@@ -68,7 +68,8 @@ std::string SceneSerializer::Serialize(const World &world)
         if (const auto *v = world.GetComponent<AnimationComponent>(entity))
             out << "animation " << std::quoted(v->clipPath) << ' ' << v->time << ' ' << v->speed << ' ' << v->loop << ' ' << v->playing
                 << ' ' << std::quoted(v->nextClipPath) << ' ' << v->blendDuration << ' ' << v->blendTime << ' ' << v->rootMotion << ' '
-                << std::quoted(v->skeletonPath) << '\n';
+                << std::quoted(v->skeletonPath) << ' ' << std::quoted(v->graphPath) << ' ' << std::quoted(v->graphParameter) << ' '
+                << v->graphParameterValue << '\n';
         if (const auto *v = world.GetComponent<AudioSourceComponent>(entity))
             out << "audio " << std::quoted(v->clipPath) << ' ' << v->volume << ' ' << v->loop << ' ' << v->playOnStart << ' ' << v->spatial
                 << ' ' << v->minimumDistance << ' ' << v->maximumDistance << ' ' << std::quoted(v->bus) << '\n';
@@ -87,7 +88,7 @@ bool SceneSerializer::Deserialize(World &world, const std::string &text)
     std::istringstream in(text);
     std::string token;
     int version = 0;
-    if (!(in >> token >> version) || token != "TINYSCENE" || version < 1 || version > 8)
+    if (!(in >> token >> version) || token != "TINYSCENE" || version < 1 || version > 9)
         return false;
     world.Clear();
     std::unordered_map<std::size_t, Entity> ids;
@@ -218,6 +219,8 @@ bool SceneSerializer::Deserialize(World &world, const std::string &text)
                 in >> std::quoted(v.nextClipPath) >> v.blendDuration >> v.blendTime >> v.rootMotion;
             if (version >= 8)
                 in >> std::quoted(v.skeletonPath);
+            if (version >= 9)
+                in >> std::quoted(v.graphPath) >> std::quoted(v.graphParameter) >> v.graphParameterValue;
             world.AddComponent(current, v);
         }
         else if (token == "audio")

@@ -57,11 +57,52 @@ const AnimationSystem::Clip *AnimationSystem::LoadClip(const std::string &path)
     return &m_clips.emplace(path, std::move(clip)).first->second;
 }
 
+const SkeletalClip *AnimationSystem::LoadSkeletalClip(const std::string &path)
+{
+    const auto found = m_skeletalClips.find(path);
+    if (found != m_skeletalClips.end())
+        return &found->second;
+    SkeletalClip clip;
+    if (!LoadSkeletalClipAsset(path, clip))
+        return nullptr;
+    return &m_skeletalClips.emplace(path, std::move(clip)).first->second;
+}
+
+const BlendTree1D *AnimationSystem::LoadBlendTree(const std::string &path)
+{
+    const auto found = m_blendTrees.find(path);
+    if (found != m_blendTrees.end())
+        return &found->second;
+    BlendTree1D tree;
+    if (!LoadBlendTreeAsset(path, tree))
+        return nullptr;
+    return &m_blendTrees.emplace(path, std::move(tree)).first->second;
+}
+
+std::shared_ptr<const AnimationGraph> AnimationSystem::LoadGraph(const std::string &path)
+{
+    const auto found = m_graphs.find(path);
+    if (found != m_graphs.end())
+        return found->second;
+    auto graph = std::make_shared<AnimationGraph>();
+    if (!LoadAnimationGraphAsset(path, *graph))
+        return {};
+    m_graphs[path] = graph;
+    return graph;
+}
+
+void AnimationSystem::SetEventCallback(EventCallback callback)
+{
+    m_eventCallback = std::move(callback);
+}
+
 void AnimationSystem::Update(World &world, const float deltaTime)
 {
-    world.GetComponentManager().ForEach<TransformComponent, AnimationComponent>([this, deltaTime](Entity, TransformComponent &transform,
+    world.GetComponentManager().ForEach<TransformComponent, AnimationComponent>([this, deltaTime](const Entity entity,
+                                                                                                  TransformComponent &transform,
                                                                                                   AnimationComponent &animation) {
-        if (!animation.playing || animation.clipPath.empty())
+        animation.firedEvents.clear();
+        if (!animation.playing || (animation.clipPath.empty() && animation.graphPath.empty()))
             return;
         if (!animation.skeletonPath.empty())
         {
@@ -73,24 +114,102 @@ void AnimationSystem::Update(World &world, const float deltaTime)
                     return;
                 skeleton = m_skeletons.emplace(animation.skeletonPath, std::move(loaded)).first;
             }
-            auto skeletalClip = m_skeletalClips.find(animation.clipPath);
-            if (skeletalClip == m_skeletalClips.end())
+            const auto clipResolver = [this](const std::string &path) { return LoadSkeletalClip(path); };
+            const auto motionSampler = [this, &animation, &clipResolver](const std::string &path, const float time,
+                                                                         const std::size_t boneCount) {
+                if (std::filesystem::path(path).extension() == ".blendtree")
+                {
+                    const BlendTree1D *tree = LoadBlendTree(path);
+                    return tree ? tree->Sample(animation.graphParameterValue, time, boneCount, clipResolver)
+                                : std::vector<BonePose>(boneCount);
+                }
+                const SkeletalClip *clip = LoadSkeletalClip(path);
+                return clip ? clip->Sample(time, boneCount) : std::vector<BonePose>(boneCount);
+            };
+            std::vector<BonePose> pose;
+            const float previousTime = animation.time;
+            float eventPreviousTime = previousTime;
+            std::string eventClipPath;
+            if (!animation.graphPath.empty())
             {
-                SkeletalClip loaded;
-                if (!LoadSkeletalClipAsset(animation.clipPath, loaded))
+                const auto graph = LoadGraph(animation.graphPath);
+                if (!graph)
                     return;
-                skeletalClip = m_skeletalClips.emplace(animation.clipPath, std::move(loaded)).first;
+                if (m_playerGraphs[entity] != animation.graphPath)
+                {
+                    if (!m_graphPlayers[entity].SetGraph(graph))
+                        return;
+                    m_playerGraphs[entity] = animation.graphPath;
+                }
+                auto &player = m_graphPlayers[entity];
+                player.SetParameter(animation.graphParameter, animation.graphParameterValue);
+                const std::string previousState = player.GetState();
+                eventPreviousTime = player.GetTime();
+                pose = player.Update(std::max(0.0f, deltaTime * animation.speed), skeleton->second.bones.size(), motionSampler);
+                animation.graphState = player.GetState();
+                animation.time = player.GetTime();
+                if (animation.graphState != previousState)
+                    eventPreviousTime = 0.0f;
+                const AnimationGraphState *state = graph->FindState(animation.graphState);
+                if (state)
+                {
+                    eventClipPath = state->motionPath;
+                    if (std::filesystem::path(eventClipPath).extension() == ".blendtree")
+                        if (const BlendTree1D *tree = LoadBlendTree(eventClipPath))
+                            eventClipPath = tree->DominantClip(animation.graphParameterValue);
+                }
             }
-            animation.time += deltaTime * animation.speed;
-            if (animation.loop && skeletalClip->second.duration > 0.0f)
-                animation.time = std::fmod(std::max(0.0f, animation.time), skeletalClip->second.duration);
-            else if (animation.time >= skeletalClip->second.duration)
+            else if (std::filesystem::path(animation.clipPath).extension() == ".blendtree")
             {
-                animation.time = skeletalClip->second.duration;
-                animation.playing = false;
+                const BlendTree1D *tree = LoadBlendTree(animation.clipPath);
+                if (!tree)
+                    return;
+                animation.time += deltaTime * animation.speed;
+                pose = tree->Sample(animation.graphParameterValue, animation.time, skeleton->second.bones.size(), clipResolver);
+                eventClipPath = tree->DominantClip(animation.graphParameterValue);
             }
-            animation.skinMatrices =
-                BuildSkinMatrices(skeleton->second, skeletalClip->second.Sample(animation.time, skeleton->second.bones.size()));
+            else
+            {
+                const SkeletalClip *skeletalClip = LoadSkeletalClip(animation.clipPath);
+                if (!skeletalClip)
+                    return;
+                const float unwrappedTime = animation.time + deltaTime * animation.speed;
+                for (const auto &event : skeletalClip->GatherEvents(animation.time, unwrappedTime, animation.loop))
+                {
+                    animation.firedEvents.push_back(event.name);
+                    if (m_eventCallback)
+                        m_eventCallback(entity, event);
+                }
+                animation.time = unwrappedTime;
+                if (animation.loop && skeletalClip->duration > 0.0f)
+                {
+                    animation.time = std::fmod(animation.time, skeletalClip->duration);
+                    if (animation.time < 0.0f)
+                        animation.time += skeletalClip->duration;
+                }
+                else if (animation.time >= skeletalClip->duration)
+                {
+                    animation.time = skeletalClip->duration;
+                    animation.playing = false;
+                }
+                else if (animation.time <= 0.0f && animation.speed < 0.0f)
+                {
+                    animation.time = 0.0f;
+                    animation.playing = false;
+                }
+                pose = skeletalClip->Sample(animation.time, skeleton->second.bones.size(), animation.loop);
+            }
+            if (!eventClipPath.empty())
+            {
+                if (const SkeletalClip *eventClip = LoadSkeletalClip(eventClipPath))
+                    for (const auto &event : eventClip->GatherEvents(eventPreviousTime, animation.time, true))
+                    {
+                        animation.firedEvents.push_back(event.name);
+                        if (m_eventCallback)
+                            m_eventCallback(entity, event);
+                    }
+            }
+            animation.skinMatrices = BuildSkinMatrices(skeleton->second, pose);
             return;
         }
         const Clip *clip = LoadClip(animation.clipPath);

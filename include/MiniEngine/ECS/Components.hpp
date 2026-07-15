@@ -4,6 +4,7 @@
 #include "MiniEngine/Types.hpp"
 
 #include <string>
+#include <vector>
 
 namespace MiniEngine
 {
@@ -156,6 +157,11 @@ struct AnimationComponent
     float blendTime = 0.0f;
     bool rootMotion = false;
     std::string skeletonPath;
+    std::string graphPath;
+    std::string graphParameter = "Speed";
+    float graphParameterValue = 0.0f;
+    std::string graphState;
+    std::vector<std::string> firedEvents;
     std::vector<Mat4> skinMatrices;
 };
 
