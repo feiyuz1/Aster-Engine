@@ -20,7 +20,7 @@ std::string SceneSerializer::Serialize(const World &world)
     for (std::size_t index = 0; index < entities.size(); ++index)
         ids[entities[index]] = index + 1;
     std::ostringstream out;
-    out << "TINYSCENE 9\n";
+    out << "TINYSCENE 10\n";
     for (const Entity entity : entities)
     {
         const auto *name = world.GetComponent<NameComponent>(entity);
@@ -48,8 +48,10 @@ std::string SceneSerializer::Serialize(const World &world)
                 << v->direction.y << ' ' << v->direction.z << '\n';
         if (const auto *v = world.GetComponent<RigidBodyComponent>(entity))
             out << "rigidbody " << static_cast<int>(v->type) << ' ' << v->mass << ' ' << v->velocity.x << ' ' << v->velocity.y << ' '
-                << v->velocity.z << ' ' << v->useGravity << ' ' << v->linearDamping << ' ' << v->restitution << ' ' << v->continuous
-                << '\n';
+                << v->velocity.z << ' ' << v->useGravity << ' ' << v->linearDamping << ' ' << v->restitution << ' ' << v->continuous << ' '
+                << v->angularVelocity.x << ' ' << v->angularVelocity.y << ' ' << v->angularVelocity.z << ' ' << v->angularDamping << ' '
+                << v->friction << ' ' << v->inertiaTensor.x << ' ' << v->inertiaTensor.y << ' ' << v->inertiaTensor.z << ' '
+                << v->lockRotationX << ' ' << v->lockRotationY << ' ' << v->lockRotationZ << '\n';
         if (const auto *v = world.GetComponent<ColliderComponent>(entity))
             out << "collider " << static_cast<int>(v->shape) << ' ' << v->halfExtents.x << ' ' << v->halfExtents.y << ' '
                 << v->halfExtents.z << ' ' << v->radius << ' ' << v->trigger << ' ' << v->layer << ' ' << v->mask << ' ' << v->height << ' '
@@ -57,7 +59,8 @@ std::string SceneSerializer::Serialize(const World &world)
         if (const auto *v = world.GetComponent<JointComponent>(entity))
             out << "joint " << static_cast<int>(v->type) << ' ' << (ids.count(v->connectedEntity) ? ids[v->connectedEntity] : 0) << ' '
                 << v->restLength << ' ' << v->stiffness << ' ' << v->fixedOffset.x << ' ' << v->fixedOffset.y << ' ' << v->fixedOffset.z
-                << ' ' << v->collideConnected << '\n';
+                << ' ' << v->collideConnected << ' ' << v->axis.x << ' ' << v->axis.y << ' ' << v->axis.z << ' ' << v->damping << ' '
+                << v->minimumLimit << ' ' << v->maximumLimit << ' ' << v->breakForce << '\n';
         if (const auto *v = world.GetComponent<ScriptComponent>(entity))
             out << "script " << std::quoted(v->scriptClassName) << '\n';
         if (const auto *v = world.GetComponent<PawnComponent>(entity))
@@ -88,7 +91,7 @@ bool SceneSerializer::Deserialize(World &world, const std::string &text)
     std::istringstream in(text);
     std::string token;
     int version = 0;
-    if (!(in >> token >> version) || token != "TINYSCENE" || version < 1 || version > 9)
+    if (!(in >> token >> version) || token != "TINYSCENE" || version < 1 || version > 10)
         return false;
     world.Clear();
     std::unordered_map<std::size_t, Entity> ids;
@@ -165,6 +168,9 @@ bool SceneSerializer::Deserialize(World &world, const std::string &text)
             in >> type >> v.mass >> v.velocity.x >> v.velocity.y >> v.velocity.z >> v.useGravity;
             if (version >= 5)
                 in >> v.linearDamping >> v.restitution >> v.continuous;
+            if (version >= 10)
+                in >> v.angularVelocity.x >> v.angularVelocity.y >> v.angularVelocity.z >> v.angularDamping >> v.friction >>
+                    v.inertiaTensor.x >> v.inertiaTensor.y >> v.inertiaTensor.z >> v.lockRotationX >> v.lockRotationY >> v.lockRotationZ;
             v.type = static_cast<BodyType>(type);
             world.AddComponent(current, v);
         }
@@ -187,6 +193,8 @@ bool SceneSerializer::Deserialize(World &world, const std::string &text)
             std::size_t target = 0;
             in >> type >> target >> v.restLength >> v.stiffness >> v.fixedOffset.x >> v.fixedOffset.y >> v.fixedOffset.z >>
                 v.collideConnected;
+            if (version >= 10)
+                in >> v.axis.x >> v.axis.y >> v.axis.z >> v.damping >> v.minimumLimit >> v.maximumLimit >> v.breakForce;
             v.type = static_cast<JointType>(type);
             joints.emplace_back(current, target, v);
         }

@@ -3,12 +3,17 @@
 #include "MiniEngine/Platform/Platform.hpp"
 
 #include <algorithm>
+#include <cstdlib>
 #include <iomanip>
 #include <sstream>
 
 #ifdef _WIN32
 #ifndef NOMINMAX
 #define NOMINMAX
+#endif
+#ifdef TINYENGINE_HAS_FREETYPE
+#include <ft2build.h>
+#include FT_FREETYPE_H
 #endif
 #include <Windows.h>
 #endif
@@ -158,10 +163,45 @@ bool FontRasterizer::RasterizeSystemGlyph(const std::uint32_t codepoint, const i
     DeleteDC(device);
     return size != GDI_ERROR;
 #else
+    (void)fontName;
+#ifdef TINYENGINE_HAS_FREETYPE
+    if (codepoint > 0x10ffff || pixelHeight <= 0)
+        return false;
+    FT_Library library = nullptr;
+    FT_Face face = nullptr;
+    if (FT_Init_FreeType(&library) != 0)
+        return false;
+    const char *configured = std::getenv("TINYENGINE_FONT_PATH");
+    const char *candidates[] = {configured, "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+                                "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc", "/Library/Fonts/Arial Unicode.ttf"};
+    for (const char *candidate : candidates)
+        if (candidate && FT_New_Face(library, candidate, 0, &face) == 0)
+            break;
+    bool success = false;
+    if (face && FT_Set_Pixel_Sizes(face, 0, static_cast<FT_UInt>(pixelHeight)) == 0 && FT_Load_Char(face, codepoint, FT_LOAD_RENDER) == 0)
+    {
+        const FT_GlyphSlot slot = face->glyph;
+        glyph.width = static_cast<int>(slot->bitmap.width);
+        glyph.height = static_cast<int>(slot->bitmap.rows);
+        glyph.bearingX = slot->bitmap_left;
+        glyph.bearingY = slot->bitmap_top;
+        glyph.advance = static_cast<int>(slot->advance.x / 64);
+        glyph.pixels.resize(static_cast<std::size_t>(glyph.width) * glyph.height);
+        for (int y = 0; y < glyph.height; ++y)
+            std::copy_n(slot->bitmap.buffer + static_cast<std::ptrdiff_t>(y) * slot->bitmap.pitch, glyph.width,
+                        glyph.pixels.data() + static_cast<std::ptrdiff_t>(y) * glyph.width);
+        success = true;
+    }
+    if (face)
+        FT_Done_Face(face);
+    FT_Done_FreeType(library);
+    return success;
+#else
     (void)codepoint;
     (void)pixelHeight;
     (void)fontName;
     return false;
+#endif
 #endif
 }
 

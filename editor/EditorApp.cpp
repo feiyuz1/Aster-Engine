@@ -7,6 +7,8 @@
 #include "MiniEngine/Project/Project.hpp"
 #include "MiniEngine/Project/ProjectPackager.hpp"
 #include "MiniEngine/Render/SdlGlRenderDevice.hpp"
+#include "MiniEngine/Render/ShaderPipeline.hpp"
+#include "MiniEngine/Resource/AssetMaintenance.hpp"
 #ifdef TINYENGINE_HAS_ASSIMP
 #include "MiniEngine/Import/AssimpImporter.hpp"
 #endif
@@ -22,6 +24,7 @@
 #include <limits>
 #include <optional>
 #include <sstream>
+#include <unordered_map>
 
 namespace MiniEngine
 {
@@ -183,6 +186,8 @@ void EditorApp::Draw()
     DrawAssets();
     DrawConsole();
     DrawAnimationEditor();
+    DrawShaderEditor();
+    DrawMaterialGraphEditor();
     ImGuiIO &io = ImGui::GetIO();
     if (!io.WantTextInput && io.KeyCtrl)
     {
@@ -380,37 +385,104 @@ void EditorApp::DrawInspector()
                 Vec3 emissive = material->GetEmissive();
                 bool transparent = material->IsTransparent();
                 bool changed = false;
-                changed = ImGui::ColorEdit4("Base Color", &color.x) || changed;
-                changed = ImGui::SliderFloat("Metallic", &metallic, 0.0f, 1.0f) || changed;
-                changed = ImGui::SliderFloat("Roughness", &roughness, 0.04f, 1.0f) || changed;
-                changed = ImGui::ColorEdit3("Emissive", &emissive.x) || changed;
-                changed = ImGui::Checkbox("Transparent", &transparent) || changed;
                 std::string parent = material->GetParentPath(), shader = material->GetShaderPath(), albedo = material->GetTexturePath(),
                             normal = material->GetNormalTexturePath(), metallicMap = material->GetMetallicTexturePath();
                 std::string roughnessMap = material->GetRoughnessTexturePath(), ao = material->GetAoTexturePath(),
-                            emissiveMap = material->GetEmissiveTexturePath();
-                auto editPath = [&](const char *label, std::string &path) {
+                            emissiveMap = material->GetEmissiveTexturePath(), packed = material->GetPackedTexturePath(),
+                            packedLayout = material->GetPackedTextureLayout();
+                const bool hasParent = !parent.empty();
+                std::unordered_map<std::string, bool> overrides;
+                const auto overrideControl = [&](const char *property) {
+                    auto found = overrides.find(property);
+                    if (found == overrides.end())
+                        found = overrides.emplace(property, material->IsOverridden(property)).first;
+                    bool &enabled = found->second;
+                    if (hasParent)
+                    {
+                        ImGui::PushID(property);
+                        changed = ImGui::Checkbox("##Override", &enabled) || changed;
+                        ImGui::SameLine();
+                        ImGui::PopID();
+                    }
+                    return enabled || !hasParent;
+                };
+                ImGui::BeginDisabled(!overrideControl("color"));
+                changed = ImGui::ColorEdit4("Base Color", &color.x) || changed;
+                ImGui::EndDisabled();
+                ImGui::BeginDisabled(!overrideControl("metallic"));
+                changed = ImGui::SliderFloat("Metallic", &metallic, 0.0f, 1.0f) || changed;
+                ImGui::EndDisabled();
+                ImGui::BeginDisabled(!overrideControl("roughness"));
+                changed = ImGui::SliderFloat("Roughness", &roughness, 0.04f, 1.0f) || changed;
+                ImGui::EndDisabled();
+                ImGui::BeginDisabled(!overrideControl("emissive"));
+                changed = ImGui::ColorEdit3("Emissive", &emissive.x) || changed;
+                ImGui::EndDisabled();
+                ImGui::BeginDisabled(!overrideControl("blend"));
+                changed = ImGui::Checkbox("Transparent", &transparent) || changed;
+                ImGui::EndDisabled();
+                auto editPath = [&](const char *label, const char *property, std::string &path) {
+                    const bool enabled = std::string(property) == "parent" || overrideControl(property);
                     char buffer[512]{};
                     std::strncpy(buffer, path.c_str(), sizeof(buffer) - 1);
+                    ImGui::BeginDisabled(!enabled);
                     if (ImGui::InputText(label, buffer, sizeof(buffer), ImGuiInputTextFlags_EnterReturnsTrue))
                     {
                         path = buffer;
                         changed = true;
                     }
+                    ImGui::EndDisabled();
                 };
-                editPath("Parent", parent);
-                editPath("Shader", shader);
-                editPath("Albedo", albedo);
-                editPath("Normal", normal);
-                editPath("Metallic Map", metallicMap);
-                editPath("Roughness Map", roughnessMap);
-                editPath("AO Map", ao);
-                editPath("Emissive Map", emissiveMap);
+                editPath("Parent", "parent", parent);
+                editPath("Shader", "shader", shader);
+                editPath("Albedo", "texture", albedo);
+                editPath("Normal", "normalTexture", normal);
+                editPath("Metallic Map", "metallicTexture", metallicMap);
+                editPath("Roughness Map", "roughnessTexture", roughnessMap);
+                editPath("AO Map", "aoTexture", ao);
+                editPath("Emissive Map", "emissiveTexture", emissiveMap);
+                editPath("Packed ORM/RMA", "packedTexture", packed);
+                if (overrideControl("packedLayout"))
+                {
+                    int layout = packedLayout == "RMA" ? 1 : 0;
+                    if (ImGui::Combo("Packed Layout", &layout, "ORM\0RMA\0"))
+                    {
+                        packedLayout = layout ? "RMA" : "ORM";
+                        changed = true;
+                    }
+                }
+                auto parameters = material->GetParameters();
+                if (!shader.empty())
+                    for (const auto &parameter : ShaderPipeline::ReflectParameters(shader))
+                    {
+                        Vec4 &value = parameters[parameter.name];
+                        if (!material->GetParameters().count(parameter.name))
+                            value = {parameter.defaultValue[0], parameter.defaultValue[1], parameter.defaultValue[2],
+                                     parameter.defaultValue[3]};
+                        const std::string property = "parameter." + parameter.name;
+                        ImGui::BeginDisabled(!overrideControl(property.c_str()));
+                        bool parameterChanged = false;
+                        if (parameter.type == ShaderParameterType::Float)
+                            parameterChanged = parameter.hasRange ? ImGui::SliderFloat(parameter.name.c_str(), &value.x, parameter.minimum,
+                                                                                       parameter.maximum)
+                                                                  : ImGui::DragFloat(parameter.name.c_str(), &value.x, 0.01f);
+                        else if (parameter.type == ShaderParameterType::Vec2)
+                            parameterChanged = ImGui::DragFloat2(parameter.name.c_str(), &value.x, 0.01f);
+                        else if (parameter.type == ShaderParameterType::Vec3)
+                            parameterChanged = ImGui::DragFloat3(parameter.name.c_str(), &value.x, 0.01f);
+                        else if (parameter.type == ShaderParameterType::Vec4)
+                            parameterChanged = ImGui::DragFloat4(parameter.name.c_str(), &value.x, 0.01f);
+                        ImGui::EndDisabled();
+                        changed = parameterChanged || changed;
+                    }
                 if (changed)
                 {
                     std::ostringstream output;
                     if (!parent.empty())
                         output << "parent " << parent << '\n';
+                    if (!parent.empty())
+                        for (const auto &entry : overrides)
+                            output << "override " << entry.first << ' ' << entry.second << '\n';
                     output << "color " << color.x << ' ' << color.y << ' ' << color.z << ' ' << color.w << "\nmetallic " << metallic
                            << "\nroughness " << roughness << "\nemissive " << emissive.x << ' ' << emissive.y << ' ' << emissive.z << '\n';
                     if (!shader.empty())
@@ -427,6 +499,11 @@ void EditorApp::DrawInspector()
                         output << "aoTexture " << ao << '\n';
                     if (!emissiveMap.empty())
                         output << "emissiveTexture " << emissiveMap << '\n';
+                    if (!packed.empty())
+                        output << "packedTexture " << packed << "\npackedLayout " << packedLayout << '\n';
+                    for (const auto &parameter : parameters)
+                        output << "parameter " << parameter.first << ' ' << parameter.second.x << ' ' << parameter.second.y << ' '
+                               << parameter.second.z << ' ' << parameter.second.w << '\n';
                     output << "blend " << (transparent ? "alpha" : "opaque") << '\n';
                     if (PlatformFile::WriteAllText(asset->path, output.str()) && m_engine.GetContext().resourceManager->Reload(asset->path))
                         m_messages.emplace_back("Material saved: " + asset->path);
@@ -615,6 +692,16 @@ void EditorApp::DrawSceneView()
     ImGui::SameLine();
     ImGui::Checkbox("Snap", &m_gizmoSnap);
     ImGui::SameLine();
+    const char *spaceLabel = m_gizmoSpace == GizmoSpace::World ? "World" : "Local";
+    if (ImGui::Button(spaceLabel))
+        m_gizmoSpace = m_gizmoSpace == GizmoSpace::World ? GizmoSpace::Local : GizmoSpace::World;
+    ImGui::SameLine();
+    const char *pivotNames[] = {"Center", "Active", "Individual"};
+    int pivot = static_cast<int>(m_pivotMode);
+    ImGui::SetNextItemWidth(82.0f);
+    if (ImGui::Combo("##Pivot", &pivot, pivotNames, 3))
+        m_pivotMode = static_cast<PivotMode>(pivot);
+    ImGui::SameLine();
     float *snapValue = m_gizmoMode == GizmoMode::Translate ? &m_translateSnap
                        : m_gizmoMode == GizmoMode::Rotate  ? &m_rotateSnap
                                                            : &m_scaleSnap;
@@ -629,6 +716,16 @@ void EditorApp::DrawSceneView()
     ImGui::SameLine();
     if (ImGui::Checkbox("FXAA", &fxaa))
         m_device->SetFxaaEnabled(fxaa);
+    bool bloom = m_device->IsBloomEnabled(), ssao = m_device->IsSsaoEnabled(), taa = m_device->IsTaaEnabled();
+    ImGui::SameLine();
+    if (ImGui::Checkbox("Bloom", &bloom))
+        m_device->SetBloomEnabled(bloom);
+    ImGui::SameLine();
+    if (ImGui::Checkbox("SSAO", &ssao))
+        m_device->SetSsaoEnabled(ssao);
+    ImGui::SameLine();
+    if (ImGui::Checkbox("TAA", &taa))
+        m_device->SetTaaEnabled(taa);
     ImGui::SameLine();
     if (ImGui::SmallButton("Reload Shaders"))
     {
@@ -683,6 +780,8 @@ void EditorApp::DrawSceneView()
     if (!m_engine.IsPlaying() && hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left) && !gizmoConsumed)
     {
         const ImVec2 mouse = ImGui::GetMousePos();
+        m_marqueeActive = true;
+        m_marqueeStart = {mouse.x, mouse.y};
         const float normalizedX = (mouse.x - imageMinimum.x) / std::max(1.0f, available.x);
         const float normalizedY = (mouse.y - imageMinimum.y) / std::max(1.0f, available.y);
         const Entity picked = PickEntity(normalizedX, normalizedY);
@@ -699,6 +798,43 @@ void EditorApp::DrawSceneView()
         {
             m_selected = picked;
             m_selection = picked == InvalidEntity ? std::vector<Entity>{} : std::vector<Entity>{picked};
+        }
+    }
+    if (m_marqueeActive)
+    {
+        const ImVec2 mouse = ImGui::GetMousePos();
+        const ImVec2 start{m_marqueeStart.x, m_marqueeStart.y};
+        const ImVec2 minimum{std::min(start.x, mouse.x), std::min(start.y, mouse.y)};
+        const ImVec2 maximum{std::max(start.x, mouse.x), std::max(start.y, mouse.y)};
+        if (ImGui::IsMouseDown(ImGuiMouseButton_Left) && (maximum.x - minimum.x > 3.0f || maximum.y - minimum.y > 3.0f))
+        {
+            ImGui::GetWindowDrawList()->AddRectFilled(minimum, maximum, IM_COL32(60, 135, 240, 35));
+            ImGui::GetWindowDrawList()->AddRect(minimum, maximum, IM_COL32(90, 165, 255, 220));
+        }
+        if (ImGui::IsMouseReleased(ImGuiMouseButton_Left))
+        {
+            if (maximum.x - minimum.x > 5.0f || maximum.y - minimum.y > 5.0f)
+            {
+                std::vector<Entity> marquee;
+                World &world = *m_engine.GetContext().world;
+                for (const Entity entity : world.GetEntityManager().GetAliveEntities())
+                {
+                    const Mat4 matrix = world.GetWorldMatrix(entity);
+                    ImVec2 screen;
+                    if (ProjectToScreen(m_engine.GetContext().renderer->GetFrameView(), {matrix.At(0, 3), matrix.At(1, 3), matrix.At(2, 3)},
+                                        imageMinimum.x, imageMinimum.y, available.x, available.y, screen) &&
+                        screen.x >= minimum.x && screen.x <= maximum.x && screen.y >= minimum.y && screen.y <= maximum.y)
+                        marquee.push_back(entity);
+                }
+                if (ImGui::GetIO().KeyCtrl)
+                    for (const Entity entity : marquee)
+                        if (std::find(m_selection.begin(), m_selection.end(), entity) == m_selection.end())
+                            m_selection.push_back(entity);
+                        else
+                            m_selection = std::move(marquee);
+                m_selected = m_selection.empty() ? InvalidEntity : m_selection.back();
+            }
+            m_marqueeActive = false;
         }
     }
     if (!m_engine.IsPlaying() && ImGui::BeginDragDropTarget())
@@ -794,9 +930,31 @@ bool EditorApp::DrawGizmo(const float minimumX, const float minimumY, const floa
         return false;
     }
     const Mat4 worldMatrix = world.GetWorldMatrix(m_selected);
-    const Vec3 origin{worldMatrix.At(0, 3), worldMatrix.At(1, 3), worldMatrix.At(2, 3)};
+    Vec3 origin{worldMatrix.At(0, 3), worldMatrix.At(1, 3), worldMatrix.At(2, 3)};
+    std::vector<Entity> targets;
+    for (const Entity entity : m_selection)
+        if (world.IsAlive(entity) && world.HasComponent<TransformComponent>(entity))
+            targets.push_back(entity);
+    if (targets.empty())
+        targets.push_back(m_selected);
+    if (m_pivotMode == PivotMode::Center)
+    {
+        origin = {};
+        for (const Entity entity : targets)
+        {
+            const Mat4 matrix = world.GetWorldMatrix(entity);
+            origin += Vec3{matrix.At(0, 3), matrix.At(1, 3), matrix.At(2, 3)};
+        }
+        origin = origin / static_cast<float>(targets.size());
+    }
     const float handleLength = std::max(0.5f, Length(origin - m_editorCameraPosition) * 0.13f);
-    const Vec3 axes[3] = {{1, 0, 0}, {0, 1, 0}, {0, 0, 1}};
+    Vec3 axes[3] = {{1, 0, 0}, {0, 1, 0}, {0, 0, 1}};
+    if (m_gizmoSpace == GizmoSpace::Local)
+    {
+        axes[0] = Normalize({worldMatrix.At(0, 0), worldMatrix.At(1, 0), worldMatrix.At(2, 0)});
+        axes[1] = Normalize({worldMatrix.At(0, 1), worldMatrix.At(1, 1), worldMatrix.At(2, 1)});
+        axes[2] = Normalize({worldMatrix.At(0, 2), worldMatrix.At(1, 2), worldMatrix.At(2, 2)});
+    }
     const ImU32 colors[3] = {IM_COL32(235, 70, 70, 255), IM_COL32(70, 220, 100, 255), IM_COL32(75, 135, 245, 255)};
     ImVec2 start;
     if (!ProjectToScreen(m_engine.GetContext().renderer->GetFrameView(), origin, minimumX, minimumY, width, height, start))
@@ -832,7 +990,7 @@ bool EditorApp::DrawGizmo(const float minimumX, const float minimumY, const floa
     {
         if (!ImGui::IsMouseDown(ImGuiMouseButton_Left))
             m_activeGizmoAxis = -1;
-        else if (auto *transform = world.GetComponent<TransformComponent>(m_selected))
+        else
         {
             const ImVec2 delta = ImGui::GetIO().MouseDelta;
             const float rawMotion = m_gizmoMode == GizmoMode::Translate ? (delta.x - delta.y) * 0.01f * handleLength
@@ -846,33 +1004,40 @@ bool EditorApp::DrawGizmo(const float minimumX, const float minimumY, const floa
                 m_gizmoSnap ? std::round(m_gizmoAccumulatedMotion / std::max(0.001f, step)) * step : m_gizmoAccumulatedMotion;
             const float motion = targetMotion - m_gizmoAppliedMotion;
             m_gizmoAppliedMotion = targetMotion;
-            if (m_gizmoMode == GizmoMode::Translate)
-            {
-                if (m_activeGizmoAxis == 0)
-                    transform->position.x += motion;
-                else if (m_activeGizmoAxis == 1)
-                    transform->position.y += motion;
-                else
-                    transform->position.z += motion;
-            }
-            else if (m_gizmoMode == GizmoMode::Rotate)
-            {
-                if (m_activeGizmoAxis == 0)
-                    transform->rotation.x += motion;
-                else if (m_activeGizmoAxis == 1)
-                    transform->rotation.y += motion;
-                else
-                    transform->rotation.z += motion;
-            }
-            else
-            {
-                if (m_activeGizmoAxis == 0)
-                    transform->scale.x = std::max(0.001f, transform->scale.x + motion);
-                else if (m_activeGizmoAxis == 1)
-                    transform->scale.y = std::max(0.001f, transform->scale.y + motion);
-                else
-                    transform->scale.z = std::max(0.001f, transform->scale.z + motion);
-            }
+            for (const Entity entity : targets)
+                if (auto *transform = world.GetComponent<TransformComponent>(entity))
+                {
+                    if (m_gizmoMode == GizmoMode::Translate)
+                        transform->position += axes[m_activeGizmoAxis] * motion;
+                    else if (m_gizmoMode == GizmoMode::Rotate)
+                    {
+                        if (m_activeGizmoAxis == 0)
+                            transform->rotation.x += motion;
+                        else if (m_activeGizmoAxis == 1)
+                            transform->rotation.y += motion;
+                        else
+                            transform->rotation.z += motion;
+                        if (m_pivotMode == PivotMode::Center && entity != m_selected)
+                        {
+                            Vec3 rotation{};
+                            if (m_activeGizmoAxis == 0)
+                                rotation.x = motion;
+                            else if (m_activeGizmoAxis == 1)
+                                rotation.y = motion;
+                            else
+                                rotation.z = motion;
+                            transform->position = origin + TransformPoint(RotationMatrix(Quaternion::FromEulerDegrees(rotation)),
+                                                                          transform->position - origin);
+                        }
+                    }
+                    else
+                    {
+                        float *component = m_activeGizmoAxis == 0   ? &transform->scale.x
+                                           : m_activeGizmoAxis == 1 ? &transform->scale.y
+                                                                    : &transform->scale.z;
+                        *component = std::max(0.001f, *component + motion);
+                    }
+                }
         }
     }
     return hovered || m_activeGizmoAxis >= 0;
@@ -1047,6 +1212,8 @@ void EditorApp::DrawAssets()
 #endif
     auto assets = m_engine.GetContext().resourceManager->GetAssetRegistry().GetAssets();
     std::sort(assets.begin(), assets.end(), [](const AssetInfo &a, const AssetInfo &b) { return a.path < b.path; });
+    static std::string moveSource;
+    static std::array<char, 1024> moveDestination{};
     for (const auto &asset : assets)
     {
         ImGui::PushID(asset.id.c_str());
@@ -1059,6 +1226,19 @@ void EditorApp::DrawAssets()
             ImGui::SetDragDropPayload("TINY_ASSET_PATH", asset.path.c_str(), asset.path.size() + 1);
             ImGui::TextUnformatted(asset.path.c_str());
             ImGui::EndDragDropSource();
+        }
+        if (ImGui::BeginPopupContextItem("AssetContext"))
+        {
+            if (ImGui::MenuItem("Move / Rename..."))
+            {
+                moveSource = asset.path;
+                std::fill(moveDestination.begin(), moveDestination.end(), '\0');
+                std::strncpy(moveDestination.data(), asset.path.c_str(), moveDestination.size() - 1);
+                ImGui::OpenPopup("MoveAssetModal");
+            }
+            if (ImGui::MenuItem("Regenerate Thumbnail"))
+                m_thumbnailAsset.clear();
+            ImGui::EndPopup();
         }
         if (!m_engine.IsPlaying() && asset.extension == ".prefab" && ImGui::IsItemHovered() &&
             ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left))
@@ -1075,6 +1255,73 @@ void EditorApp::DrawAssets()
             ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left))
             OpenSceneDocument(asset.path);
         ImGui::PopID();
+    }
+    if (ImGui::BeginPopupModal("MoveAssetModal", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
+    {
+        ImGui::TextWrapped("Move %s", moveSource.c_str());
+        ImGui::InputText("Destination", moveDestination.data(), moveDestination.size());
+        if (ImGui::Button("Move"))
+        {
+            std::string error;
+            auto &registry = m_engine.GetContext().resourceManager->GetAssetRegistry();
+            if (AssetMaintenance::MoveAsset(registry, moveSource, moveDestination.data(), &error))
+            {
+                m_selectedAsset = moveDestination.data();
+                m_messages.emplace_back("Asset moved and references updated");
+                ImGui::CloseCurrentPopup();
+            }
+            else
+                m_messages.emplace_back("Move failed: " + error);
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel"))
+            ImGui::CloseCurrentPopup();
+        ImGui::EndPopup();
+    }
+    const auto preview = m_selectedAsset.empty() ? std::optional<AssetInfo>{}
+                                                 : m_engine.GetContext().resourceManager->GetAssetRegistry().Find(m_selectedAsset);
+    if (preview)
+    {
+        ImGui::SeparatorText("Preview and Dependencies");
+        if (m_thumbnailAsset != preview->path)
+        {
+            const std::filesystem::path directory = "Saved/Thumbnails";
+            std::filesystem::create_directories(directory);
+            m_thumbnailPath = directory / (preview->id + ".ppm");
+            std::string error;
+            if (AssetMaintenance::GenerateThumbnail(*preview, m_thumbnailPath, 128, &error))
+                m_thumbnailAsset = preview->path;
+            else
+                m_messages.emplace_back("Thumbnail failed: " + error);
+        }
+        if (!m_thumbnailPath.empty())
+        {
+            const std::uintptr_t texture = m_device->GetUiTexture(m_thumbnailPath.generic_string());
+            if (texture)
+                ImGui::Image(ImTextureRef(static_cast<ImTextureID>(texture)), {96.0f, 96.0f});
+        }
+        ImGui::SameLine();
+        ImGui::BeginGroup();
+        ImGui::Text("Type: %s", preview->type.c_str());
+        ImGui::Text("Size: %llu bytes", static_cast<unsigned long long>(preview->byteSize));
+        ImGui::Text("Dependencies: %zu", preview->dependencies.size());
+        ImGui::EndGroup();
+        auto &registry = m_engine.GetContext().resourceManager->GetAssetRegistry();
+        for (const auto &issue : AssetMaintenance::FindMissingDependencies(registry))
+            if (issue.owner == preview->path)
+            {
+                ImGui::TextColored({1.0f, 0.45f, 0.3f, 1.0f}, "Missing: %s", issue.missingPath.c_str());
+                for (const auto &candidate : issue.candidates)
+                {
+                    ImGui::SameLine();
+                    if (ImGui::SmallButton(("Repair -> " + candidate).c_str()))
+                    {
+                        std::string error;
+                        if (!AssetMaintenance::RepairDependency(registry, issue.owner, issue.missingPath, candidate, &error))
+                            m_messages.emplace_back("Dependency repair failed: " + error);
+                    }
+                }
+            }
     }
     ImGui::End();
 }
@@ -1318,6 +1565,149 @@ void EditorApp::DrawAnimationEditor()
                 m_messages.emplace_back("Animation graph has invalid states, parameters, entry, or transitions");
         }
     }
+    ImGui::End();
+}
+
+void EditorApp::DrawShaderEditor()
+{
+    const auto asset = m_selectedAsset.empty() ? std::optional<AssetInfo>{}
+                                               : m_engine.GetContext().resourceManager->GetAssetRegistry().Find(m_selectedAsset);
+    if (!asset || asset->type != "Shader")
+        return;
+    if (m_openShaderAsset != asset->path)
+    {
+        const std::string source = PlatformFile::ReadAllText(asset->path);
+        m_shaderSource.assign(std::max<std::size_t>(source.size() + 65536, 65536), '\0');
+        std::copy(source.begin(), source.end(), m_shaderSource.begin());
+        m_openShaderAsset = asset->path;
+    }
+    ImGui::SetNextWindowSize({760.0f, 520.0f}, ImGuiCond_FirstUseEver);
+    if (!ImGui::Begin("Shader Source Editor"))
+    {
+        ImGui::End();
+        return;
+    }
+    ImGui::TextUnformatted(asset->path.c_str());
+    ImGuiInputTextFlags flags = ImGuiInputTextFlags_AllowTabInput;
+    const bool edited = ImGui::InputTextMultiline("##ShaderSource", m_shaderSource.data(), m_shaderSource.size(), {-1.0f, -72.0f}, flags);
+    if (edited)
+    {
+        PlatformFile::WriteAllText(asset->path, m_shaderSource.data());
+        m_device->ValidateShader(asset->path);
+    }
+    if (ImGui::Button("Save and Reload"))
+    {
+        PlatformFile::WriteAllText(asset->path, m_shaderSource.data());
+        if (m_device->ValidateShader(asset->path) && m_device->ReloadShaders())
+            m_messages.emplace_back("Shader saved and reloaded: " + asset->path);
+        else
+            m_messages.emplace_back("Shader error: " + m_device->GetLastShaderError());
+    }
+    ImGui::SameLine();
+    if (m_device->GetLastShaderError().empty())
+        ImGui::TextColored({0.35f, 0.9f, 0.45f, 1.0f}, "No compile errors");
+    else
+    {
+        int line = 0;
+        const std::string &error = m_device->GetLastShaderError();
+        const std::size_t begin = error.find('('), end = begin == std::string::npos ? std::string::npos : error.find(')', begin);
+        if (begin != std::string::npos && end != std::string::npos)
+            try
+            {
+                line = std::stoi(error.substr(begin + 1, end - begin - 1));
+            }
+            catch (...)
+            {
+            }
+        if (line > 0)
+            ImGui::TextColored({1.0f, 0.35f, 0.3f, 1.0f}, "Line %d: %s", line, error.c_str());
+        else
+            ImGui::TextColored({1.0f, 0.35f, 0.3f, 1.0f}, "%s", error.c_str());
+    }
+    ImGui::End();
+}
+
+void EditorApp::DrawMaterialGraphEditor()
+{
+    const auto asset = m_selectedAsset.empty() ? std::optional<AssetInfo>{}
+                                               : m_engine.GetContext().resourceManager->GetAssetRegistry().Find(m_selectedAsset);
+    if (!asset || asset->type != "MaterialGraph")
+        return;
+    if (m_openMaterialGraphAsset != asset->path)
+    {
+        m_materialGraph.Load(asset->path);
+        m_openMaterialGraphAsset = asset->path;
+    }
+    ImGui::SetNextWindowSize({820.0f, 560.0f}, ImGuiCond_FirstUseEver);
+    ImGui::Begin("Material Graph");
+    if (ImGui::Button("+ Constant"))
+        m_materialGraph.AddNode(MaterialNodeType::Constant, "Constant", {30.0f, 60.0f});
+    ImGui::SameLine();
+    if (ImGui::Button("+ Texture"))
+        m_materialGraph.AddNode(MaterialNodeType::Texture, "Texture", {30.0f, 190.0f});
+    ImGui::SameLine();
+    if (ImGui::Button("+ Multiply"))
+        m_materialGraph.AddNode(MaterialNodeType::Multiply, "Multiply", {280.0f, 100.0f});
+    ImGui::SameLine();
+    if (ImGui::Button("+ Output"))
+        m_materialGraph.AddNode(MaterialNodeType::PbrOutput, "PBR Output", {540.0f, 100.0f});
+    ImGui::SameLine();
+    if (ImGui::Button("Save + Compile"))
+    {
+        std::vector<std::string> errors;
+        const std::string shader = m_materialGraph.Compile(&errors);
+        const std::filesystem::path output = std::filesystem::path(asset->path).replace_extension(".frag");
+        if (m_materialGraph.Save(asset->path) && !shader.empty() && PlatformFile::WriteAllText(output, shader))
+            m_messages.emplace_back("Material graph compiled: " + output.generic_string());
+        for (const auto &error : errors)
+            m_messages.emplace_back("Material graph: " + error);
+    }
+    ImGui::Separator();
+    const ImVec2 canvas = ImGui::GetCursorScreenPos();
+    ImDrawList *drawList = ImGui::GetWindowDrawList();
+    static std::uint32_t linkFrom = 0;
+    auto nodeCenter = [&](const MaterialNode &node) {
+        return ImVec2{canvas.x + node.position.x + 70.0f, canvas.y + node.position.y + 38.0f};
+    };
+    for (const auto &link : m_materialGraph.GetLinks())
+    {
+        const auto from = std::find_if(m_materialGraph.GetNodes().begin(), m_materialGraph.GetNodes().end(),
+                                       [&](const auto &node) { return node.id == link.fromNode; });
+        const auto to = std::find_if(m_materialGraph.GetNodes().begin(), m_materialGraph.GetNodes().end(),
+                                     [&](const auto &node) { return node.id == link.toNode; });
+        if (from != m_materialGraph.GetNodes().end() && to != m_materialGraph.GetNodes().end())
+            drawList->AddBezierCubic(nodeCenter(*from), {nodeCenter(*from).x + 60.0f, nodeCenter(*from).y},
+                                     {nodeCenter(*to).x - 60.0f, nodeCenter(*to).y}, nodeCenter(*to), IM_COL32(120, 190, 255, 255), 2.0f);
+    }
+    for (auto &node : m_materialGraph.GetNodes())
+    {
+        ImGui::SetCursorScreenPos({canvas.x + node.position.x, canvas.y + node.position.y});
+        ImGui::PushID(static_cast<int>(node.id));
+        ImGui::InvisibleButton("node", {140.0f, 76.0f});
+        const bool hovered = ImGui::IsItemHovered();
+        if (ImGui::IsItemActive() && ImGui::IsMouseDragging(ImGuiMouseButton_Left) && !ImGui::GetIO().KeyShift)
+        {
+            node.position.x += ImGui::GetIO().MouseDelta.x;
+            node.position.y += ImGui::GetIO().MouseDelta.y;
+        }
+        if (hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left) && ImGui::GetIO().KeyShift)
+        {
+            if (linkFrom == 0)
+                linkFrom = node.id;
+            else
+            {
+                m_materialGraph.Connect(linkFrom, node.id, 0);
+                linkFrom = 0;
+            }
+        }
+        const ImVec2 minimum = ImGui::GetItemRectMin(), maximum = ImGui::GetItemRectMax();
+        drawList->AddRectFilled(minimum, maximum, hovered ? IM_COL32(58, 78, 112, 255) : IM_COL32(42, 52, 72, 255), 6.0f);
+        drawList->AddRect(minimum, maximum, linkFrom == node.id ? IM_COL32(255, 205, 70, 255) : IM_COL32(90, 125, 170, 255), 6.0f);
+        drawList->AddText({minimum.x + 8.0f, minimum.y + 8.0f}, IM_COL32_WHITE, node.name.c_str());
+        drawList->AddText({minimum.x + 8.0f, minimum.y + 34.0f}, IM_COL32(175, 190, 210, 255), "Shift-click: link");
+        ImGui::PopID();
+    }
+    ImGui::Dummy({760.0f, 430.0f});
     ImGui::End();
 }
 

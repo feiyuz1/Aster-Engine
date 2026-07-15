@@ -108,6 +108,13 @@ struct RigidBodyComponent
     float linearDamping = 0.05f;
     float restitution = 0.0f;
     bool continuous = false;
+    Vec3 angularVelocity{};
+    float angularDamping = 0.1f;
+    float friction = 0.6f;
+    Vec3 inertiaTensor{1.0f, 1.0f, 1.0f};
+    bool lockRotationX = false;
+    bool lockRotationY = false;
+    bool lockRotationZ = false;
 };
 
 enum class ColliderShape
@@ -133,7 +140,9 @@ struct ColliderComponent
 enum class JointType
 {
     Fixed,
-    Distance
+    Distance,
+    Hinge,
+    Spring
 };
 struct JointComponent
 {
@@ -143,6 +152,11 @@ struct JointComponent
     float stiffness = 1.0f;
     Vec3 fixedOffset{};
     bool collideConnected = false;
+    Vec3 axis{0.0f, 1.0f, 0.0f};
+    float damping = 0.1f;
+    float minimumLimit = -180.0f;
+    float maximumLimit = 180.0f;
+    float breakForce = 0.0f;
 };
 
 struct AnimationComponent

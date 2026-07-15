@@ -162,6 +162,15 @@ ReflectionRegistry::ReflectionRegistry()
     rigidBody.properties.push_back(MakeProperty("Restitution", ReflectedPropertyType::Float, &RigidBodyComponent::restitution));
     Range(rigidBody.properties.back(), 0.0f, 1.0f, 0.01f);
     rigidBody.properties.push_back(MakeProperty("Continuous", ReflectedPropertyType::Bool, &RigidBodyComponent::continuous));
+    rigidBody.properties.push_back(MakeProperty("Angular Velocity", ReflectedPropertyType::Vec3, &RigidBodyComponent::angularVelocity));
+    rigidBody.properties.push_back(MakeProperty("Angular Damping", ReflectedPropertyType::Float, &RigidBodyComponent::angularDamping));
+    Range(rigidBody.properties.back(), 0.0f, 100.0f, 0.01f);
+    rigidBody.properties.push_back(MakeProperty("Friction", ReflectedPropertyType::Float, &RigidBodyComponent::friction));
+    Range(rigidBody.properties.back(), 0.0f, 4.0f, 0.01f);
+    rigidBody.properties.push_back(MakeProperty("Inertia Tensor", ReflectedPropertyType::Vec3, &RigidBodyComponent::inertiaTensor));
+    rigidBody.properties.push_back(MakeProperty("Lock Rotation X", ReflectedPropertyType::Bool, &RigidBodyComponent::lockRotationX));
+    rigidBody.properties.push_back(MakeProperty("Lock Rotation Y", ReflectedPropertyType::Bool, &RigidBodyComponent::lockRotationY));
+    rigidBody.properties.push_back(MakeProperty("Lock Rotation Z", ReflectedPropertyType::Bool, &RigidBodyComponent::lockRotationZ));
     m_components.push_back(std::move(rigidBody));
 
     auto collider = MakeComponent<ColliderComponent>("Collider");
@@ -181,7 +190,7 @@ ReflectionRegistry::ReflectionRegistry()
     m_components.push_back(std::move(collider));
 
     auto joint = MakeComponent<JointComponent>("Joint");
-    joint.properties.push_back(MakeEnumProperty("Type", &JointComponent::type, {"Fixed", "Distance"}));
+    joint.properties.push_back(MakeEnumProperty("Type", &JointComponent::type, {"Fixed", "Distance", "Hinge", "Spring"}));
     joint.properties.push_back(MakeProperty("Connected Entity", ReflectedPropertyType::Entity, &JointComponent::connectedEntity));
     joint.properties.push_back(MakeProperty("Rest Length", ReflectedPropertyType::Float, &JointComponent::restLength));
     Range(joint.properties.back(), 0.0f, 100000.0f, 0.05f);
@@ -189,6 +198,11 @@ ReflectionRegistry::ReflectionRegistry()
     Range(joint.properties.back(), 0.0f, 1.0f, 0.01f);
     joint.properties.push_back(MakeProperty("Fixed Offset", ReflectedPropertyType::Vec3, &JointComponent::fixedOffset));
     joint.properties.push_back(MakeProperty("Collide Connected", ReflectedPropertyType::Bool, &JointComponent::collideConnected));
+    joint.properties.push_back(MakeProperty("Axis", ReflectedPropertyType::Vec3, &JointComponent::axis));
+    joint.properties.push_back(MakeProperty("Damping", ReflectedPropertyType::Float, &JointComponent::damping));
+    joint.properties.push_back(MakeProperty("Minimum Limit", ReflectedPropertyType::Float, &JointComponent::minimumLimit));
+    joint.properties.push_back(MakeProperty("Maximum Limit", ReflectedPropertyType::Float, &JointComponent::maximumLimit));
+    joint.properties.push_back(MakeProperty("Break Force", ReflectedPropertyType::Float, &JointComponent::breakForce));
     m_components.push_back(std::move(joint));
 
     auto animation = MakeComponent<AnimationComponent>("Animation");

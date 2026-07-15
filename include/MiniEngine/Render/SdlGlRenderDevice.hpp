@@ -40,9 +40,11 @@ class SdlGlRenderDevice final : public RenderDevice
     bool EnableSceneRenderTarget(bool enabled, int width = 960, int height = 540);
     bool ResizeSceneRenderTarget(int width, int height);
     std::uintptr_t GetSceneColorTexture() const;
+    std::uintptr_t GetUiTexture(const std::string &path);
     int GetSceneTargetWidth() const;
     int GetSceneTargetHeight() const;
     bool ReloadShaders();
+    bool ValidateShader(const std::string &path);
     void SetExposure(float exposure);
     float GetExposure() const;
     const std::string &GetLastShaderError() const;

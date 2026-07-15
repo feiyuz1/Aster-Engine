@@ -32,6 +32,8 @@ struct InputState
     bool quitRequested = false;
     bool uiNavigateNext = false;
     bool uiAccept = false;
+    bool uiBackspace = false;
+    std::string textInput;
     float cursorX = 0.0f, cursorY = 0.0f;
 };
 

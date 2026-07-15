@@ -59,6 +59,238 @@ bool RayAabb(const Ray &ray, const Aabb &bounds, const float maxDistance, float 
         *hitNormal = normal;
     return true;
 }
+Vec3 TransformPoint(const Mat4 &matrix, const Vec3 &point)
+{
+    return {matrix.At(0, 0) * point.x + matrix.At(0, 1) * point.y + matrix.At(0, 2) * point.z + matrix.At(0, 3),
+            matrix.At(1, 0) * point.x + matrix.At(1, 1) * point.y + matrix.At(1, 2) * point.z + matrix.At(1, 3),
+            matrix.At(2, 0) * point.x + matrix.At(2, 1) * point.y + matrix.At(2, 2) * point.z + matrix.At(2, 3)};
+}
+bool RayTriangle(const Ray &ray, const Vec3 &a, const Vec3 &b, const Vec3 &c, const float maximum, float &distance, Vec3 &normal)
+{
+    const Vec3 edge1 = b - a, edge2 = c - a, p = Cross(ray.direction, edge2);
+    const float determinant = Dot(edge1, p);
+    if (std::abs(determinant) < 1e-7f)
+        return false;
+    const float inverse = 1.0f / determinant;
+    const Vec3 t = ray.origin - a;
+    const float u = Dot(t, p) * inverse;
+    if (u < 0.0f || u > 1.0f)
+        return false;
+    const Vec3 q = Cross(t, edge1);
+    const float v = Dot(ray.direction, q) * inverse;
+    if (v < 0.0f || u + v > 1.0f)
+        return false;
+    distance = Dot(edge2, q) * inverse;
+    if (distance < 0.0f || distance > maximum)
+        return false;
+    normal = Normalize(Cross(edge1, edge2));
+    if (Dot(normal, ray.direction) > 0.0f)
+        normal = normal * -1.0f;
+    return true;
+}
+
+bool RayMesh(const World &world, const Entity entity, const Ray &ray, const float maximum, float &closest, Vec3 &hitNormal)
+{
+    const auto *collider = world.GetComponent<ColliderComponent>(entity);
+    const auto *transform = world.GetComponent<TransformComponent>(entity);
+    if (!collider || !transform || collider->meshPath.empty())
+        return false;
+    MeshResource mesh;
+    if (!mesh.Load(collider->meshPath))
+        return false;
+    const Mat4 matrix = TransformMatrix(transform->position, transform->rotation, transform->scale);
+    bool found = false;
+    for (std::size_t index = 0; index + 2 < mesh.GetIndices().size(); index += 3)
+    {
+        const auto ia = mesh.GetIndices()[index], ib = mesh.GetIndices()[index + 1], ic = mesh.GetIndices()[index + 2];
+        if (ia >= mesh.GetVertices().size() || ib >= mesh.GetVertices().size() || ic >= mesh.GetVertices().size())
+            continue;
+        float distance = 0.0f;
+        Vec3 normal;
+        if (RayTriangle(ray, TransformPoint(matrix, mesh.GetVertices()[ia].position),
+                        TransformPoint(matrix, mesh.GetVertices()[ib].position), TransformPoint(matrix, mesh.GetVertices()[ic].position),
+                        std::min(maximum, closest), distance, normal))
+        {
+            closest = distance;
+            hitNormal = normal;
+            found = true;
+        }
+    }
+    return found;
+}
+bool MeshTrianglesOverlapBounds(const World &world, const Entity meshEntity, const Aabb &otherBounds)
+{
+    const auto *collider = world.GetComponent<ColliderComponent>(meshEntity);
+    const auto *transform = world.GetComponent<TransformComponent>(meshEntity);
+    if (!collider || !transform || collider->meshPath.empty())
+        return false;
+    MeshResource mesh;
+    if (!mesh.Load(collider->meshPath))
+        return false;
+    const Mat4 matrix = TransformMatrix(transform->position, transform->rotation, transform->scale);
+    for (std::size_t index = 0; index + 2 < mesh.GetIndices().size(); index += 3)
+    {
+        const auto ia = mesh.GetIndices()[index], ib = mesh.GetIndices()[index + 1], ic = mesh.GetIndices()[index + 2];
+        if (ia >= mesh.GetVertices().size() || ib >= mesh.GetVertices().size() || ic >= mesh.GetVertices().size())
+            continue;
+        const Vec3 a = TransformPoint(matrix, mesh.GetVertices()[ia].position);
+        const Vec3 b = TransformPoint(matrix, mesh.GetVertices()[ib].position);
+        const Vec3 c = TransformPoint(matrix, mesh.GetVertices()[ic].position);
+        const Aabb triangleBounds{{std::min({a.x, b.x, c.x}), std::min({a.y, b.y, c.y}), std::min({a.z, b.z, c.z})},
+                                  {std::max({a.x, b.x, c.x}), std::max({a.y, b.y, c.y}), std::max({a.z, b.z, c.z})}};
+        if (triangleBounds.Intersects(otherBounds))
+            return true;
+    }
+    return false;
+}
+Vec3 ShapeSupport(const World &world, const Entity entity, const Vec3 &direction)
+{
+    const auto *collider = world.GetComponent<ColliderComponent>(entity);
+    const auto *transform = world.GetComponent<TransformComponent>(entity);
+    if (!collider || !transform)
+        return {};
+    const Vec3 normalized = LengthSquared(direction) > 1e-10f ? Normalize(direction) : Vec3{1.0f, 0.0f, 0.0f};
+    const Mat4 matrix = TransformMatrix(transform->position, transform->rotation, transform->scale);
+    if (collider->shape == ColliderShape::Sphere)
+    {
+        const float scale = std::max({std::abs(transform->scale.x), std::abs(transform->scale.y), std::abs(transform->scale.z)});
+        return transform->position + normalized * (collider->radius * scale);
+    }
+    if (collider->shape == ColliderShape::Capsule)
+    {
+        const Vec3 top = TransformPoint(matrix, {0.0f, collider->height * 0.5f, 0.0f});
+        const Vec3 bottom = TransformPoint(matrix, {0.0f, -collider->height * 0.5f, 0.0f});
+        const Vec3 end = Dot(top, direction) > Dot(bottom, direction) ? top : bottom;
+        const float scale = std::max(std::abs(transform->scale.x), std::abs(transform->scale.z));
+        return end + normalized * (collider->radius * scale);
+    }
+    std::vector<Vec3> points;
+    if (collider->shape == ColliderShape::ConvexHull && !collider->meshPath.empty())
+    {
+        MeshResource mesh;
+        if (mesh.Load(collider->meshPath))
+        {
+            points.reserve(mesh.GetVertices().size());
+            for (const auto &vertex : mesh.GetVertices())
+                points.push_back(TransformPoint(matrix, vertex.position));
+        }
+    }
+    if (points.empty())
+        for (int x = -1; x <= 1; x += 2)
+            for (int y = -1; y <= 1; y += 2)
+                for (int z = -1; z <= 1; z += 2)
+                    points.push_back(
+                        TransformPoint(matrix, {collider->halfExtents.x * x, collider->halfExtents.y * y, collider->halfExtents.z * z}));
+    return *std::max_element(points.begin(), points.end(),
+                             [&](const Vec3 &left, const Vec3 &right) { return Dot(left, direction) < Dot(right, direction); });
+}
+
+Vec3 MinkowskiSupport(const World &world, const Entity first, const Entity second, const Vec3 &direction)
+{
+    return ShapeSupport(world, first, direction) - ShapeSupport(world, second, direction * -1.0f);
+}
+
+Vec3 TripleCross(const Vec3 &a, const Vec3 &b, const Vec3 &c)
+{
+    return Cross(Cross(a, b), c);
+}
+
+bool UpdateSimplex(std::vector<Vec3> &simplex, Vec3 &direction)
+{
+    const Vec3 a = simplex.back(), ao = a * -1.0f;
+    if (simplex.size() == 2)
+    {
+        const Vec3 b = simplex[0], ab = b - a;
+        if (Dot(ab, ao) > 0.0f)
+            direction = TripleCross(ab, ao, ab);
+        else
+        {
+            simplex = {a};
+            direction = ao;
+        }
+        return false;
+    }
+    if (simplex.size() == 3)
+    {
+        const Vec3 b = simplex[1], c = simplex[0], ab = b - a, ac = c - a;
+        const Vec3 abc = Cross(ab, ac);
+        if (Dot(Cross(abc, ac), ao) > 0.0f)
+        {
+            if (Dot(ac, ao) > 0.0f)
+            {
+                simplex = {c, a};
+                direction = TripleCross(ac, ao, ac);
+            }
+            else
+            {
+                simplex = {b, a};
+                direction = Dot(ab, ao) > 0.0f ? TripleCross(ab, ao, ab) : ao;
+                if (Dot(ab, ao) <= 0.0f)
+                    simplex = {a};
+            }
+        }
+        else if (Dot(Cross(ab, abc), ao) > 0.0f)
+        {
+            simplex = {b, a};
+            direction = Dot(ab, ao) > 0.0f ? TripleCross(ab, ao, ab) : ao;
+            if (Dot(ab, ao) <= 0.0f)
+                simplex = {a};
+        }
+        else if (Dot(abc, ao) > 0.0f)
+            direction = abc;
+        else
+        {
+            simplex = {b, c, a};
+            direction = abc * -1.0f;
+        }
+        return false;
+    }
+    const Vec3 b = simplex[2], c = simplex[1], d = simplex[0];
+    const Vec3 ab = b - a, ac = c - a, ad = d - a;
+    const Vec3 abc = Cross(ab, ac), acd = Cross(ac, ad), adb = Cross(ad, ab);
+    if (Dot(abc, ao) > 0.0f)
+    {
+        simplex = {c, b, a};
+        direction = abc;
+        return false;
+    }
+    if (Dot(acd, ao) > 0.0f)
+    {
+        simplex = {d, c, a};
+        direction = acd;
+        return false;
+    }
+    if (Dot(adb, ao) > 0.0f)
+    {
+        simplex = {b, d, a};
+        direction = adb;
+        return false;
+    }
+    return true;
+}
+
+bool ConvexOverlap(const World &world, const Entity first, const Entity second)
+{
+    const auto *firstTransform = world.GetComponent<TransformComponent>(first);
+    const auto *secondTransform = world.GetComponent<TransformComponent>(second);
+    Vec3 direction = firstTransform && secondTransform ? secondTransform->position - firstTransform->position : Vec3{1.0f, 0.0f, 0.0f};
+    if (LengthSquared(direction) < 1e-8f)
+        direction = {1.0f, 0.0f, 0.0f};
+    std::vector<Vec3> simplex{MinkowskiSupport(world, first, second, direction)};
+    direction = simplex.front() * -1.0f;
+    for (int iteration = 0; iteration < 32; ++iteration)
+    {
+        const Vec3 point = MinkowskiSupport(world, first, second, direction);
+        if (Dot(point, direction) < 0.0f)
+            return false;
+        simplex.push_back(point);
+        if (UpdateSimplex(simplex, direction))
+            return true;
+        if (LengthSquared(direction) < 1e-10f)
+            return true;
+    }
+    return false;
+}
 } // namespace
 
 Aabb PhysicsWorld::ComputeBounds(const World &world, const Entity entity)
@@ -99,6 +331,14 @@ void PhysicsWorld::Step(World &world, const float fixedDeltaTime)
             if (body.useGravity)
                 body.velocity.y -= 9.81f * fixedDeltaTime;
             body.velocity = body.velocity * std::max(0.0f, 1.0f - body.linearDamping * fixedDeltaTime);
+            body.angularVelocity = body.angularVelocity * std::max(0.0f, 1.0f - body.angularDamping * fixedDeltaTime);
+            if (body.lockRotationX)
+                body.angularVelocity.x = 0.0f;
+            if (body.lockRotationY)
+                body.angularVelocity.y = 0.0f;
+            if (body.lockRotationZ)
+                body.angularVelocity.z = 0.0f;
+            transform.rotation += body.angularVelocity * fixedDeltaTime;
             const int substeps =
                 body.continuous ? std::clamp(static_cast<int>(std::ceil(Length(body.velocity) * fixedDeltaTime / 0.1f)), 1, 16) : 1;
             for (int step = 0; step < substeps; ++step)
@@ -134,6 +374,13 @@ void PhysicsWorld::Step(World &world, const float fixedDeltaTime)
                 continue;
             const Aabb firstBounds = colliders[firstIndex].bounds, secondBounds = colliders[secondIndex].bounds;
             if (!firstBounds.Intersects(secondBounds))
+                continue;
+            if (firstCollider->shape == ColliderShape::TriangleMesh && !MeshTrianglesOverlapBounds(world, first, secondBounds))
+                continue;
+            if (secondCollider->shape == ColliderShape::TriangleMesh && !MeshTrianglesOverlapBounds(world, second, firstBounds))
+                continue;
+            if ((firstCollider->shape == ColliderShape::ConvexHull || secondCollider->shape == ColliderShape::ConvexHull) &&
+                !ConvexOverlap(world, first, second))
                 continue;
             const auto pair = OrderedPair(first, second);
             currentPairs.push_back(pair);
@@ -188,6 +435,21 @@ void PhysicsWorld::Step(World &world, const float fixedDeltaTime)
                     if (secondBody && secondInverseMass > 0.0f)
                         secondBody->velocity += normal * (impulse * secondInverseMass);
                 }
+                const Vec3 relative = (secondBody ? secondBody->velocity : Vec3{}) - (firstBody ? firstBody->velocity : Vec3{});
+                Vec3 tangent = relative - normal * Dot(relative, normal);
+                const float tangentLength = Length(tangent);
+                if (tangentLength > 0.0001f)
+                {
+                    tangent = tangent / tangentLength;
+                    float tangentImpulse = -Dot(relative, tangent) / inverseMassSum;
+                    const float friction = std::sqrt(std::max(0.0f, firstBody ? firstBody->friction : 0.6f) *
+                                                     std::max(0.0f, secondBody ? secondBody->friction : 0.6f));
+                    tangentImpulse = std::clamp(tangentImpulse, -friction * tangentLength, friction * tangentLength);
+                    if (firstBody && firstInverseMass > 0.0f)
+                        firstBody->velocity -= tangent * (tangentImpulse * firstInverseMass);
+                    if (secondBody && secondInverseMass > 0.0f)
+                        secondBody->velocity += tangent * (tangentImpulse * secondInverseMass);
+                }
             }
         }
     }
@@ -204,15 +466,31 @@ void PhysicsWorld::Step(World &world, const float fixedDeltaTime)
         const float sum = inverseMass + connectedInverseMass;
         if (sum <= 0.0f)
             return;
-        const Vec3 target = connected->position + (joint.type == JointType::Fixed ? joint.fixedOffset : Vec3{});
+        const Vec3 target =
+            connected->position + (joint.type == JointType::Fixed || joint.type == JointType::Hinge ? joint.fixedOffset : Vec3{});
         const Vec3 delta = transform->position - target;
         const float distance = Length(delta);
         if (distance < 0.0001f)
             return;
-        const float desired = joint.type == JointType::Distance ? std::max(0.0f, joint.restLength) : 0.0f;
-        const Vec3 correction = delta * ((distance - desired) / distance * std::clamp(joint.stiffness, 0.0f, 1.0f));
+        const float desired =
+            joint.type == JointType::Distance || joint.type == JointType::Spring ? std::max(0.0f, joint.restLength) : 0.0f;
+        const float strength = joint.type == JointType::Spring ? std::clamp(joint.stiffness * fixedDeltaTime * 10.0f, 0.0f, 1.0f)
+                                                               : std::clamp(joint.stiffness, 0.0f, 1.0f);
+        const Vec3 correction = delta * ((distance - desired) / distance * strength);
+        if (joint.breakForce > 0.0f && Length(correction) / std::max(fixedDeltaTime, 0.0001f) > joint.breakForce)
+        {
+            joint.connectedEntity = InvalidEntity;
+            return;
+        }
         transform->position -= correction * (inverseMass / sum);
         connected->position += correction * (connectedInverseMass / sum);
+        if (body && connectedBody && joint.type == JointType::Spring)
+        {
+            const Vec3 relativeVelocity = body->velocity - connectedBody->velocity;
+            const Vec3 dampingImpulse = relativeVelocity * std::clamp(joint.damping * fixedDeltaTime, 0.0f, 1.0f);
+            body->velocity -= dampingImpulse * (inverseMass / sum);
+            connectedBody->velocity += dampingImpulse * (connectedInverseMass / sum);
+        }
     });
     for (const auto &oldPair : m_previousPairs)
         if (std::find(currentPairs.begin(), currentPairs.end(), oldPair) == currentPairs.end())
@@ -239,9 +517,12 @@ bool PhysicsWorld::Raycast(const World &world, const Ray &ray, const float maxDi
             (collider->layer & query.layerMask) == 0)
             continue;
         const Aabb bounds = ComputeBounds(world, entity);
-        float distance = 0.0f;
+        float distance = closest;
         Vec3 normal;
-        if (RayAabb(ray, bounds, closest, distance, &normal) && distance < closest)
+        const bool meshShape = collider->shape == ColliderShape::TriangleMesh || collider->shape == ColliderShape::ConvexHull;
+        const bool intersected =
+            meshShape ? RayMesh(world, entity, ray, maxDistance, distance, normal) : RayAabb(ray, bounds, closest, distance, &normal);
+        if (intersected && distance < closest)
         {
             closest = distance;
             hit.entity = entity;
@@ -252,6 +533,26 @@ bool PhysicsWorld::Raycast(const World &world, const Ray &ray, const float maxDi
         }
     }
     return found;
+}
+
+bool PhysicsWorld::ShapeSweep(const World &world, const ShapeSweepGeometry &geometry, const Vec3 &origin, const Vec3 &displacement,
+                              RaycastHit &hit, const PhysicsQuery &query) const
+{
+    const float distance = Length(displacement);
+    if (distance <= 0.000001f)
+        return false;
+    float radius = geometry.radius;
+    if (geometry.shape == ColliderShape::Box)
+        radius = Length(geometry.halfExtents);
+    else if (geometry.shape == ColliderShape::Capsule)
+        radius = geometry.radius + geometry.height * 0.5f;
+    else if ((geometry.shape == ColliderShape::ConvexHull || geometry.shape == ColliderShape::TriangleMesh) && !geometry.meshPath.empty())
+    {
+        MeshResource mesh;
+        if (mesh.Load(geometry.meshPath))
+            radius = Length((mesh.GetBounds().maximum - mesh.GetBounds().minimum) * 0.5f);
+    }
+    return SphereCast(world, {origin, displacement / distance}, std::max(0.001f, radius), distance, hit, query);
 }
 
 bool PhysicsWorld::SphereCast(const World &world, const Ray &ray, const float radius, const float maxDistance, RaycastHit &hit,
@@ -406,5 +707,26 @@ void PhysicsWorld::Clear()
     m_events.clear();
     m_previousPairs.clear();
     m_debugBoxes.clear();
+}
+bool PhysicsWorld::SetBackend(const PhysicsBackend backend)
+{
+    if (!IsBackendAvailable(backend))
+        return false;
+    m_backend = backend;
+    return true;
+}
+PhysicsBackend PhysicsWorld::GetBackend() const
+{
+    return m_backend;
+}
+bool PhysicsWorld::IsBackendAvailable(const PhysicsBackend backend)
+{
+    if (backend == PhysicsBackend::Builtin)
+        return true;
+#ifdef TINYENGINE_HAS_JOLT
+    return true;
+#else
+    return false;
+#endif
 }
 } // namespace MiniEngine

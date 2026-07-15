@@ -33,6 +33,36 @@ UIWidget &UISystem::AddImage(std::string id, std::string imagePath, const UIRect
     m_widgets.push_back({std::move(id), UIWidgetType::Image, rect, {1, 1, 1, 1}, {}, std::move(imagePath)});
     return m_widgets.back();
 }
+UIWidget &UISystem::AddInputField(std::string id, std::string text, const UIRect rect, std::string placeholder)
+{
+    UIWidget &widget = AddPanel(std::move(id), rect, {0.08f, 0.1f, 0.14f, 1.0f});
+    widget.type = UIWidgetType::InputField;
+    widget.text = std::move(text);
+    widget.placeholder = std::move(placeholder);
+    return widget;
+}
+UIWidget &UISystem::AddList(std::string id, std::vector<std::string> items, const UIRect rect)
+{
+    UIWidget &widget = AddPanel(std::move(id), rect, {0.1f, 0.12f, 0.16f, 1.0f});
+    widget.type = UIWidgetType::List;
+    widget.items = std::move(items);
+    return widget;
+}
+UIWidget &UISystem::AddDropdown(std::string id, std::vector<std::string> items, const UIRect rect)
+{
+    UIWidget &widget = AddList(std::move(id), std::move(items), rect);
+    widget.type = UIWidgetType::Dropdown;
+    return widget;
+}
+UIWidget &UISystem::AddProgressBar(std::string id, const float value, const UIRect rect, const float minimum, const float maximum)
+{
+    UIWidget &widget = AddPanel(std::move(id), rect, {0.08f, 0.1f, 0.14f, 1.0f});
+    widget.type = UIWidgetType::ProgressBar;
+    widget.minimum = std::min(minimum, maximum);
+    widget.maximum = std::max(minimum, maximum);
+    widget.value = std::clamp(value, widget.minimum, widget.maximum);
+    return widget;
+}
 UIWidget *UISystem::Find(const std::string &id)
 {
     const auto found = std::find_if(m_widgets.begin(), m_widgets.end(), [&](const UIWidget &widget) { return widget.id == id; });
@@ -59,19 +89,72 @@ void UISystem::Update(const float cursorX, const float cursorY, const bool prima
         for (auto it = m_widgets.rbegin(); it != m_widgets.rend(); ++it)
         {
             const auto rect = m_resolvedRects.find(it->id);
-            if (!it->visible || !it->enabled || it->type != UIWidgetType::Button || rect == m_resolvedRects.end() ||
-                !rect->second.Contains(cursorX, cursorY))
+            const bool interactive = it->type == UIWidgetType::Button || it->type == UIWidgetType::InputField ||
+                                     it->type == UIWidgetType::List || it->type == UIWidgetType::Dropdown;
+            if (!it->visible || !it->enabled || !interactive || rect == m_resolvedRects.end() || !rect->second.Contains(cursorX, cursorY))
                 continue;
             for (auto &widget : m_widgets)
                 widget.focused = false;
             it->focused = true;
             m_focusedId = it->id;
+            if (it->type == UIWidgetType::Dropdown)
+                it->expanded = !it->expanded;
+            if ((it->type == UIWidgetType::List || (it->type == UIWidgetType::Dropdown && it->expanded)) && !it->items.empty())
+            {
+                const float itemHeight = std::max(1.0f, rect->second.height / static_cast<float>(it->items.size()));
+                SelectItem(it->id, std::clamp(static_cast<int>((cursorY - rect->second.y) / itemHeight), 0,
+                                              static_cast<int>(it->items.size()) - 1));
+            }
             if (it->onClick)
                 it->onClick();
             break;
         }
     }
     m_wasPrimaryDown = primaryDown;
+}
+bool UISystem::InputText(const std::string &utf8)
+{
+    UIWidget *focused = Find(m_focusedId);
+    if (!focused || focused->type != UIWidgetType::InputField || !focused->enabled || utf8.empty())
+        return false;
+    focused->text += utf8;
+    if (focused->onTextChanged)
+        focused->onTextChanged(focused->text);
+    return true;
+}
+bool UISystem::Backspace()
+{
+    UIWidget *focused = Find(m_focusedId);
+    if (!focused || focused->type != UIWidgetType::InputField || focused->text.empty())
+        return false;
+    std::size_t offset = focused->text.size() - 1;
+    while (offset > 0 && (static_cast<unsigned char>(focused->text[offset]) & 0xC0u) == 0x80u)
+        --offset;
+    focused->text.erase(offset);
+    if (focused->onTextChanged)
+        focused->onTextChanged(focused->text);
+    return true;
+}
+bool UISystem::SelectItem(const std::string &id, const int index)
+{
+    UIWidget *widget = Find(id);
+    if (!widget || (widget->type != UIWidgetType::List && widget->type != UIWidgetType::Dropdown) || index < 0 ||
+        index >= static_cast<int>(widget->items.size()))
+        return false;
+    widget->selectedIndex = index;
+    if (widget->onSelectionChanged)
+        widget->onSelectionChanged(index);
+    return true;
+}
+bool UISystem::SetValue(const std::string &id, const float value)
+{
+    UIWidget *widget = Find(id);
+    if (!widget || widget->type != UIWidgetType::ProgressBar)
+        return false;
+    widget->value = std::clamp(value, widget->minimum, widget->maximum);
+    if (widget->onValueChanged)
+        widget->onValueChanged(widget->value);
+    return true;
 }
 void UISystem::ActivateFocused()
 {
@@ -229,7 +312,9 @@ void UISystem::FocusNext()
 {
     std::vector<UIWidget *> focusable;
     for (auto &widget : m_widgets)
-        if (widget.visible && widget.enabled && widget.type == UIWidgetType::Button)
+        if (widget.visible && widget.enabled &&
+            (widget.type == UIWidgetType::Button || widget.type == UIWidgetType::InputField || widget.type == UIWidgetType::List ||
+             widget.type == UIWidgetType::Dropdown))
             focusable.push_back(&widget);
     if (focusable.empty())
         return;
@@ -273,7 +358,31 @@ const std::vector<UIDrawCommand> &UISystem::BuildDrawList()
             clip.height = std::max(0.0f, bottom - clip.y);
             current = Find(current->parentId);
         }
-        m_drawList.push_back({widget.type, rect->second, color, widget.text, widget.imagePath, widget.fontSize * m_dpiScale, clip});
+        if (widget.type == UIWidgetType::ProgressBar)
+        {
+            m_drawList.push_back({UIWidgetType::Panel, rect->second, color, {}, {}, widget.fontSize * m_dpiScale, clip});
+            UIRect fill = rect->second;
+            const float range = std::max(0.0001f, widget.maximum - widget.minimum);
+            fill.width *= std::clamp((widget.value - widget.minimum) / range, 0.0f, 1.0f);
+            m_drawList.push_back({UIWidgetType::Panel, fill, {0.2f, 0.65f, 0.35f, color.w}, {}, {}, widget.fontSize * m_dpiScale, clip});
+            continue;
+        }
+        std::string displayText = widget.text;
+        if (widget.type == UIWidgetType::InputField)
+        {
+            if (displayText.empty())
+                displayText = widget.placeholder;
+            else if (widget.password)
+                displayText.assign(displayText.size(), '*');
+        }
+        else if (widget.type == UIWidgetType::Dropdown && widget.selectedIndex >= 0 &&
+                 widget.selectedIndex < static_cast<int>(widget.items.size()))
+            displayText = widget.items[widget.selectedIndex];
+        else if (widget.type == UIWidgetType::List)
+            for (std::size_t index = 0; index < widget.items.size(); ++index)
+                displayText +=
+                    (index ? "\n" : "") + std::string(static_cast<int>(index) == widget.selectedIndex ? "> " : "  ") + widget.items[index];
+        m_drawList.push_back({widget.type, rect->second, color, displayText, widget.imagePath, widget.fontSize * m_dpiScale, clip});
     }
     return m_drawList;
 }

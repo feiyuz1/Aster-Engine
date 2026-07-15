@@ -1,6 +1,7 @@
 #pragma once
 
 #include "MiniEngine/Animation/SkeletalAnimation.hpp"
+#include "MiniEngine/Render/MaterialGraph.hpp"
 #include "MiniEngine/Runtime/Engine.hpp"
 #ifdef TINYENGINE_HAS_ASSIMP
 #include "MiniEngine/Import/AssimpImporter.hpp"
@@ -31,6 +32,8 @@ class EditorApp
     void DrawAssets();
     void DrawConsole();
     void DrawAnimationEditor();
+    void DrawShaderEditor();
+    void DrawMaterialGraphEditor();
     void DrawSceneTabs();
     void RecordUndo();
     void Undo();
@@ -52,6 +55,17 @@ class EditorApp
         Rotate,
         Scale
     };
+    enum class GizmoSpace
+    {
+        World,
+        Local
+    };
+    enum class PivotMode
+    {
+        Center,
+        Active,
+        Individual
+    };
 
     Engine m_engine;
     SdlGlRenderDevice *m_device = nullptr;
@@ -66,6 +80,8 @@ class EditorApp
     Vec3 m_editorCameraRotation{-10.0f, 0.0f, 0.0f};
     float m_editorCameraFov = 60.0f;
     GizmoMode m_gizmoMode = GizmoMode::Translate;
+    GizmoSpace m_gizmoSpace = GizmoSpace::World;
+    PivotMode m_pivotMode = PivotMode::Center;
     int m_activeGizmoAxis = -1;
     bool m_gizmoSnap = false;
     float m_translateSnap = 0.5f;
@@ -73,7 +89,15 @@ class EditorApp
     float m_scaleSnap = 0.1f;
     float m_gizmoAccumulatedMotion = 0.0f;
     float m_gizmoAppliedMotion = 0.0f;
+    bool m_marqueeActive = false;
+    Vec2 m_marqueeStart{};
     std::string m_selectedAsset;
+    std::string m_openShaderAsset;
+    std::vector<char> m_shaderSource;
+    std::string m_openMaterialGraphAsset;
+    MaterialGraph m_materialGraph;
+    std::string m_thumbnailAsset;
+    std::filesystem::path m_thumbnailPath;
     std::string m_openAnimationAsset;
     SkeletalClip m_editSkeletalClip;
     BlendTree1D m_editBlendTree;

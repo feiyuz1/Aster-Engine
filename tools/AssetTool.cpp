@@ -1,5 +1,6 @@
 #include "MiniEngine/Render/EnvironmentBaker.hpp"
 #include "MiniEngine/Resource/AssetCooker.hpp"
+#include "MiniEngine/Resource/AssetMaintenance.hpp"
 #include "MiniEngine/Resource/AssetRegistry.hpp"
 #include "MiniEngine/Resource/PakArchive.hpp"
 #ifdef TINYENGINE_HAS_ASSIMP
@@ -15,7 +16,9 @@ int main(int argc, char **argv)
         std::cout << "Usage:\n  tinyengine_asset_tool import <source-model> <output-directory> [resource-prefix]\n  tinyengine_asset_tool "
                      "bake-env <source-hdr> <output-directory>\n  tinyengine_asset_tool scan <asset-directory>\n  tinyengine_asset_tool "
                      "cook <asset-directory> <cooked-directory> <output.tpak>\n  "
-                     "tinyengine_asset_tool pack <input-directory> <output.tpak>\n  tinyengine_asset_tool list <archive.tpak>\n";
+                     "tinyengine_asset_tool pack <input-directory> <output.tpak>\n  tinyengine_asset_tool list <archive.tpak>\n  "
+                     "tinyengine_asset_tool thumbnail <asset> <output.ppm>\n  tinyengine_asset_tool chunk <asset> <output.chunkmanifest> "
+                     "[chunk-bytes]\n  tinyengine_asset_tool missing <asset-directory>\n";
         return 1;
     }
     const std::string command = argv[1];
@@ -55,6 +58,44 @@ int main(int argc, char **argv)
         registry.Scan(argv[2]);
         for (const auto &asset : registry.GetAssets())
             std::cout << asset.id << "\t" << asset.type << "\t" << asset.path << '\n';
+        return 0;
+    }
+    if (command == "missing" && argc == 3)
+    {
+        MiniEngine::AssetRegistry registry;
+        registry.Scan(argv[2]);
+        const auto issues = MiniEngine::AssetMaintenance::FindMissingDependencies(registry);
+        for (const auto &issue : issues)
+        {
+            std::cout << issue.owner << " -> " << issue.missingPath;
+            for (const auto &candidate : issue.candidates)
+                std::cout << "\t" << candidate;
+            std::cout << '\n';
+        }
+        return issues.empty() ? 0 : 3;
+    }
+    if (command == "thumbnail" && argc == 4)
+    {
+        MiniEngine::AssetRegistry registry;
+        registry.Scan(std::filesystem::path(argv[2]).parent_path());
+        const auto info = registry.Find(argv[2]);
+        std::string error;
+        if (!info || !MiniEngine::AssetMaintenance::GenerateThumbnail(*info, argv[3], 128, &error))
+        {
+            std::cerr << (error.empty() ? "Asset not found" : error) << '\n';
+            return 2;
+        }
+        return 0;
+    }
+    if (command == "chunk" && (argc == 4 || argc == 5))
+    {
+        const std::size_t chunkBytes = argc == 5 ? static_cast<std::size_t>(std::stoull(argv[4])) : 4 * 1024 * 1024;
+        std::string error;
+        if (!MiniEngine::AssetMaintenance::ChunkAsset(argv[2], argv[3], chunkBytes, &error))
+        {
+            std::cerr << error << '\n';
+            return 2;
+        }
         return 0;
     }
     if (command == "cook" && argc == 5)

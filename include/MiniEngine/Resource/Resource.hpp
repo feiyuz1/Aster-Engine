@@ -51,6 +51,24 @@ class Resource
 class TextureResource final : public Resource
 {
   public:
+    enum class Compression
+    {
+        None,
+        BC1,
+        BC2,
+        BC3,
+        BC4,
+        BC5,
+        BC6H,
+        BC7
+    };
+    struct MipLevel
+    {
+        int width = 0;
+        int height = 0;
+        std::size_t offset = 0;
+        std::size_t size = 0;
+    };
     bool Load(const std::string &path) override;
     void Unload() override;
     std::size_t GetByteSize() const override;
@@ -59,12 +77,18 @@ class TextureResource final : public Resource
     bool IsHdr() const;
     int GetWidth() const;
     int GetHeight() const;
+    Compression GetCompression() const;
+    const std::vector<MipLevel> &GetMipLevels() const;
+    bool IsSrgbEncoded() const;
 
   private:
     std::vector<std::uint8_t> m_data;
     std::vector<float> m_floatData;
     int m_width = 0;
     int m_height = 0;
+    Compression m_compression = Compression::None;
+    std::vector<MipLevel> m_mipLevels;
+    bool m_srgbEncoded = false;
 };
 
 struct MeshVertex

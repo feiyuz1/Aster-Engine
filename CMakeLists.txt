@@ -1,14 +1,16 @@
 cmake_minimum_required(VERSION 3.20)
-project(TinyEngine VERSION 0.24.0 LANGUAGES C CXX)
+project(TinyEngine VERSION 0.25.0 LANGUAGES C CXX)
 
 option(TINYENGINE_BUILD_TESTS "Build TinyEngine tests" ON)
 option(TINYENGINE_BUILD_DEMO "Build TinyEngine demo" ON)
 option(TINYENGINE_BUILD_GAME "Build standalone TinyEngine game runtime" ON)
 option(TINYENGINE_BUILD_EDITOR "Build TinyEngine editor" ON)
 option(TINYENGINE_BUILD_IMPORTERS "Build Assimp based asset importers" ON)
+option(TINYENGINE_ENABLE_JOLT "Enable the optional Jolt Physics backend" OFF)
 
 set(TINYENGINE_ASSIMP_DIR "D:/OpenSourceProject/assimp-master" CACHE PATH "Path to the Assimp source tree")
 set(TINYENGINE_IMGUI_DIR "D:/OpenSourceProject/imgui-master" CACHE PATH "Path to the Dear ImGui source tree")
+set(TINYENGINE_JOLT_DIR "D:/OpenSourceProject/JoltPhysics" CACHE PATH "Path to the Jolt Physics source tree")
 
 include(FetchContent)
 
@@ -50,6 +52,19 @@ if(TINYENGINE_BUILD_EDITOR AND NOT EXISTS "${TINYENGINE_IMGUI_DIR}/imgui.cpp")
 endif()
 
 find_package(OpenGL REQUIRED)
+if(NOT WIN32)
+    find_package(Freetype REQUIRED)
+endif()
+
+if(TINYENGINE_ENABLE_JOLT)
+    if(NOT EXISTS "${TINYENGINE_JOLT_DIR}/Build/CMakeLists.txt")
+        message(FATAL_ERROR "Jolt Physics source tree not found: ${TINYENGINE_JOLT_DIR}")
+    endif()
+    set(JPH_BUILD_SAMPLES OFF CACHE BOOL "" FORCE)
+    set(JPH_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+    set(JPH_BUILD_UNIT_TESTS OFF CACHE BOOL "" FORCE)
+    add_subdirectory("${TINYENGINE_JOLT_DIR}/Build" "${CMAKE_BINARY_DIR}/_deps/jolt-build" EXCLUDE_FROM_ALL)
+endif()
 
 add_library(tinyengine STATIC
     src/Core/Logger.cpp
@@ -67,6 +82,7 @@ add_library(tinyengine STATIC
     src/Resource/PakArchive.cpp
     src/Resource/ResourceManager.cpp
     src/Resource/AssetStreaming.cpp
+    src/Resource/AssetMaintenance.cpp
     src/ECS/ECS.cpp
     src/ECS/Reflection.cpp
     src/ECS/SceneSerializer.cpp
@@ -89,6 +105,7 @@ add_library(tinyengine STATIC
     src/Automation/Automation.cpp
     src/Render/Renderer.cpp
     src/Render/EnvironmentBaker.cpp
+    src/Render/MaterialGraph.cpp
     src/Render/ShaderPipeline.cpp
     src/Render/SdlGlRenderDevice.cpp
     src/Physics/PhysicsWorld.cpp
@@ -96,6 +113,7 @@ add_library(tinyengine STATIC
     src/Input/InputSystem.cpp
     src/Script/ScriptEngine.cpp
     src/UI/UISystem.cpp
+    src/UI/TextLayout.cpp
     src/Runtime/Engine.cpp
 )
 
@@ -111,6 +129,14 @@ else()
 endif()
 if(WIN32)
     target_link_libraries(tinyengine PUBLIC windowscodecs ole32 gdi32 dbghelp)
+endif()
+if(NOT WIN32)
+    target_link_libraries(tinyengine PUBLIC Freetype::Freetype)
+    target_compile_definitions(tinyengine PUBLIC TINYENGINE_HAS_FREETYPE=1)
+endif()
+if(TINYENGINE_ENABLE_JOLT)
+    target_link_libraries(tinyengine PUBLIC Jolt)
+    target_compile_definitions(tinyengine PUBLIC TINYENGINE_HAS_JOLT=1)
 endif()
 
 if(MSVC)

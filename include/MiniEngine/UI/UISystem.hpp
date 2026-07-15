@@ -22,7 +22,11 @@ enum class UIWidgetType
     Panel,
     Label,
     Button,
-    Image
+    Image,
+    InputField,
+    List,
+    Dropdown,
+    ProgressBar
 };
 enum class UIAnchor
 {
@@ -70,6 +74,17 @@ struct UIWidget
     float fontSize = 18.0f;
     bool scrollable = false;
     Vec2 scrollOffset{};
+    std::vector<std::string> items;
+    int selectedIndex = -1;
+    float value = 0.0f;
+    float minimum = 0.0f;
+    float maximum = 1.0f;
+    std::string placeholder;
+    bool password = false;
+    bool expanded = false;
+    std::function<void(const std::string &)> onTextChanged;
+    std::function<void(int)> onSelectionChanged;
+    std::function<void(float)> onValueChanged;
 };
 
 class UISystem
@@ -79,12 +94,20 @@ class UISystem
     UIWidget &AddLabel(std::string id, std::string text, UIRect rect);
     UIWidget &AddButton(std::string id, std::string text, UIRect rect, std::function<void()> onClick);
     UIWidget &AddImage(std::string id, std::string imagePath, UIRect rect);
+    UIWidget &AddInputField(std::string id, std::string text, UIRect rect, std::string placeholder = {});
+    UIWidget &AddList(std::string id, std::vector<std::string> items, UIRect rect);
+    UIWidget &AddDropdown(std::string id, std::vector<std::string> items, UIRect rect);
+    UIWidget &AddProgressBar(std::string id, float value, UIRect rect, float minimum = 0.0f, float maximum = 1.0f);
     UIWidget *Find(const std::string &id);
     void Remove(const std::string &id);
     void Clear();
     void Update(float cursorX, float cursorY, bool primaryDown);
     void FocusNext();
     void ActivateFocused();
+    bool InputText(const std::string &utf8);
+    bool Backspace();
+    bool SelectItem(const std::string &id, int index);
+    bool SetValue(const std::string &id, float value);
     bool SetParent(const std::string &childId, const std::string &parentId);
     bool SetLayout(const std::string &id, UILayout layout, float spacing = 4.0f, float padding = 4.0f);
     bool SetAnchor(const std::string &id, UIAnchor anchor);

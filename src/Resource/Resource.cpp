@@ -27,6 +27,126 @@ namespace MiniEngine
 {
 namespace
 {
+std::uint32_t ReadU32Le(const std::vector<std::uint8_t> &bytes, const std::size_t offset)
+{
+    if (offset + 4 > bytes.size())
+        return 0;
+    return static_cast<std::uint32_t>(bytes[offset]) | (static_cast<std::uint32_t>(bytes[offset + 1]) << 8u) |
+           (static_cast<std::uint32_t>(bytes[offset + 2]) << 16u) | (static_cast<std::uint32_t>(bytes[offset + 3]) << 24u);
+}
+
+std::uint64_t ReadU64Le(const std::vector<std::uint8_t> &bytes, const std::size_t offset)
+{
+    return static_cast<std::uint64_t>(ReadU32Le(bytes, offset)) | (static_cast<std::uint64_t>(ReadU32Le(bytes, offset + 4)) << 32u);
+}
+
+bool LoadDds(const std::vector<std::uint8_t> &bytes, int &width, int &height, TextureResource::Compression &compression, bool &srgb,
+             std::vector<TextureResource::MipLevel> &levels, std::vector<std::uint8_t> &blocks)
+{
+    if (bytes.size() < 128 || ReadU32Le(bytes, 0) != 0x20534444u || ReadU32Le(bytes, 4) != 124u)
+        return false;
+    width = static_cast<int>(ReadU32Le(bytes, 16));
+    height = static_cast<int>(ReadU32Le(bytes, 12));
+    const std::uint32_t mipCount = std::max(1u, ReadU32Le(bytes, 28));
+    const std::uint32_t fourCc = ReadU32Le(bytes, 84);
+    std::size_t dataOffset = 128;
+    srgb = false;
+    if (fourCc == 0x31545844u)
+        compression = TextureResource::Compression::BC1;
+    else if (fourCc == 0x33545844u)
+        compression = TextureResource::Compression::BC2;
+    else if (fourCc == 0x35545844u)
+        compression = TextureResource::Compression::BC3;
+    else if (fourCc == 0x31495441u || fourCc == 0x55344342u)
+        compression = TextureResource::Compression::BC4;
+    else if (fourCc == 0x32495441u || fourCc == 0x55354342u)
+        compression = TextureResource::Compression::BC5;
+    else if (fourCc == 0x30315844u && bytes.size() >= 148)
+    {
+        dataOffset = 148;
+        const std::uint32_t format = ReadU32Le(bytes, 128);
+        srgb = format == 72 || format == 75 || format == 78 || format == 99;
+        if (format == 70 || format == 71 || format == 72)
+            compression = TextureResource::Compression::BC1;
+        else if (format == 73 || format == 74 || format == 75)
+            compression = TextureResource::Compression::BC2;
+        else if (format == 76 || format == 77 || format == 78)
+            compression = TextureResource::Compression::BC3;
+        else if (format == 79 || format == 80 || format == 81)
+            compression = TextureResource::Compression::BC4;
+        else if (format == 82 || format == 83 || format == 84)
+            compression = TextureResource::Compression::BC5;
+        else if (format == 94 || format == 95 || format == 96)
+            compression = TextureResource::Compression::BC6H;
+        else if (format == 97 || format == 98 || format == 99)
+            compression = TextureResource::Compression::BC7;
+        else
+            return false;
+    }
+    else
+        return false;
+    if (width <= 0 || height <= 0 || width > 32768 || height > 32768)
+        return false;
+    const std::size_t blockBytes =
+        compression == TextureResource::Compression::BC1 || compression == TextureResource::Compression::BC4 ? 8 : 16;
+    std::size_t cursor = dataOffset;
+    int mipWidth = width, mipHeight = height;
+    for (std::uint32_t mip = 0; mip < mipCount; ++mip)
+    {
+        const std::size_t size = static_cast<std::size_t>((mipWidth + 3) / 4) * ((mipHeight + 3) / 4) * blockBytes;
+        if (cursor + size > bytes.size())
+            return false;
+        levels.push_back({mipWidth, mipHeight, cursor - dataOffset, size});
+        cursor += size;
+        mipWidth = std::max(1, mipWidth / 2);
+        mipHeight = std::max(1, mipHeight / 2);
+    }
+    blocks.assign(bytes.begin() + static_cast<std::ptrdiff_t>(dataOffset), bytes.begin() + static_cast<std::ptrdiff_t>(cursor));
+    return true;
+}
+
+bool LoadKtx2(const std::vector<std::uint8_t> &bytes, int &width, int &height, TextureResource::Compression &compression, bool &srgb,
+              std::vector<TextureResource::MipLevel> &levels, std::vector<std::uint8_t> &blocks)
+{
+    static constexpr std::uint8_t signature[12] = {0xAB, 0x4B, 0x54, 0x58, 0x20, 0x32, 0x30, 0xBB, 0x0D, 0x0A, 0x1A, 0x0A};
+    if (bytes.size() < 80 || !std::equal(std::begin(signature), std::end(signature), bytes.begin()))
+        return false;
+    const std::uint32_t format = ReadU32Le(bytes, 12), levelCount = std::max(1u, ReadU32Le(bytes, 40));
+    width = static_cast<int>(ReadU32Le(bytes, 20));
+    height = static_cast<int>(ReadU32Le(bytes, 24));
+    if (ReadU32Le(bytes, 32) > 1 || ReadU32Le(bytes, 36) > 1 || ReadU32Le(bytes, 44) != 0 || width <= 0 || height <= 0 ||
+        80ull + static_cast<std::uint64_t>(levelCount) * 24ull > bytes.size())
+        return false;
+    srgb = format == 132 || format == 134 || format == 136 || format == 138 || format == 146;
+    if (format >= 131 && format <= 134)
+        compression = TextureResource::Compression::BC1;
+    else if (format == 135 || format == 136)
+        compression = TextureResource::Compression::BC2;
+    else if (format == 137 || format == 138)
+        compression = TextureResource::Compression::BC3;
+    else if (format == 139 || format == 140)
+        compression = TextureResource::Compression::BC4;
+    else if (format == 141 || format == 142)
+        compression = TextureResource::Compression::BC5;
+    else if (format == 143 || format == 144)
+        compression = TextureResource::Compression::BC6H;
+    else if (format == 145 || format == 146)
+        compression = TextureResource::Compression::BC7;
+    else
+        return false;
+    for (std::uint32_t mip = 0; mip < levelCount; ++mip)
+    {
+        const std::uint64_t offset = ReadU64Le(bytes, 80 + mip * 24), length = ReadU64Le(bytes, 88 + mip * 24);
+        if (offset + length > bytes.size() || length > std::numeric_limits<std::size_t>::max())
+            return false;
+        const std::size_t destination = blocks.size();
+        blocks.insert(blocks.end(), bytes.begin() + static_cast<std::ptrdiff_t>(offset),
+                      bytes.begin() + static_cast<std::ptrdiff_t>(offset + length));
+        levels.push_back({std::max(1, width >> mip), std::max(1, height >> mip), destination, static_cast<std::size_t>(length)});
+    }
+    return true;
+}
+
 #ifdef _WIN32
 bool LoadWicTexture(const std::vector<std::uint8_t> &bytes, int &width, int &height, std::vector<std::uint8_t> &pixels)
 {
@@ -226,7 +346,19 @@ bool TextureResource::Load(const std::string &path)
     m_data.clear();
     m_floatData.clear();
     m_width = m_height = 0;
+    m_compression = Compression::None;
+    m_mipLevels.clear();
+    m_srgbEncoded = false;
     const auto bytes = PlatformFile::ReadAllBytes(path);
+    std::string extension = std::filesystem::path(path).extension().string();
+    std::transform(extension.begin(), extension.end(), extension.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    if ((extension == ".dds" && LoadDds(bytes, m_width, m_height, m_compression, m_srgbEncoded, m_mipLevels, m_data)) ||
+        (extension == ".ktx2" && LoadKtx2(bytes, m_width, m_height, m_compression, m_srgbEncoded, m_mipLevels, m_data)))
+    {
+        SetState(ResourceState::Loaded);
+        return true;
+    }
     if (bytes.size() >= 8 && std::equal(bytes.begin(), bytes.begin() + 8, "TNYTEX1\0"))
     {
         BinaryReader reader(bytes);
@@ -265,9 +397,6 @@ bool TextureResource::Load(const std::string &path)
         SetState(ResourceState::Loaded);
         return true;
     }
-    std::string extension = std::filesystem::path(path).extension().string();
-    std::transform(extension.begin(), extension.end(), extension.begin(),
-                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
     if (extension == ".hdr")
     {
         if (!LoadRadianceHdr(bytes, m_width, m_height, m_floatData))
@@ -345,6 +474,9 @@ void TextureResource::Unload()
     m_data.clear();
     m_floatData.clear();
     m_width = m_height = 0;
+    m_compression = Compression::None;
+    m_mipLevels.clear();
+    m_srgbEncoded = false;
     SetState(ResourceState::Unloaded);
 }
 std::size_t TextureResource::GetByteSize() const
@@ -370,6 +502,18 @@ int TextureResource::GetWidth() const
 int TextureResource::GetHeight() const
 {
     return m_height;
+}
+TextureResource::Compression TextureResource::GetCompression() const
+{
+    return m_compression;
+}
+const std::vector<TextureResource::MipLevel> &TextureResource::GetMipLevels() const
+{
+    return m_mipLevels;
+}
+bool TextureResource::IsSrgbEncoded() const
+{
+    return m_srgbEncoded;
 }
 
 bool MeshResource::Load(const std::string &path)

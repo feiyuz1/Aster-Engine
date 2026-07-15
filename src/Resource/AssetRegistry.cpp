@@ -27,7 +27,8 @@ std::string AssetType(const std::string &extension)
 {
     if (extension == ".mesh" || extension == ".gltf" || extension == ".glb")
         return "Mesh";
-    if (extension == ".ppm" || extension == ".png" || extension == ".jpg" || extension == ".jpeg" || extension == ".hdr")
+    if (extension == ".ppm" || extension == ".png" || extension == ".jpg" || extension == ".jpeg" || extension == ".hdr" ||
+        extension == ".dds" || extension == ".ktx2")
         return "Texture";
     if (extension == ".mat")
         return "Material";
@@ -49,6 +50,8 @@ std::string AssetType(const std::string &extension)
         return "AnimationGraph";
     if (extension == ".env")
         return "Environment";
+    if (extension == ".matgraph")
+        return "MaterialGraph";
     if (extension == ".input")
         return "Input";
     if (extension == ".ttf" || extension == ".otf")

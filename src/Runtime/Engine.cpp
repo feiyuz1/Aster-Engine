@@ -267,6 +267,10 @@ void Engine::Tick(const float rawDeltaTime)
     const float deltaTime = m_paused ? 0.0f : rawDeltaTime * m_timeScale;
     const InputState &input = m_renderer.GetInputState();
     m_uiSystem.Update(input.cursorX, input.cursorY, input.primaryAction);
+    if (!input.textInput.empty())
+        m_uiSystem.InputText(input.textInput);
+    if (input.uiBackspace)
+        m_uiSystem.Backspace();
     if (input.uiNavigateNext)
         m_uiSystem.FocusNext();
     if (input.uiAccept)

@@ -2,6 +2,7 @@
 
 #include "MiniEngine/Platform/Platform.hpp"
 #include "MiniEngine/Render/ShaderPipeline.hpp"
+#include "MiniEngine/UI/TextLayout.hpp"
 #include "MiniEngine/VFX/ParticleSystem.hpp"
 
 #define SDL_MAIN_HANDLED
@@ -17,11 +18,16 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <string>
 #include <unordered_map>
 #include <utility>
+#ifdef TINYENGINE_HAS_FREETYPE
+#include <ft2build.h>
+#include FT_FREETYPE_H
+#endif
 
 namespace MiniEngine
 {
@@ -155,7 +161,8 @@ constexpr const char *ShadowFragmentShaderSource = R"GLSL(
             void main()
             {
                 float alpha = uShadowOpacity * (uShadowHasAlphaTexture != 0 ? texture(uShadowAlphaTexture, vUv).a : 1.0);
-                if (alpha < 0.35) discard;
+                float threshold = fract(sin(dot(gl_FragCoord.xy, vec2(12.9898, 78.233))) * 43758.5453);
+                if (alpha < threshold) discard;
             }
         )GLSL";
 
@@ -334,6 +341,7 @@ struct SdlGlRenderDevice::Impl
     using Uniform1iProc = void(APIENTRY *)(GLint, GLint);
     using ActiveTextureProc = void(APIENTRY *)(GLenum);
     using GenerateMipmapProc = void(APIENTRY *)(GLenum);
+    using CompressedTexImage2DProc = void(APIENTRY *)(GLenum, GLint, GLenum, GLsizei, GLsizei, GLint, GLsizei, const void *);
     using GenFramebuffersProc = void(APIENTRY *)(GLsizei, GLuint *);
     using BindFramebufferProc = void(APIENTRY *)(GLenum, GLuint);
     using DeleteFramebuffersProc = void(APIENTRY *)(GLsizei, const GLuint *);
@@ -352,6 +360,17 @@ struct SdlGlRenderDevice::Impl
     FrameView view;
     GLuint program = 0, shadowProgram = 0, toneProgram = 0, uiProgram = 0, particleProgram = 0, fullScreenVao = 0;
     GLuint uiVao = 0, uiVertexBuffer = 0, uiIndexBuffer = 0, fontAtlas = 0;
+    struct Glyph
+    {
+        float u0 = 0.0f, v0 = 0.0f, u1 = 0.0f, v1 = 0.0f;
+        float advance = 0.62f;
+    };
+    std::unordered_map<std::uint32_t, Glyph> glyphs;
+    int nextGlyph = 0;
+#ifdef TINYENGINE_HAS_FREETYPE
+    FT_Library freeType = nullptr;
+    FT_Face freeTypeFace = nullptr;
+#endif
     GLuint sceneFramebuffer = 0, toneFramebuffer = 0, sceneHdrColor = 0, sceneColor = 0, sceneDepth = 0, historyHdrColor = 0;
     std::array<GLuint, FrameView::MaxShadowCascades> shadowFramebuffers{}, shadowDepths{};
     int shadowResolution = 2048;
@@ -429,6 +448,7 @@ struct SdlGlRenderDevice::Impl
     Uniform1iProc Uniform1i = nullptr;
     ActiveTextureProc ActiveTexture = nullptr;
     GenerateMipmapProc GenerateMipmap = nullptr;
+    CompressedTexImage2DProc CompressedTexImage2D = nullptr;
     GenFramebuffersProc GenFramebuffers = nullptr;
     BindFramebufferProc BindFramebuffer = nullptr;
     DeleteFramebuffersProc DeleteFramebuffers = nullptr;
@@ -502,12 +522,12 @@ struct SdlGlRenderDevice::Impl
                LoadGl(GetUniformLocation, "glGetUniformLocation") && LoadGl(UniformMatrix4fv, "glUniformMatrix4fv") &&
                LoadGl(Uniform4f, "glUniform4f") && LoadGl(Uniform3f, "glUniform3f") && LoadGl(Uniform2f, "glUniform2f") &&
                LoadGl(Uniform1f, "glUniform1f") && LoadGl(Uniform1i, "glUniform1i") && LoadGl(ActiveTexture, "glActiveTexture") &&
-               LoadGl(GenerateMipmap, "glGenerateMipmap") && LoadGl(GenFramebuffers, "glGenFramebuffers") &&
-               LoadGl(BindFramebuffer, "glBindFramebuffer") && LoadGl(DeleteFramebuffers, "glDeleteFramebuffers") &&
-               LoadGl(FramebufferTexture2D, "glFramebufferTexture2D") && LoadGl(CheckFramebufferStatus, "glCheckFramebufferStatus") &&
-               LoadGl(GenQueries, "glGenQueries") && LoadGl(DeleteQueries, "glDeleteQueries") && LoadGl(BeginQuery, "glBeginQuery") &&
-               LoadGl(EndQuery, "glEndQuery") && LoadGl(GetQueryObjectiv, "glGetQueryObjectiv") &&
-               LoadGl(GetQueryObjectui64v, "glGetQueryObjectui64v");
+               LoadGl(GenerateMipmap, "glGenerateMipmap") && LoadGl(CompressedTexImage2D, "glCompressedTexImage2D") &&
+               LoadGl(GenFramebuffers, "glGenFramebuffers") && LoadGl(BindFramebuffer, "glBindFramebuffer") &&
+               LoadGl(DeleteFramebuffers, "glDeleteFramebuffers") && LoadGl(FramebufferTexture2D, "glFramebufferTexture2D") &&
+               LoadGl(CheckFramebufferStatus, "glCheckFramebufferStatus") && LoadGl(GenQueries, "glGenQueries") &&
+               LoadGl(DeleteQueries, "glDeleteQueries") && LoadGl(BeginQuery, "glBeginQuery") && LoadGl(EndQuery, "glEndQuery") &&
+               LoadGl(GetQueryObjectiv, "glGetQueryObjectiv") && LoadGl(GetQueryObjectui64v, "glGetQueryObjectui64v");
     }
 
     void DestroySceneTarget()
@@ -732,59 +752,20 @@ struct SdlGlRenderDevice::Impl
 
     bool CreateFontAtlas()
     {
-        constexpr int width = 512, height = 256, cell = 32;
+        constexpr int width = 1024, height = 1024;
         std::vector<std::uint8_t> pixels(static_cast<std::size_t>(width) * height * 4, 0);
-        for (std::size_t index = 0; index < static_cast<std::size_t>(width) * height; ++index)
-            pixels[index * 4] = pixels[index * 4 + 1] = pixels[index * 4 + 2] = 255;
-#ifdef _WIN32
-        BITMAPINFO bitmapInfo{};
-        bitmapInfo.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
-        bitmapInfo.bmiHeader.biWidth = width;
-        bitmapInfo.bmiHeader.biHeight = -height;
-        bitmapInfo.bmiHeader.biPlanes = 1;
-        bitmapInfo.bmiHeader.biBitCount = 32;
-        bitmapInfo.bmiHeader.biCompression = BI_RGB;
-        void *bitmapPixels = nullptr;
-        HDC device = CreateCompatibleDC(nullptr);
-        HBITMAP bitmap = device ? CreateDIBSection(device, &bitmapInfo, DIB_RGB_COLORS, &bitmapPixels, nullptr, 0) : nullptr;
-        HFONT font = CreateFontW(-24, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, ANSI_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
-                                 ANTIALIASED_QUALITY, FIXED_PITCH, L"Consolas");
-        if (device && bitmap && bitmapPixels && font)
-        {
-            const HGDIOBJ oldBitmap = SelectObject(device, bitmap), oldFont = SelectObject(device, font);
-            std::fill_n(static_cast<std::uint8_t *>(bitmapPixels), static_cast<std::size_t>(width) * height * 4,
-                        static_cast<std::uint8_t>(0));
-            SetBkColor(device, RGB(0, 0, 0));
-            SetTextColor(device, RGB(255, 255, 255));
-            SetBkMode(device, OPAQUE);
-            for (int character = 32; character < 127; ++character)
-            {
-                const wchar_t text = static_cast<wchar_t>(character);
-                const int column = character % 16, row = character / 16;
-                TextOutW(device, column * cell + 4, row * cell + 3, &text, 1);
-            }
-            const auto *source = static_cast<const std::uint8_t *>(bitmapPixels);
-            for (std::size_t index = 0; index < static_cast<std::size_t>(width) * height; ++index)
-            {
-                const std::uint8_t alpha = std::max(source[index * 4], std::max(source[index * 4 + 1], source[index * 4 + 2]));
-                pixels[index * 4] = pixels[index * 4 + 1] = pixels[index * 4 + 2] = 255;
-                pixels[index * 4 + 3] = alpha;
-            }
-            SelectObject(device, oldFont);
-            SelectObject(device, oldBitmap);
-        }
-        if (font)
-            DeleteObject(font);
-        if (bitmap)
-            DeleteObject(bitmap);
-        if (device)
-            DeleteDC(device);
-#else
-        for (int character = 32; character < 127; ++character)
-            for (int y = 6; y < 26; ++y)
-                for (int x = 6; x < 20; ++x)
-                    if (x == 6 || x == 19 || y == 6 || y == 25)
-                        pixels[((character / 16 * cell + y) * width + character % 16 * cell + x) * 4 + 3] = 255;
+#ifdef TINYENGINE_HAS_FREETYPE
+        if (FT_Init_FreeType(&freeType) != 0)
+            return false;
+        const char *configured = std::getenv("TINYENGINE_FONT_PATH");
+        const char *candidates[] = {configured, "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+                                    "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc", "/Library/Fonts/Arial Unicode.ttf"};
+        for (const char *candidate : candidates)
+            if (candidate && FT_New_Face(freeType, candidate, 0, &freeTypeFace) == 0)
+                break;
+        if (!freeTypeFace)
+            return false;
+        FT_Set_Pixel_Sizes(freeTypeFace, 0, 36);
 #endif
         glGenTextures(1, &fontAtlas);
         glBindTexture(GL_TEXTURE_2D, fontAtlas);
@@ -795,6 +776,109 @@ struct SdlGlRenderDevice::Impl
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
         glBindTexture(GL_TEXTURE_2D, 0);
         return fontAtlas != 0;
+    }
+
+    const Glyph &GetGlyph(const std::uint32_t requestedCodepoint)
+    {
+        auto found = glyphs.find(requestedCodepoint);
+        if (found != glyphs.end())
+            return found->second;
+        constexpr int atlasSize = 1024, cell = 48, columns = atlasSize / cell;
+        std::uint32_t codepoint = requestedCodepoint;
+        if (nextGlyph >= columns * columns)
+            codepoint = '?';
+        if (const auto fallback = glyphs.find(codepoint); fallback != glyphs.end())
+            return fallback->second;
+        const int slot = nextGlyph++, cellX = slot % columns * cell, cellY = slot / columns * cell;
+        std::vector<std::uint8_t> pixels(static_cast<std::size_t>(cell) * cell * 4, 255);
+        for (std::size_t index = 0; index < static_cast<std::size_t>(cell) * cell; ++index)
+            pixels[index * 4 + 3] = 0;
+        float advance = 0.62f;
+#ifdef _WIN32
+        BITMAPINFO info{};
+        info.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+        info.bmiHeader.biWidth = cell;
+        info.bmiHeader.biHeight = -cell;
+        info.bmiHeader.biPlanes = 1;
+        info.bmiHeader.biBitCount = 32;
+        info.bmiHeader.biCompression = BI_RGB;
+        void *bitmapPixels = nullptr;
+        HDC device = CreateCompatibleDC(nullptr);
+        HBITMAP bitmap = device ? CreateDIBSection(device, &info, DIB_RGB_COLORS, &bitmapPixels, nullptr, 0) : nullptr;
+        HFONT font = CreateFontW(-36, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+                                 ANTIALIASED_QUALITY, DEFAULT_PITCH, L"Microsoft YaHei UI");
+        if (device && bitmap && bitmapPixels && font)
+        {
+            const HGDIOBJ oldBitmap = SelectObject(device, bitmap), oldFont = SelectObject(device, font);
+            std::fill_n(static_cast<std::uint8_t *>(bitmapPixels), static_cast<std::size_t>(cell) * cell * 4, static_cast<std::uint8_t>(0));
+            SetBkColor(device, RGB(0, 0, 0));
+            SetTextColor(device, RGB(255, 255, 255));
+            SetBkMode(device, OPAQUE);
+            wchar_t utf16[2]{};
+            int count = 1;
+            if (codepoint <= 0xFFFF)
+                utf16[0] = static_cast<wchar_t>(codepoint);
+            else
+            {
+                const std::uint32_t value = codepoint - 0x10000;
+                utf16[0] = static_cast<wchar_t>(0xD800 + (value >> 10u));
+                utf16[1] = static_cast<wchar_t>(0xDC00 + (value & 0x3FFu));
+                count = 2;
+            }
+            TextOutW(device, 3, 3, utf16, count);
+            SIZE extent{};
+            GetTextExtentPoint32W(device, utf16, count, &extent);
+            advance = std::max(0.2f, static_cast<float>(extent.cx) / 36.0f);
+            const auto *source = static_cast<const std::uint8_t *>(bitmapPixels);
+            for (std::size_t index = 0; index < static_cast<std::size_t>(cell) * cell; ++index)
+                pixels[index * 4 + 3] = std::max(source[index * 4], std::max(source[index * 4 + 1], source[index * 4 + 2]));
+            SelectObject(device, oldFont);
+            SelectObject(device, oldBitmap);
+        }
+        if (font)
+            DeleteObject(font);
+        if (bitmap)
+            DeleteObject(bitmap);
+        if (device)
+            DeleteDC(device);
+#elif defined(TINYENGINE_HAS_FREETYPE)
+        if (freeTypeFace && FT_Load_Char(freeTypeFace, codepoint, FT_LOAD_RENDER) == 0)
+        {
+            const FT_GlyphSlot glyph = freeTypeFace->glyph;
+            advance = std::max(0.2f, static_cast<float>(glyph->advance.x) / (64.0f * 36.0f));
+            for (unsigned int y = 0; y < glyph->bitmap.rows && y + 5 < static_cast<unsigned int>(cell); ++y)
+                for (unsigned int x = 0; x < glyph->bitmap.width && x + 3 < static_cast<unsigned int>(cell); ++x)
+                    pixels[((y + 5) * cell + x + 3) * 4 + 3] = glyph->bitmap.buffer[y * glyph->bitmap.pitch + x];
+        }
+#endif
+        glBindTexture(GL_TEXTURE_2D, fontAtlas);
+        glTexSubImage2D(GL_TEXTURE_2D, 0, cellX, cellY, cell, cell, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
+        glBindTexture(GL_TEXTURE_2D, 0);
+        Glyph glyph{(cellX + 0.5f) / atlasSize, (cellY + 0.5f) / atlasSize, (cellX + cell - 0.5f) / atlasSize,
+                    (cellY + cell - 0.5f) / atlasSize, advance};
+        return glyphs.emplace(codepoint, glyph).first->second;
+    }
+
+    void UploadMaterialParameters(const std::shared_ptr<MaterialResource> &material)
+    {
+        if (!material || material->GetShaderPath().empty())
+            return;
+        const auto reflected = ShaderPipeline::ReflectParameters(material->GetShaderPath());
+        for (const auto &parameter : reflected)
+        {
+            const auto value = material->GetParameters().find(parameter.name);
+            if (value == material->GetParameters().end() || parameter.type == ShaderParameterType::Texture)
+                continue;
+            const GLint location = GetUniformLocation(program, parameter.name.c_str());
+            if (parameter.type == ShaderParameterType::Float)
+                Uniform1f(location, value->second.x);
+            else if (parameter.type == ShaderParameterType::Vec2)
+                Uniform2f(location, value->second.x, value->second.y);
+            else if (parameter.type == ShaderParameterType::Vec3)
+                Uniform3f(location, value->second.x, value->second.y, value->second.z);
+            else if (parameter.type == ShaderParameterType::Vec4)
+                Uniform4f(location, value->second.x, value->second.y, value->second.z, value->second.w);
+        }
     }
 
     bool CreateAuxiliaryPrograms()
@@ -950,13 +1034,51 @@ struct SdlGlRenderDevice::Impl
         if (maximumAnisotropy > 1.0f)
             glTexParameterf(GL_TEXTURE_2D, 0x84FE, maximumAnisotropy);
         glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
-        if (resource->IsHdr())
+        if (resource->GetCompression() != TextureResource::Compression::None)
+        {
+            GLenum format = 0;
+            switch (resource->GetCompression())
+            {
+            case TextureResource::Compression::BC1:
+                format = srgb || resource->IsSrgbEncoded() ? 0x8C4D : 0x83F1;
+                break;
+            case TextureResource::Compression::BC2:
+                format = srgb || resource->IsSrgbEncoded() ? 0x8C4E : 0x83F2;
+                break;
+            case TextureResource::Compression::BC3:
+                format = srgb || resource->IsSrgbEncoded() ? 0x8C4F : 0x83F3;
+                break;
+            case TextureResource::Compression::BC4:
+                format = 0x8DBB;
+                break;
+            case TextureResource::Compression::BC5:
+                format = 0x8DBD;
+                break;
+            case TextureResource::Compression::BC6H:
+                format = 0x8E8F;
+                break;
+            case TextureResource::Compression::BC7:
+                format = srgb || resource->IsSrgbEncoded() ? 0x8E8D : 0x8E8C;
+                break;
+            default:
+                break;
+            }
+            const auto &blocks = resource->GetData();
+            for (std::size_t mip = 0; mip < resource->GetMipLevels().size(); ++mip)
+            {
+                const auto &level = resource->GetMipLevels()[mip];
+                CompressedTexImage2D(GL_TEXTURE_2D, static_cast<GLint>(mip), format, level.width, level.height, 0,
+                                     static_cast<GLsizei>(level.size), blocks.data() + level.offset);
+            }
+        }
+        else if (resource->IsHdr())
             glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA16F, resource->GetWidth(), resource->GetHeight(), 0, GL_RGBA, GL_FLOAT,
                          resource->GetFloatData().data());
         else
             glTexImage2D(GL_TEXTURE_2D, 0, srgb ? GL_SRGB8_ALPHA8 : GL_RGBA8, resource->GetWidth(), resource->GetHeight(), 0, GL_RGBA,
                          GL_UNSIGNED_BYTE, resource->GetData().data());
-        GenerateMipmap(GL_TEXTURE_2D);
+        if (resource->GetCompression() == TextureResource::Compression::None || resource->GetMipLevels().size() <= 1)
+            GenerateMipmap(GL_TEXTURE_2D);
         glBindTexture(GL_TEXTURE_2D, 0);
         textures[key] = texture;
         textureBytes[key] = requiredBytes;
@@ -1049,6 +1171,7 @@ bool SdlGlRenderDevice::Initialize()
     m_impl->vertexShaderWatcher.HasChanged(m_impl->vertexShaderPath);
     m_impl->fragmentShaderWatcher.HasChanged(m_impl->fragmentShaderPath);
     SDL_GL_SetSwapInterval(1);
+    SDL_StartTextInput();
     glEnable(GL_DEPTH_TEST);
     glEnable(GL_CULL_FACE);
     glCullFace(GL_BACK);
@@ -1091,6 +1214,18 @@ void SdlGlRenderDevice::Shutdown()
             glDeleteTextures(1, &m_impl->fontAtlas);
             m_impl->fontAtlas = 0;
         }
+#ifdef TINYENGINE_HAS_FREETYPE
+        if (m_impl->freeTypeFace)
+        {
+            FT_Done_Face(m_impl->freeTypeFace);
+            m_impl->freeTypeFace = nullptr;
+        }
+        if (m_impl->freeType)
+        {
+            FT_Done_FreeType(m_impl->freeType);
+            m_impl->freeType = nullptr;
+        }
+#endif
         if (m_impl->program)
         {
             m_impl->DeleteProgram(m_impl->program);
@@ -1156,6 +1291,8 @@ bool SdlGlRenderDevice::PumpEvents()
 {
     m_impl->CheckShaderHotReload();
     m_impl->input.mouseX = m_impl->input.mouseY = 0.0f;
+    m_impl->input.textInput.clear();
+    m_impl->input.uiBackspace = false;
     SDL_Event event{};
     while (SDL_PollEvent(&event))
     {
@@ -1174,6 +1311,10 @@ bool SdlGlRenderDevice::PumpEvents()
             m_impl->input.mouseX += static_cast<float>(event.motion.xrel);
             m_impl->input.mouseY += static_cast<float>(event.motion.yrel);
         }
+        if (event.type == SDL_TEXTINPUT)
+            m_impl->input.textInput += event.text.text;
+        if (event.type == SDL_KEYDOWN && event.key.keysym.scancode == SDL_SCANCODE_BACKSPACE && event.key.repeat == 0)
+            m_impl->input.uiBackspace = true;
         if (event.type == SDL_CONTROLLERDEVICEADDED && !m_impl->controller)
             m_impl->controller = SDL_GameControllerOpen(event.cdevice.which);
         if (event.type == SDL_CONTROLLERDEVICEREMOVED && m_impl->controller &&
@@ -1431,6 +1572,7 @@ void SdlGlRenderDevice::Draw(const RenderItem &item)
     m_impl->Uniform1f(m_impl->metallicLocation, metallic);
     m_impl->Uniform1f(m_impl->roughnessLocation, roughness);
     m_impl->Uniform3f(m_impl->emissiveLocation, emissive.x, emissive.y, emissive.z);
+    m_impl->UploadMaterialParameters(item.material);
     auto bindTexture = [&](const std::shared_ptr<TextureResource> &resource, const int unit, const bool srgb, const GLint samplerLocation,
                            const GLint enabledLocation) {
         const GLuint texture = m_impl->GetOrCreateTexture(resource, srgb);
@@ -1491,6 +1633,7 @@ void SdlGlRenderDevice::DrawInstanced(const std::vector<RenderItem> &items)
     m_impl->Uniform1f(m_impl->metallicLocation, first.material ? first.material->GetMetallic() : 0.0f);
     m_impl->Uniform1f(m_impl->roughnessLocation, first.material ? first.material->GetRoughness() : 0.7f);
     m_impl->Uniform3f(m_impl->emissiveLocation, emissive.x, emissive.y, emissive.z);
+    m_impl->UploadMaterialParameters(first.material);
     const auto bindTexture = [&](const std::shared_ptr<TextureResource> &resource, const int unit, const bool srgb,
                                  const GLint samplerLocation, const GLint enabledLocation) {
         const GLuint texture = m_impl->GetOrCreateTexture(resource, srgb);
@@ -1629,7 +1772,7 @@ void SdlGlRenderDevice::DrawUi(const std::vector<UIDrawCommand> &commands)
         const UIRect clip = command.clipRect.width > 0.0f && command.clipRect.height > 0.0f ? command.clipRect : command.rect;
         glScissor(static_cast<GLint>(clip.x), height - static_cast<GLint>(clip.y + clip.height), static_cast<GLsizei>(clip.width),
                   static_cast<GLsizei>(clip.height));
-        if (command.type == UIWidgetType::Panel || command.type == UIWidgetType::Button || command.type == UIWidgetType::Image)
+        if (command.type != UIWidgetType::Label)
         {
             std::vector<Impl::UiVertex> vertices;
             std::vector<std::uint32_t> indices;
@@ -1637,35 +1780,48 @@ void SdlGlRenderDevice::DrawUi(const std::vector<UIDrawCommand> &commands)
             const GLuint image = command.type == UIWidgetType::Image ? m_impl->GetOrCreateUiTexture(command.imagePath) : 0;
             m_impl->DrawUiGeometry(vertices, indices, command.color, image, width, height);
         }
-        if (!command.text.empty() && (command.type == UIWidgetType::Label || command.type == UIWidgetType::Button))
+        if (!command.text.empty() && command.type != UIWidgetType::Image && command.type != UIWidgetType::Panel &&
+            command.type != UIWidgetType::ProgressBar)
         {
-            std::vector<Impl::UiVertex> vertices;
-            std::vector<std::uint32_t> indices;
-            const float glyphSize = std::max(6.0f, command.fontSize), advance = glyphSize * 0.62f;
+            struct TextBatch
+            {
+                Vec4 color;
+                std::vector<Impl::UiVertex> vertices;
+                std::vector<std::uint32_t> indices;
+            };
+            std::vector<TextBatch> batches;
+            const float glyphSize = std::max(6.0f, command.fontSize);
+            const TextLayoutResult layout =
+                TextLayout::Shape(command.text, std::max(0.0f, command.rect.width), {{1.0f, 1.0f, 1.0f, 1.0f}, glyphSize});
             float cursorX = command.rect.x;
             if (command.type == UIWidgetType::Button)
-                cursorX += std::max(0.0f, (command.rect.width - advance * static_cast<float>(command.text.size())) * 0.5f);
-            float cursorY = command.rect.y + std::max(0.0f, (command.rect.height - glyphSize) * 0.5f);
-            for (const unsigned char byte : command.text)
+                cursorX += std::max(0.0f, (command.rect.width - layout.width) * 0.5f);
+            const float cursorY = command.rect.y + std::max(0.0f, (command.rect.height - layout.height) * 0.5f);
+            for (const auto &shaped : layout.glyphs)
             {
-                if (byte == '\n')
+                if (shaped.codepoint != ' ')
                 {
-                    cursorX = command.rect.x;
-                    cursorY += glyphSize;
-                    continue;
+                    const auto &glyph = m_impl->GetGlyph(shaped.codepoint);
+                    const Vec4 base = command.type == UIWidgetType::Button ? Vec4{1.0f, 1.0f, 1.0f, command.color.w} : command.color;
+                    const Vec4 color{base.x * shaped.style.color.x, base.y * shaped.style.color.y, base.z * shaped.style.color.z,
+                                     base.w * shaped.style.color.w};
+                    auto batch = std::find_if(batches.begin(), batches.end(), [&](const TextBatch &candidate) {
+                        return candidate.color.x == color.x && candidate.color.y == color.y && candidate.color.z == color.z &&
+                               candidate.color.w == color.w;
+                    });
+                    if (batch == batches.end())
+                    {
+                        batches.push_back({color});
+                        batch = std::prev(batches.end());
+                    }
+                    appendQuad(batch->vertices, batch->indices,
+                               {cursorX + shaped.x, cursorY + shaped.y, std::max(shaped.advance, shaped.style.size * glyph.advance),
+                                shaped.style.size * 1.2f},
+                               glyph.u0, glyph.v0, glyph.u1, glyph.v1);
                 }
-                const int character = byte >= 32 && byte < 127 ? byte : '?';
-                if (character != ' ')
-                {
-                    const int column = character % 16, row = character / 16;
-                    const float u0 = (column * 32.0f + 0.5f) / 512.0f, v0 = (row * 32.0f + 0.5f) / 256.0f;
-                    const float u1 = ((column + 1) * 32.0f - 0.5f) / 512.0f, v1 = ((row + 1) * 32.0f - 0.5f) / 256.0f;
-                    appendQuad(vertices, indices, {cursorX, cursorY, glyphSize, glyphSize}, u0, v0, u1, v1);
-                }
-                cursorX += advance;
             }
-            const Vec4 textColor = command.type == UIWidgetType::Button ? Vec4{1.0f, 1.0f, 1.0f, command.color.w} : command.color;
-            m_impl->DrawUiGeometry(vertices, indices, textColor, m_impl->fontAtlas, width, height);
+            for (const auto &batch : batches)
+                m_impl->DrawUiGeometry(batch.vertices, batch.indices, batch.color, m_impl->fontAtlas, width, height);
         }
     }
     glDisable(GL_SCISSOR_TEST);
@@ -1730,6 +1886,10 @@ std::uintptr_t SdlGlRenderDevice::GetSceneColorTexture() const
 {
     return m_impl ? static_cast<std::uintptr_t>(m_impl->sceneColor) : 0;
 }
+std::uintptr_t SdlGlRenderDevice::GetUiTexture(const std::string &path)
+{
+    return m_impl ? static_cast<std::uintptr_t>(m_impl->GetOrCreateUiTexture(path)) : 0;
+}
 int SdlGlRenderDevice::GetSceneTargetWidth() const
 {
     return m_impl ? m_impl->sceneWidth : 0;
@@ -1741,6 +1901,25 @@ int SdlGlRenderDevice::GetSceneTargetHeight() const
 bool SdlGlRenderDevice::ReloadShaders()
 {
     return m_impl && m_impl->ReloadDefaultShadersFromFiles();
+}
+bool SdlGlRenderDevice::ValidateShader(const std::string &path)
+{
+    if (!m_impl)
+        return false;
+    const auto source = ShaderPipeline::Preprocess(path);
+    if (!source.success)
+    {
+        m_impl->lastShaderError = source.error;
+        return false;
+    }
+    std::string extension = std::filesystem::path(path).extension().string();
+    const GLenum type = extension == ".vert" ? GL_VERTEX_SHADER : GL_FRAGMENT_SHADER;
+    const GLuint shader = m_impl->Compile(type, source.source.c_str());
+    if (!shader)
+        return false;
+    m_impl->DeleteShader(shader);
+    m_impl->lastShaderError.clear();
+    return true;
 }
 void SdlGlRenderDevice::SetExposure(const float exposure)
 {

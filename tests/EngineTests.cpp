@@ -26,9 +26,11 @@
 #include "MiniEngine/Project/Project.hpp"
 #include "MiniEngine/Project/ProjectPackager.hpp"
 #include "MiniEngine/Render/EnvironmentBaker.hpp"
+#include "MiniEngine/Render/MaterialGraph.hpp"
 #include "MiniEngine/Render/Renderer.hpp"
 #include "MiniEngine/Render/ShaderPipeline.hpp"
 #include "MiniEngine/Resource/AssetCooker.hpp"
+#include "MiniEngine/Resource/AssetMaintenance.hpp"
 #include "MiniEngine/Resource/AssetRegistry.hpp"
 #include "MiniEngine/Resource/AssetStreaming.hpp"
 #include "MiniEngine/Resource/PakArchive.hpp"
@@ -37,6 +39,7 @@
 #include "MiniEngine/Serialization/Archive.hpp"
 #include "MiniEngine/Task/JobSystem.hpp"
 #include "MiniEngine/Terrain/HeightField.hpp"
+#include "MiniEngine/UI/TextLayout.hpp"
 #include "MiniEngine/UI/UISystem.hpp"
 #include "MiniEngine/VFX/ParticleSystem.hpp"
 #include "MiniEngine/World/WorldPartition.hpp"
@@ -385,6 +388,15 @@ int main()
     CHECK(materialInstance.GetParentPath() == "Saved/TestPbr.mat" && std::abs(materialInstance.GetBaseColor().x - 0.9f) < 0.001f &&
           std::abs(materialInstance.GetMetallic() - 0.8f) < 0.001f && std::abs(materialInstance.GetRoughness() - 0.5f) < 0.001f &&
           materialInstance.GetNormalTexturePath() == "Saved/Test.png");
+    CHECK(PlatformFile::WriteAllText("Saved/TestExplicitInstance.mat",
+                                     "parent Saved/TestPbr.mat\noverride color 0\noverride roughness 1\noverride packedTexture 1\n"
+                                     "color 1 0 0 1\nroughness 0.4\npackedTexture Saved/Test.png\npackedLayout RMA\n"
+                                     "parameter uTint 0.1 0.2 0.3 1\n"));
+    MaterialResource explicitInstance;
+    CHECK(explicitInstance.Load("Saved/TestExplicitInstance.mat") && !explicitInstance.IsOverridden("color") &&
+          explicitInstance.IsOverridden("roughness") && std::abs(explicitInstance.GetBaseColor().x - 0.2f) < 0.001f &&
+          std::abs(explicitInstance.GetRoughness() - 0.4f) < 0.001f && explicitInstance.GetPackedTextureLayout() == "RMA" &&
+          explicitInstance.GetParameters().count("uTint") == 1);
     CHECK(PlatformFile::WriteAllText("Saved/Skinned.mesh",
                                      "TINY_MESH 3\nv 0 0 0\nv 1 0 0\nv 0 1 0\nvt 0 0\nvt 1 0\nvt 0 1\nvn 0 0 1\nvn 0 0 1\nvn 0 0 1\n"
                                      "vw 1 2 1 0 0 0 0 0 0\nvw 2 2 0.75 1 0.25 0 0 0 0\nvw 3 1 1 0 0 0 0 0 0\nf 1/1/1 2/2/2 3/3/3\n"));
@@ -402,6 +414,11 @@ int main()
     const auto shaderVariants = ShaderPipeline::BuildVariants("Saved/Variant.frag");
     CHECK(shaderVariants.size() == 2 && shaderVariants[0].success && shaderVariants[0].source.find("IncludedColor") != std::string::npos);
     CHECK(shaderVariants[0].dependencies.size() == 2 && ShaderPipeline::WriteCache(shaderVariants[0], "Saved/ShaderCacheTest"));
+    CHECK(PlatformFile::WriteAllText("Saved/Reflected.frag", "#version 330 core\nuniform float uStrength; //@range 0 4 //@default 2\n"
+                                                             "uniform vec4 uTint; //@default 1 0.5 0.25 1\nvoid main(){}\n"));
+    const auto reflectedParameters = ShaderPipeline::ReflectParameters("Saved/Reflected.frag");
+    CHECK(reflectedParameters.size() == 2 && reflectedParameters[0].hasRange && reflectedParameters[0].maximum == 4.0f &&
+          reflectedParameters[1].type == ShaderParameterType::Vec4);
     CHECK(PakArchive::PackDirectory("assets", "Saved/Test.tpak"));
     CHECK(PakArchive::List("Saved/Test.tpak").size() >= 4);
     const auto packedMesh = PakArchive::ReadFile("Saved/Test.tpak", "player.mesh");
@@ -481,6 +498,20 @@ int main()
     CHECK(physics.SphereCast(physicsScene, {{0.0f, 3.0f, 0.0f}, {0.0f, -1.0f, 0.0f}}, 0.25f, 10.0f, queryHit));
     CHECK(!physics.Overlap(physicsScene, {{-1.0f, -1.0f, -1.0f}, {1.0f, 1.0f, 1.0f}}).empty());
     CHECK(physics.GetDebugBoxes().size() == 2 && Length(queryHit.normal) > 0.9f);
+    ShapeSweepGeometry sweepGeometry;
+    sweepGeometry.shape = ColliderShape::Box;
+    sweepGeometry.halfExtents = {0.2f, 0.2f, 0.2f};
+    RaycastHit sweepHit;
+    CHECK(physics.ShapeSweep(physicsScene, sweepGeometry, {0.0f, 4.0f, 0.0f}, {0.0f, -8.0f, 0.0f}, sweepHit));
+    CHECK(PhysicsWorld::IsBackendAvailable(PhysicsBackend::Builtin) && physics.GetBackend() == PhysicsBackend::Builtin);
+    const Entity rotator = physicsScene.CreateEntity("Rotator");
+    RigidBodyComponent rotatingBody;
+    rotatingBody.useGravity = false;
+    rotatingBody.angularVelocity = {0.0f, 90.0f, 0.0f};
+    rotatingBody.angularDamping = 0.0f;
+    physicsScene.AddComponent(rotator, rotatingBody);
+    physics.Step(physicsScene, 0.5f);
+    CHECK(std::abs(physicsScene.GetComponent<TransformComponent>(rotator)->rotation.y - 45.0f) < 0.01f);
     const Entity character = physicsScene.CreateEntity("Character");
     physicsScene.GetComponent<TransformComponent>(character)->position = {2.0f, 1.3f, 0.0f};
     physicsScene.AddComponent(character, ColliderComponent{ColliderShape::Capsule, {0.4f, 0.9f, 0.4f}, 0.4f, 1.8f});
@@ -638,6 +669,51 @@ int main()
     loadedInput.Update(mappedState);
     CHECK(std::abs(loadedInput.GetAxis("Horizontal") - 0.5f) < 0.001f && loadedInput.IsDown("Fire"));
 
+    const std::string layoutUnicode =
+        TextLayout::EncodeUtf8({'T', 'i', 'n', 'y', 0x5f15, 0x64ce, ' ', 0x0645, 0x0631, 0x062d, 0x0628, 0x0627});
+    const auto decodedText = TextLayout::DecodeUtf8(layoutUnicode);
+    CHECK(decodedText.size() == 12 && TextLayout::EncodeUtf8(decodedText) == layoutUnicode);
+    const auto shapedText = TextLayout::Shape("[b]office[/b] " + layoutUnicode, 80.0f, {{1, 1, 1, 1}, 18.0f});
+    CHECK(!shapedText.glyphs.empty() && shapedText.lineCount > 1 &&
+          std::any_of(shapedText.glyphs.begin(), shapedText.glyphs.end(),
+                      [](const ShapedGlyph &glyph) { return glyph.codepoint == 0xfb01; }));
+
+    MaterialGraph materialGraph;
+    const auto constantNode = materialGraph.AddNode(MaterialNodeType::Constant, "Albedo");
+    const auto outputNode = materialGraph.AddNode(MaterialNodeType::PbrOutput, "Output");
+    CHECK(materialGraph.Connect(constantNode, outputNode, 0) && materialGraph.Save("Saved/Test.matgraph"));
+    MaterialGraph loadedMaterialGraph;
+    CHECK(loadedMaterialGraph.Load("Saved/Test.matgraph") && loadedMaterialGraph.GetNodes().size() == 2 &&
+          loadedMaterialGraph.Compile().find("outColor") != std::string::npos);
+
+    std::vector<std::uint8_t> chunkSource(230000);
+    for (std::size_t index = 0; index < chunkSource.size(); ++index)
+        chunkSource[index] = static_cast<std::uint8_t>(index % 251);
+    CHECK(PlatformFile::WriteAllBytes("Saved/ChunkSource.bin", chunkSource));
+    CHECK(AssetMaintenance::ChunkAsset("Saved/ChunkSource.bin", "Saved/ChunkSource.chunkmanifest", 65536));
+    ChunkedAssetStream chunkStream;
+    CHECK(chunkStream.Open("Saved/ChunkSource.chunkmanifest") && chunkStream.GetSize() == chunkSource.size());
+    const auto chunkRange = chunkStream.Read(65000, 5000);
+    CHECK(chunkRange.size() == 5000 && chunkRange.front() == chunkSource[65000] && chunkRange.back() == chunkSource[69999]);
+
+    std::vector<std::uint8_t> dds(136, 0);
+    const auto writeU32 = [&dds](const std::size_t offset, const std::uint32_t value) {
+        for (int byte = 0; byte < 4; ++byte)
+            dds[offset + byte] = static_cast<std::uint8_t>((value >> (byte * 8)) & 255u);
+    };
+    writeU32(0, 0x20534444u);
+    writeU32(4, 124u);
+    writeU32(12, 4u);
+    writeU32(16, 4u);
+    writeU32(28, 1u);
+    writeU32(76, 32u);
+    writeU32(80, 4u);
+    writeU32(84, 0x31545844u);
+    CHECK(PlatformFile::WriteAllBytes("Saved/Test.dds", dds));
+    TextureResource ddsTexture;
+    CHECK(ddsTexture.Load("Saved/Test.dds") && ddsTexture.GetCompression() == TextureResource::Compression::BC1 &&
+          ddsTexture.GetMipLevels().size() == 1 && ddsTexture.GetData().size() == 8);
+
     UISystem ui;
     bool clicked = false;
     ui.AddPanel("hud", {0, 0, 300, 100});
@@ -665,6 +741,18 @@ int main()
     layoutUi.SetDpiScale(2.0f);
     const auto &scaledCommands = layoutUi.BuildDrawList();
     CHECK(scaledCommands[0].rect.width == 600.0f && scaledCommands[1].fontSize == 36.0f && scaledCommands[1].clipRect.width > 0.0f);
+    UISystem controls;
+    controls.AddInputField("name", {}, {0, 0, 160, 30}, "Name");
+    controls.Update(4, 4, true);
+    controls.Update(4, 4, false);
+    const std::string playerName = TextLayout::EncodeUtf8({0x73a9, 0x5bb6});
+    CHECK(controls.InputText(playerName) && controls.Backspace() && controls.Find("name")->text == TextLayout::EncodeUtf8({0x73a9}));
+    controls.AddList("list", {"A", "B", "C"}, {0, 40, 160, 90});
+    CHECK(controls.SelectItem("list", 1) && controls.Find("list")->selectedIndex == 1);
+    controls.AddDropdown("quality", {"Low", "High"}, {0, 140, 160, 30});
+    CHECK(controls.SelectItem("quality", 1));
+    controls.AddProgressBar("loading", 0.4f, {0, 180, 160, 20});
+    CHECK(controls.SetValue("loading", 0.75f) && controls.BuildDrawList().size() >= 5);
 
     std::vector<std::uint32_t> codepoints;
     const std::string unicodeText = "Tiny引擎";
