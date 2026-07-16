@@ -4,6 +4,10 @@ TinyEngine 是参考 Unreal Engine 5.3.2 模块职责、以 C++17 实现的轻�
 
 当前版本：0.26.0（完成动画增强、Flipbook/GPU 粒子、OGG 流式音频、原生插件 ABI、多边形导航 AI 与联网基础批次）。
 
+文档入口：[文档中心](docs/README.md) · [构建指南](docs/BUILDING.md) · [使用指南](docs/USER_GUIDE.md) · [技术设计](设计.md) · [架构说明](docs/ARCHITECTURE.md) · [工具参考](docs/TOOLS.md) · [后续工作](docs/REMAINING_WORK.md)
+
+本文中的“已实现”表示功能进入可编译、可测试、可运行的代码路径，不等同于 UE 同名系统的商业级规模。具体算法和质量边界记录在对应专题文档中。
+
 ## 已实现
 
 - 项目与运行时：`.tinyproject`、启动场景、`GameInstance`、`SceneManager`、Play/Stop 隔离、SaveGame、独立 Shipping Game 和 TPAK 启动挂载。
@@ -27,37 +31,41 @@ TinyEngine 是参考 Unreal Engine 5.3.2 模块职责、以 C++17 实现的轻�
 - 工程化：Git、CTest、CPack、AssetTool、SceneTool、PackageTool、Editor 一键打包、Windows CI、JSONL 结构化日志、Windows MiniDump/文本崩溃报告、第三方许可清单和发布包冒烟脚本。
 - 可维护性基础：稳定 C 原生插件 ABI、通用 Archive/迁移、异步 AssetHandle、依赖闭包、资源预算、Gameplay、CVar/Stat、无头 Commandlet 和 Windows/Linux Cook Profile。
 
-## 构建和运行
+## 快速开始
+
+需要 CMake 3.20+、C++17 编译器、OpenGL 3.3 驱动，以及本地 Assimp/ImGui 源码。SDL2 和 stb 在本机不可用时由 CMake 获取；完整依赖与离线构建方式见[构建指南](docs/BUILDING.md)。
 
 ```powershell
-cmake -S . -B build-full `
+cmake -S . -B build `
   -DTINYENGINE_BUILD_EDITOR=ON `
   -DTINYENGINE_BUILD_IMPORTERS=ON `
   -DTINYENGINE_ASSIMP_DIR=D:\OpenSourceProject\assimp-master `
   -DTINYENGINE_IMGUI_DIR=D:\OpenSourceProject\imgui-master
-cmake --build build-full --config Release -j 8
-ctest --test-dir build-full -C Release --output-on-failure
-.\build-full\Release\tinyengine_editor.exe TinyEngine.tinyproject
+cmake --build build --config Debug -j 8
+ctest --test-dir build -C Debug --output-on-failure
+.\build\Debug\tinyengine_editor.exe TinyEngine.tinyproject
 ```
 
 生成并运行独立游戏包：
 
 ```powershell
-cmake --build build-full --config Release --target package_game
-.\build-full\Package\TinyEngineDemo\TinyEngineDemo.exe `
-  .\build-full\Package\TinyEngineDemo\TinyEngineDemo.tinyproject
+cmake --build build --config Release --target package_game
+.\build\Package\TinyEngineDemo\TinyEngineDemo.exe `
+  .\build\Package\TinyEngineDemo\TinyEngineDemo.tinyproject
 ```
 
 无头校验和平台 Cook：
 
 ```powershell
-.\build-full\Release\tinyengine_commandlet.exe ValidateAssets assets
-.\build-full\Release\tinyengine_commandlet.exe ValidateScenes Saved
-.\build-full\Release\tinyengine_commandlet.exe MigrateScenes Saved
-.\build-full\Release\tinyengine_commandlet.exe CookProject TinyEngine.tinyproject Saved\PlatformCook Windows Shipping
+.\build\Release\tinyengine_commandlet.exe ValidateAssets assets
+.\build\Release\tinyengine_commandlet.exe ValidateScenes Saved
+.\build\Release\tinyengine_commandlet.exe MigrateScenes Saved
+.\build\Release\tinyengine_commandlet.exe CookProject TinyEngine.tinyproject Saved\PlatformCook Windows Shipping
 ```
 
 Scene View 操作：按住鼠标右键并使用 WASD/QE 飞行，Shift 加速；左键选择、拖动框选、Ctrl 追加；W/E/R 切换 Gizmo，并可选择 Local/World 与 Center/Active/Individual Pivot。
+
+资产导入、环境烘焙、VFX/动画/行为树编辑和打包流程见[使用指南](docs/USER_GUIDE.md)；全部 CLI 参数见[工具参考](docs/TOOLS.md)。
 
 ## 当前边界
 

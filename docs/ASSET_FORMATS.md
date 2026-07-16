@@ -1,0 +1,102 @@
+# TinyEngine 资产与数据格式
+
+TinyEngine 将“可编辑源资产”和“运行时轻量资产”分离。FBX/glTF 等源文件只在 Assimp Authoring 流程中读取；Runtime 和发布包只消费转换后的资产。
+
+## 1. 格式总表
+
+| 扩展名/用途 | Magic / 当前版本 | 说明 |
+|---|---|---|
+| `.scene` / `.prefab` | `TINYSCENE 10` | ECS 实体、组件和父子关系；读取 1–10 |
+| `.mesh` | `TINY_MESH 2` | 文本网格，含 Tangent 与四骨骼索引/权重 |
+| Cooked Mesh | `TNYMSH2` | 小端运行时二进制；兼容 `TNYMSH1` |
+| Cooked Texture | `TNYTEX1` | 小端纹理 Header 与 Payload |
+| `.skeleton` | `TINY_SKELETON 1` | 骨骼名称、父索引和 Inverse Bind |
+| `.skanim` | `TINY_SKANIM 3` | Raw/压缩 P/R/S、事件和 Root Motion；读取 1–3 |
+| `.blendtree` | `TINY_BLENDTREE 1` | 1D 阈值样本 |
+| `.animgraph` | `TINY_ANIMGRAPH 1` | 参数、状态、Motion 与转换 |
+| `.vfx` | `TINY_VFX 1` | 发射器、Flipbook 和 CPU/GPU 模式 |
+| `.btgraph` | `TINY_BTGRAPH 1` | 行为树节点、边和编辑器位置 |
+| `.matgraph` | `TINY_MATGRAPH 1` | 材质节点和输入连线 |
+| `.env` | `TINY_ENV 1` | Irradiance、Prefilter 和 BRDF LUT 清单 |
+| `.input` | `TINYINPUT 1` | 逻辑 Axis/Action 映射 |
+| `.loc` | `TINYLOC 1` | Locale/Key 字符串表 |
+| Chunk Manifest | `TINYCHUNK 1` | 总大小、块大小和块文件 |
+| Cook Manifest | `TINYCOOK 1` | 相对路径、时间戳和大小 |
+| 网络快照 | `TNYNET1` | Sequence、时间戳与实体状态 |
+| Replay | `TNYRPLY1` | 有界快照帧序列 |
+| `.tpak` | `TPAK 1` | 规范化相对路径和 Payload |
+| `.meta` | 文本键值 | GUID、类型、导入设置和依赖 |
+
+## 2. 场景兼容规则
+
+- Writer 始终写 `TINYSCENE 10`。
+- Reader 继续接受 1–10，并为旧版本缺失字段填默认值。
+- `MigrateScenes` 会先创建 `.bak` 再重写当前版本。
+- 新增持久化组件或字段时必须同时更新 SceneSerializer、迁移兼容和核心测试。
+- Entity 保存完整 generation 信息；加载阶段重新建立父子引用。
+
+## 3. 动画约束
+
+- Skeleton 父索引必须小于当前骨骼索引或为 `-1`，确保单次前向遍历可构建世界矩阵。
+- Assimp 导入和 OpenGL Skinning 的有效上限为 64 根 GPU 骨骼，每顶点最多四权重。
+- Clip v3 可保存 Raw Keyframe 或逐骨骼压缩曲线，二者不能同时为空或同时作为主存储。
+- 曲线时间必须有序且位于 `[0, duration]`。
+- Root Motion 是独立 Vec3 曲线，循环提取会累计首尾位移差。
+- 事件名称不能为空，事件时间必须位于 Clip 时长内。
+
+## 4. 材质与纹理
+
+`.mat` 是稳定文本格式，主要字段包括：
+
+```text
+parent "materials/Base.mat"
+override baseColor 1
+color 1 1 1 1
+metallic 0
+roughness 0.7
+emissive 0 0 0
+texture "textures/basecolor.png"
+normalTexture "textures/normal.png"
+packedTexture "textures/character_orm.png"
+packedLayout ORM
+blend opaque
+parameter "DetailScale" 2 0 0 0
+```
+
+- 有父材质时，只有显式启用的 Override 覆盖父值。
+- `packedLayout` 支持 `ORM` 与 `RMA`。
+- 颜色纹理按 sRGB 使用；Normal、Metallic、Roughness、AO 和打包数据保持线性。
+- Runtime 可直接上传 DDS/KTX2 中的 BC1–BC7 层级；离线编码器不内置在引擎中。
+
+## 5. VFX
+
+`.vfx` 保存容量、发射率、寿命、速度、扩散、尺寸、重力、颜色、纹理、Flipbook 行列/FPS/循环与模拟模式。
+
+- CPU 模式维护粒子数组并按纹理实例合批。
+- GPU 模式不生成 CPU 粒子，由 OpenGL Vertex Shader 根据实例编号和时间解析连续弹道。
+- 当前 GPU 模式不持久化 Burst、碰撞、Ribbon 或 GPU 事件回读。
+
+## 6. `.meta` 与依赖
+
+每个 Authoring 资产可以带同名 `.meta`：
+
+- GUID 在重导入时保持稳定。
+- `type` 决定 AssetRegistry 分类。
+- `source` 和 Import Settings 允许重导入。
+- Dependencies 用于缺失引用诊断、流式依赖闭包和移动更新。
+
+移动或重命名应通过 `AssetMaintenance` 或编辑器完成；直接移动文件可能留下失效文本引用。
+
+## 7. Cook 与发布
+
+平台 Cook 将 Mesh/Texture 转换为 `TNYMSH2`/`TNYTEX1`，展开 Shader Variant，并生成版本化平台清单和 `Game.tpak`。普通 ProjectPackager 会过滤 `.meta` 与 FBX/OBJ/glTF 等 Authoring 文件。
+
+所有归档路径必须是规范化项目相对路径，不能为绝对路径或包含 `..`。读取器对实体数、骨骼数、字符串、帧数、包长和 Chunk 大小设置上限，外部数据校验失败时返回失败而不是部分接受。
+
+## 8. 格式演进原则
+
+- 只追加字段时优先提升版本并保留旧 Reader。
+- 改变既有字段语义时必须提供显式迁移，不能静默复用旧版本号。
+- 二进制格式固定小端，并对 Count/Length 先检查上限再分配。
+- 文本格式允许 Git Diff，但解析器应拒绝未知结构 Token，避免错误文件被误认为有效资产。
+- 新格式必须至少有 Save/Load Round-trip、损坏 Header、越界 Count 和缺失依赖测试。

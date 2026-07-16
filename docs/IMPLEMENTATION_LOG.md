@@ -8,6 +8,8 @@
 
 最后同步：2026-07-16
 
+> 本文是按提交顺序保留的历史快照。早期章节中的“当前未实现”只代表当时状态；当前能力以 [README](../README.md)、[完成说明](ENGINE_COMPLETION_026.md) 和 [后续工作](REMAINING_WORK.md) 为准。
+
 ## 1. 初始化引擎工程
 
 提交：`32fcfdd`
@@ -282,7 +284,7 @@
 - Cook 转换以 `AssetCooker::transform` 回调插入现有增量 Cook，不让资源层依赖平台命令行工具。
 - GPU 预算只回收可从 CPU Resource 重建的 OpenGL 缓存，不销毁调用方持有的 CPU 资源。
 - 新内容模块保持后端无关：动画只产出矩阵，VFX 只产出粒子数据，本地化只产出 Unicode 文本，后续由 Renderer/UI 消费。
-- 当前骨骼数据仍由程序构造，FontFace 尚未栅格化 glyph，粒子尚未形成 DrawCommand；这些边界继续登记在未完成清单。
+- 在该历史阶段，骨骼数据仍由程序构造，FontFace 尚未栅格化 glyph，粒子尚未形成 DrawCommand；这些后来由 0.25/0.26 批次补齐。
 
 ## 18. 导航、AI、世界分区与模块生命周期
 
@@ -296,7 +298,7 @@
 
 实现方式：
 
-- 导航搜索使用数组化 g-score/前驱表和优先队列，禁止对角穿角；当前目标是小型动态关卡，不构造多边形 NavMesh。
+- 导航搜索使用数组化 g-score/前驱表和优先队列，禁止对角穿角；该历史阶段只面向小型动态关卡，尚未构造多边形 NavMesh。
 - 行为组合节点只保存当前子节点索引，终态统一 Reset，避免每帧从根节点重复执行已经完成的 Wait 前置步骤。
 - WorldPartition 通过回调保持对 Scene/Resource 实现的解耦，加载成功才修改 Cell 状态。
 - 模块按注册顺序处理同层依赖，保证结果可复现；依赖决定的先后关系优先于注册顺序。
@@ -315,7 +317,7 @@
 - Replay 直接封装 `TNYNET1` 快照，线上和离线状态表示保持一致；SnapshotBuffer 只插值两帧都存在的实体。
 - Sequencer 和媒体播放器不持有 Renderer/World，游戏可将采样结果应用到 ECS，编辑器也可复用同一时间轴。
 - HeightField 输出 `MeshVertex`/Index 数据但不直接创建 GPU 资源，保留 RenderDevice 边界。
-- 当前联网层不含 UDP/RPC/Prediction，媒体不含视频 Codec，地形不含 Chunk LOD；这些能力仍登记在未完成清单。
+- 在该历史阶段，联网层不含 UDP/RPC/Prediction，媒体不含视频 Codec，地形不含 Chunk LOD；其中联网基础后来在 0.26 补齐。
 
 ## 20. P0 材质实例
 
@@ -394,7 +396,7 @@
 - 完成框选、批量 Gizmo、Local/World、Pivot 模式、Shader 文本编辑器、资产预览和属性 Undo 对接。
 - 详细设计、命令、验证和边界见 `docs/ENGINE_COMPLETION_025.md`。
 
-## 当前仍未完成
+## 0.25 结束时的后续项（历史）
 
 - 本轮列出的 0.25 功能已进入可运行路径；质量升级项包括 HZB/Occlusion Query、Motion Vector TAA、分离式 SSAO/Bloom Pass 和真正异步 I/O。
 - Jolt 已有可选源码构建、Backend 选择与可用性边界；在引入 Jolt 源码后仍需按目标平台完成性能/确定性验证。
@@ -411,5 +413,13 @@
 - 导航增加轻量多边形 NavMesh、动态障碍、Crowd 和 EQS；行为树增加带校验的图资产和可拖拽编辑器。
 - 网络增加 IPv4 UDP、Sequence/Ack 可靠通道、RPC 白名单/限流、Ownership、客户端预测与服务器纠错。
 - 完成范围、执行路径和生产级边界见 `docs/ENGINE_COMPLETION_026.md`。
+
+## 29. 0.26 文档体系整理
+
+- 新增 `docs/README.md` 作为统一文档入口，按新用户、引擎维护者、资产管线和扩展开发者分流。
+- 新增构建、用户指南和命令行工具文档，覆盖依赖、CMake 选项、目标、导入、编辑、运行、校验、Cook 和打包。
+- 新增资产格式版本表、原生插件 ABI 规则和联网分层说明，明确兼容边界与生产级限制。
+- 校准 README、架构、技术设计和第三方通知，消除“尚无 NavMesh/UDP/Unicode/OGG”等旧版本结论。
+- 将历史完成记录与当前未完成项分离；后续工作只在 `docs/REMAINING_WORK.md` 维护，其他文档仅链接它。
 
 继续开发时，应同时更新本文、`README.md`、`设计.md` 和 `docs/ARCHITECTURE.md`。

@@ -7,6 +7,12 @@
 
 以下内容不是本轮遗漏，而是从“轻量可用引擎”继续向生产级大型引擎提升时的后续项。
 
+## 优先级与完成标准
+
+- P1：直接影响真实项目稳定性、性能或跨平台发布，应先建立可重复基准和回归测试再扩展能力。
+- P2：扩大可制作的游戏类型或团队规模，可按项目需求选择性实现。
+- 一项工作只有在运行时路径接入、有自动测试或可重复冒烟步骤、资产/场景版本兼容且文档同步后，才从清单移除。
+
 ## P1 质量与规模升级
 
 - 渲染：Render Graph、GPU HZB、Motion Vector、分离式多级 Bloom、GTAO、可调 TAA Resolve、Clustered/Forward+ Lighting、GPU Driven Indirect Draw。
@@ -16,7 +22,7 @@
 - 文字：可选 HarfBuzz 完整 OpenType Script Shaping、Fallback Font Chain、IME 候选窗、文字选区与剪贴板。
 - 编辑器：多 Viewport、正交视图、可停靠布局持久化、Scene Outliner 搜索/过滤、完整资产 Diff/Merge。
 
-## 其他引擎模块
+## P2 其他引擎模块
 
 - 动画：IK Rig/Retarget Pose、Full Body IK、Motion Warping、蒙太奇和动画性能分析器。
 - VFX：GPU Burst、深度碰撞、透明排序、Ribbon、Sub-emitter 和事件回读。
@@ -29,3 +35,8 @@
 ## 发布工程
 
 - 增加格式 CI Gate、渲染截图基线、逐分配内存采样、API 文档和发行说明自动生成。
+
+## 不纳入轻量引擎默认范围
+
+- UE 规模的 UObject/UHT/GC 对象体系、分布式 Cook、多 RHI 全覆盖和大型在线服务平台。
+- 仅为“与 UE 功能数量相同”而增加、但没有 TinyEngine 项目用例和验收基准的模块。
