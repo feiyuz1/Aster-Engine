@@ -5,15 +5,19 @@ in vec3 vWorldPosition;
 in vec2 vUv;
 in vec4 vLightSpace[3];
 in float vViewDepth;
+in vec4 vCurrentClip;
+in vec4 vPreviousClip;
 uniform vec4 uBaseColor;
 uniform float uMetallic;
 uniform float uRoughness;
 uniform vec3 uEmissive;
 uniform vec3 uCameraPosition;
 uniform int uLightCount;
-uniform vec3 uLightDirections[4];
-uniform vec3 uLightColors[4];
-uniform float uLightIntensities[4];
+uniform samplerBuffer uLightData;
+uniform usamplerBuffer uClusterData;
+uniform ivec3 uClusterDimensions;
+uniform vec2 uClusterDepthRange;
+uniform vec2 uViewportSize;
 uniform sampler2D uTexture;
 uniform int uHasTexture;
 uniform sampler2D uNormalTexture;
@@ -35,7 +39,8 @@ uniform sampler2D uEnvironmentIrradiance;
 uniform sampler2D uEnvironmentPrefilter;
 uniform sampler2D uEnvironmentBrdfLut;
 uniform int uHasEnvironment;
-out vec4 outColor;
+layout(location = 0) out vec4 outColor;
+layout(location = 1) out vec2 outVelocity;
 
 vec2 DirectionToEquirect(vec3 direction)
 {
@@ -136,9 +141,39 @@ void main()
     vec3 view = normalize(uCameraPosition - vWorldPosition);
     vec3 f0 = mix(vec3(0.04), albedo, metallic);
     vec3 direct = vec3(0.0);
-    for (int index = 0; index < uLightCount; ++index)
+    float logarithmicDepth = log(max(vViewDepth, uClusterDepthRange.x) / uClusterDepthRange.x) /
+                             log(uClusterDepthRange.y / uClusterDepthRange.x);
+    int clusterX = clamp(int(gl_FragCoord.x / max(1.0, uViewportSize.x) * float(uClusterDimensions.x)), 0, uClusterDimensions.x - 1);
+    int clusterY = clamp(int(gl_FragCoord.y / max(1.0, uViewportSize.y) * float(uClusterDimensions.y)), 0, uClusterDimensions.y - 1);
+    int clusterZ = clamp(int(logarithmicDepth * float(uClusterDimensions.z)), 0, uClusterDimensions.z - 1);
+    int cluster = (clusterZ * uClusterDimensions.y + clusterY) * uClusterDimensions.x + clusterX;
+    uint lightOffset = texelFetch(uClusterData, cluster * 2).r;
+    uint clusterLightCount = min(texelFetch(uClusterData, cluster * 2 + 1).r, 64u);
+    uint clusterCount = uint(uClusterDimensions.x * uClusterDimensions.y * uClusterDimensions.z);
+    for (uint localIndex = 0u; localIndex < clusterLightCount; ++localIndex)
     {
-        vec3 light = normalize(-uLightDirections[index]);
+        uint index = texelFetch(uClusterData, int(clusterCount * 2u + lightOffset + localIndex)).r;
+        if (index >= uint(uLightCount)) continue;
+        vec4 positionType = texelFetch(uLightData, int(index * 4u));
+        vec4 directionRange = texelFetch(uLightData, int(index * 4u + 1u));
+        vec4 colorIntensity = texelFetch(uLightData, int(index * 4u + 2u));
+        vec4 cones = texelFetch(uLightData, int(index * 4u + 3u));
+        int lightType = int(positionType.w + 0.5);
+        vec3 toLight = positionType.xyz - vWorldPosition;
+        float distanceToLight = length(toLight);
+        vec3 light = lightType == 0 ? normalize(-directionRange.xyz) : toLight / max(distanceToLight, 0.0001);
+        float attenuation = 1.0;
+        if (lightType != 0)
+        {
+            float normalizedDistance = distanceToLight / max(directionRange.w, 0.001);
+            attenuation = pow(clamp(1.0 - normalizedDistance * normalizedDistance, 0.0, 1.0), 2.0) /
+                          max(distanceToLight * distanceToLight, 1.0);
+            if (lightType == 2)
+            {
+                float cone = dot(normalize(directionRange.xyz), -light);
+                attenuation *= smoothstep(cones.y, cones.x, cone);
+            }
+        }
         vec3 halfway = normalize(view + light);
         float nl = max(dot(normal, light), 0.0);
         float nv = max(dot(normal, view), 0.0);
@@ -147,8 +182,8 @@ void main()
         float geometry = GeometrySchlickGGX(nv, roughness) * GeometrySchlickGGX(nl, roughness);
         vec3 specular = distribution * geometry * fresnel / max(4.0 * nv * nl, 0.0001);
         vec3 diffuse = (vec3(1.0) - fresnel) * (1.0 - metallic) * albedo / 3.14159265;
-        float visibility = index == 0 ? 1.0 - ShadowFactor(normal, light) : 1.0;
-        direct += (diffuse + specular) * uLightColors[index] * uLightIntensities[index] * nl * visibility;
+        float visibility = lightType == 0 && index == 0u ? 1.0 - ShadowFactor(normal, light) : 1.0;
+        direct += (diffuse + specular) * colorIntensity.rgb * colorIntensity.w * nl * visibility * attenuation;
     }
     vec3 skyAmbient = mix(vec3(0.025, 0.035, 0.055), vec3(0.12, 0.18, 0.28), clamp(normal.y * 0.5 + 0.5, 0.0, 1.0));
     vec3 ambient = albedo * skyAmbient;
@@ -163,4 +198,7 @@ void main()
     }
     vec3 color = ambient * ao + direct + emissive;
     outColor = vec4(color, uBaseColor.a * surface.a);
+    vec2 currentNdc = vCurrentClip.xy / max(vCurrentClip.w, 0.0001);
+    vec2 previousNdc = vPreviousClip.xy / max(vPreviousClip.w, 0.0001);
+    outVelocity = (currentNdc - previousNdc) * 0.5;
 }

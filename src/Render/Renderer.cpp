@@ -67,6 +67,9 @@ void NullRenderDevice::DrawParticles(const std::vector<Particle> &)
 void NullRenderDevice::DrawGpuParticles(const std::vector<GpuParticleEmitter> &)
 {
 }
+void NullRenderDevice::ExecutePostProcess(const PostProcessPass)
+{
+}
 void NullRenderDevice::EndFrame()
 {
 }
@@ -109,54 +112,6 @@ const std::vector<RenderItem> &RenderQueue::GetItems() const
     return m_items;
 }
 
-void RenderQueue::ApplyConservativeOcclusion(const Vec3 &cameraPosition)
-{
-    struct Occluder
-    {
-        Vec3 direction;
-        float distance = 0.0f;
-        float radius = 0.0f;
-    };
-    std::vector<Occluder> occluders;
-    std::vector<RenderItem> visible;
-    visible.reserve(m_items.size());
-    for (const auto &item : m_items)
-    {
-        if (item.transparent)
-        {
-            visible.push_back(item);
-            continue;
-        }
-        const Vec3 center = (item.worldBounds.minimum + item.worldBounds.maximum) * 0.5f;
-        const float radius = Length(item.worldBounds.maximum - item.worldBounds.minimum) * 0.5f;
-        const Vec3 offset = center - cameraPosition;
-        const float distance = Length(offset);
-        const Vec3 direction = distance > 0.0001f ? offset / distance : Vec3{0.0f, 0.0f, -1.0f};
-        const float angularRadius = distance > radius ? std::asin(std::clamp(radius / distance, 0.0f, 1.0f)) : 3.14159265f;
-        bool hidden = false;
-        for (const auto &occluder : occluders)
-        {
-            if (occluder.distance + occluder.radius >= distance - radius)
-                continue;
-            const float separation = std::acos(std::clamp(Dot(direction, occluder.direction), -1.0f, 1.0f));
-            const float occluderAngle =
-                occluder.distance > occluder.radius ? std::asin(std::clamp(occluder.radius / occluder.distance, 0.0f, 1.0f)) : 3.14159265f;
-            if (separation + angularRadius < occluderAngle * 0.92f)
-            {
-                hidden = true;
-                break;
-            }
-        }
-        if (!hidden)
-        {
-            visible.push_back(item);
-            if (radius > 0.5f && distance > radius)
-                occluders.push_back({direction, distance, radius});
-        }
-    }
-    m_items = std::move(visible);
-}
-
 namespace
 {
 Aabb TransformBounds(const Aabb &bounds, const Mat4 &matrix)
@@ -196,6 +151,19 @@ std::vector<std::vector<RenderItem>> BuildInstanceBatches(const std::vector<Rend
     }
     return batches;
 }
+
+float Halton(std::uint64_t index, const std::uint32_t base)
+{
+    float result = 0.0f;
+    float fraction = 1.0f;
+    while (index > 0)
+    {
+        fraction /= static_cast<float>(base);
+        result += fraction * static_cast<float>(index % base);
+        index /= base;
+    }
+    return result;
+}
 } // namespace
 
 void Renderer::SetLogger(Logger *logger)
@@ -218,6 +186,10 @@ void Renderer::Shutdown()
     m_renderQueue.Clear();
     m_lastLodSwitches = 0;
     m_lastCulled = 0;
+    m_renderGraph.Reset();
+    m_previousModels.clear();
+    m_hasPreviousView = false;
+    m_frameNumber = 0;
     if (m_device)
     {
         m_device->Shutdown();
@@ -275,17 +247,37 @@ void Renderer::BuildRenderQueue(World &world)
     m_frameView.view = LookAt(cameraPosition, cameraPosition + cameraForward, {0.0f, 1.0f, 0.0f});
     m_frameView.projection =
         Perspective(camera.fov, m_device ? m_device->GetAspectRatio() : 16.0f / 9.0f, camera.nearPlane, camera.farPlane);
+    const Vec2 viewport = m_device ? m_device->GetViewportSize() : Vec2{1280.0f, 720.0f};
+    const std::uint64_t jitterIndex = m_frameNumber % 8 + 1;
+    m_frameView.temporalJitter = {(Halton(jitterIndex, 2) - 0.5f) / std::max(1.0f, viewport.x),
+                                  (Halton(jitterIndex, 3) - 0.5f) / std::max(1.0f, viewport.y)};
+    m_frameView.projection.At(0, 2) += m_frameView.temporalJitter.x * 2.0f;
+    m_frameView.projection.At(1, 2) += m_frameView.temporalJitter.y * 2.0f;
+    const Mat4 currentViewProjection = m_frameView.projection * m_frameView.view;
+    m_frameView.previousViewProjection = m_hasPreviousView ? m_previousViewProjection : currentViewProjection;
     m_frameView.lightCount = 0;
-    world.GetComponentManager().ForEach<LightComponent>([&](Entity, LightComponent &light) {
+    std::vector<RenderLight> renderLights;
+    world.GetComponentManager().ForEach<LightComponent>([&](const Entity entity, LightComponent &light) {
         if (m_frameView.lightCount >= static_cast<int>(FrameView::MaxLights))
             return;
         const int index = m_frameView.lightCount++;
-        m_frameView.lightDirections[index] = Normalize(light.direction);
-        m_frameView.lightColors[index] = light.color;
-        m_frameView.lightIntensities[index] = light.intensity;
+        RenderLight renderLight;
+        renderLight.type = light.type == LightType::Point
+                               ? RenderLightType::Point
+                               : (light.type == LightType::Spot ? RenderLightType::Spot : RenderLightType::Directional);
+        if (const auto *transform = world.GetComponent<TransformComponent>(entity))
+            renderLight.position = transform->position;
+        renderLight.direction = Normalize(light.direction);
+        renderLight.color = light.color;
+        renderLight.intensity = light.intensity;
+        renderLight.range = std::max(0.01f, light.range);
+        renderLight.innerConeCosine = std::cos(DegreesToRadians(std::clamp(light.innerConeAngle, 0.0f, 89.0f)));
+        renderLight.outerConeCosine = std::cos(DegreesToRadians(std::clamp(light.outerConeAngle, light.innerConeAngle, 89.0f)));
+        m_frameView.lights[index] = renderLight;
+        renderLights.push_back(renderLight);
         if (index == 0)
         {
-            m_frameView.lightDirection = m_frameView.lightDirections[index];
+            m_frameView.lightDirection = renderLight.direction;
             m_frameView.lightColor = light.color;
             m_frameView.lightIntensity = light.intensity;
         }
@@ -293,10 +285,16 @@ void Renderer::BuildRenderQueue(World &world)
     if (m_frameView.lightCount == 0)
     {
         m_frameView.lightCount = 1;
-        m_frameView.lightDirections[0] = m_frameView.lightDirection;
-        m_frameView.lightColors[0] = m_frameView.lightColor;
-        m_frameView.lightIntensities[0] = m_frameView.lightIntensity;
+        RenderLight fallback;
+        fallback.direction = m_frameView.lightDirection;
+        fallback.color = m_frameView.lightColor;
+        fallback.intensity = m_frameView.lightIntensity;
+        m_frameView.lights[0] = fallback;
+        renderLights.push_back(fallback);
     }
+    m_frameView.clusteredLights =
+        ClusteredLightBuilder::Build(renderLights, m_frameView.view, m_frameView.projection, static_cast<std::uint32_t>(viewport.x),
+                                     static_cast<std::uint32_t>(viewport.y), camera.nearPlane, camera.farPlane);
     const Vec3 lightDirection = Normalize(m_frameView.lightDirection);
     const Vec3 shadowUp = std::abs(Dot(lightDirection, Vec3{0.0f, 1.0f, 0.0f})) > 0.95f ? Vec3{0.0f, 0.0f, 1.0f} : Vec3{0.0f, 1.0f, 0.0f};
     const float shadowFar = std::min(camera.farPlane, 200.0f), splitLambda = 0.72f;
@@ -362,6 +360,8 @@ void Renderer::BuildRenderQueue(World &world)
         item.entity = entity;
         item.distanceToCamera = distance;
         item.model = world.GetWorldMatrix(entity);
+        const auto previousModel = m_previousModels.find(entity);
+        item.previousModel = previousModel != m_previousModels.end() ? previousModel->second : item.model;
         item.worldBounds = TransformBounds(mesh->GetBounds(), item.model);
         if (const auto *animation = world.GetComponent<AnimationComponent>(entity))
             item.skinMatrices = animation->skinMatrices;
@@ -381,9 +381,12 @@ void Renderer::BuildRenderQueue(World &world)
         m_renderQueue.AddItem(item);
     });
     m_renderQueue.Sort();
-    const std::size_t beforeOcclusion = m_renderQueue.GetItems().size();
-    m_renderQueue.ApplyConservativeOcclusion(cameraPosition);
-    m_lastCulled += beforeOcclusion - m_renderQueue.GetItems().size();
+    m_previousViewProjection = currentViewProjection;
+    m_hasPreviousView = true;
+    m_previousModels.clear();
+    for (const auto &item : m_renderQueue.GetItems())
+        m_previousModels[item.entity] = item.model;
+    ++m_frameNumber;
 }
 
 void Renderer::RenderFrame(World &world)
@@ -394,40 +397,82 @@ void Renderer::RenderFrame(World &world)
     BuildRenderQueue(world);
     const auto queueEnd = std::chrono::steady_clock::now();
     const auto batches = BuildInstanceBatches(m_renderQueue.GetItems());
-    for (std::size_t cascade = 0; cascade < FrameView::MaxShadowCascades; ++cascade)
+    const auto particles = m_vfxSystem ? m_vfxSystem->BuildParticleList() : std::vector<Particle>{};
+    const auto gpuEmitters = m_vfxSystem ? m_vfxSystem->BuildGpuEmitterList() : std::vector<GpuParticleEmitter>{};
+    std::size_t particleCount = particles.size();
+    for (const auto &emitter : gpuEmitters)
+        particleCount += emitter.settings.maximumParticles;
+
+    m_renderGraph.Reset();
+    const auto shadow0 = m_renderGraph.CreateResource({RenderGraphResourceType::Texture, "ShadowCascade0", 2048, 2048, 1, 1});
+    const auto shadow1 = m_renderGraph.CreateResource({RenderGraphResourceType::Texture, "ShadowCascade1", 2048, 2048, 1, 1});
+    const auto shadow2 = m_renderGraph.CreateResource({RenderGraphResourceType::Texture, "ShadowCascade2", 2048, 2048, 1, 1});
+    const Vec2 viewport = m_device->GetViewportSize();
+    const auto hdr = m_renderGraph.CreateResource({RenderGraphResourceType::Texture, "SceneHDR", static_cast<std::uint32_t>(viewport.x),
+                                                   static_cast<std::uint32_t>(viewport.y), 1, 2});
+    const auto depth = m_renderGraph.CreateResource({RenderGraphResourceType::Texture, "SceneDepth", static_cast<std::uint32_t>(viewport.x),
+                                                     static_cast<std::uint32_t>(viewport.y), 1, 3});
+    const auto velocity =
+        m_renderGraph.CreateResource({RenderGraphResourceType::Texture, "MotionVectors", static_cast<std::uint32_t>(viewport.x),
+                                      static_cast<std::uint32_t>(viewport.y), 1, 4});
+    const auto hzb = m_renderGraph.CreateResource({RenderGraphResourceType::Texture, "HierarchicalDepth",
+                                                   static_cast<std::uint32_t>(viewport.x), static_cast<std::uint32_t>(viewport.y), 1, 5});
+    const auto gtao = m_renderGraph.CreateResource({RenderGraphResourceType::Texture, "GTAO", static_cast<std::uint32_t>(viewport.x / 2),
+                                                    static_cast<std::uint32_t>(viewport.y / 2), 1, 6});
+    const auto bloom =
+        m_renderGraph.CreateResource({RenderGraphResourceType::Texture, "BloomPyramid", static_cast<std::uint32_t>(viewport.x / 2),
+                                      static_cast<std::uint32_t>(viewport.y / 2), 5, 2});
+    const auto history =
+        m_renderGraph.ImportResource({RenderGraphResourceType::Texture, "TemporalHistory", static_cast<std::uint32_t>(viewport.x),
+                                      static_cast<std::uint32_t>(viewport.y), 1, 2});
+    const auto resolved =
+        m_renderGraph.CreateResource({RenderGraphResourceType::Texture, "TemporalResolvedHDR", static_cast<std::uint32_t>(viewport.x),
+                                      static_cast<std::uint32_t>(viewport.y), 1, 2});
+    const auto output =
+        m_renderGraph.ImportResource({RenderGraphResourceType::Texture, "SceneOutput", static_cast<std::uint32_t>(viewport.x),
+                                      static_cast<std::uint32_t>(viewport.y), 1, 7});
+
+    const std::array<RenderGraphResourceHandle, 3> shadows{shadow0, shadow1, shadow2};
+    for (std::size_t cascade = 0; cascade < shadows.size(); ++cascade)
+        m_renderGraph.AddPass({"Shadow Cascade " + std::to_string(cascade), {}, {shadows[cascade]}, [&, cascade] {
+                                   m_device->BeginShadowPass(m_frameView, cascade);
+                                   for (const auto &batch : batches)
+                                       if (batch.size() > 1)
+                                           m_device->DrawShadowInstanced(batch);
+                                       else
+                                           m_device->DrawShadow(batch.front());
+                                   m_device->EndShadowPass();
+                               }});
+    m_renderGraph.AddPass({"Forward+ Scene", {shadow0, shadow1, shadow2}, {hdr, depth, velocity}, [&] {
+                               m_device->BeginFrame(m_frameView);
+                               for (const auto &batch : batches)
+                                   if (batch.size() > 1)
+                                       m_device->DrawInstanced(batch);
+                                   else
+                                       m_device->Draw(batch.front());
+                               m_device->DrawParticles(particles);
+                               m_device->DrawGpuParticles(gpuEmitters);
+                               if (m_uiSystem)
+                               {
+                                   m_uiSystem->SetViewportSize(viewport.x, viewport.y);
+                                   m_device->DrawUi(m_uiSystem->BuildDrawList());
+                               }
+                           }});
+    m_renderGraph.AddPass({"GPU HZB", {depth}, {hzb}, [&] { m_device->ExecutePostProcess(PostProcessPass::HierarchicalDepth); }});
+    m_renderGraph.AddPass({"GTAO", {depth, hzb}, {gtao}, [&] { m_device->ExecutePostProcess(PostProcessPass::Gtao); }});
+    m_renderGraph.AddPass({"Bloom Pyramid", {hdr}, {bloom}, [&] { m_device->ExecutePostProcess(PostProcessPass::Bloom); }});
+    m_renderGraph.AddPass({"Motion Vector TAA", {hdr, depth, velocity, gtao, bloom, history}, {resolved}, [&] {
+                               m_device->ExecutePostProcess(PostProcessPass::TemporalResolve);
+                           }});
+    m_renderGraph.AddPass({"Tone Map", {resolved}, {output}, [&] { m_device->ExecutePostProcess(PostProcessPass::ToneMap); }, true});
+    std::string graphError;
+    if (!m_renderGraph.Compile(&graphError) || !m_renderGraph.Execute(&graphError))
     {
-        m_device->BeginShadowPass(m_frameView, cascade);
-        for (const auto &batch : batches)
-            if (batch.size() > 1)
-                m_device->DrawShadowInstanced(batch);
-            else
-                m_device->DrawShadow(batch.front());
-        m_device->EndShadowPass();
+        if (m_logger)
+            m_logger->Error(graphError);
+        return;
     }
     const auto shadowEnd = std::chrono::steady_clock::now();
-    m_device->BeginFrame(m_frameView);
-    for (const auto &batch : batches)
-        if (batch.size() > 1)
-            m_device->DrawInstanced(batch);
-        else
-            m_device->Draw(batch.front());
-    std::size_t particleCount = 0;
-    if (m_vfxSystem)
-    {
-        const auto particles = m_vfxSystem->BuildParticleList();
-        particleCount = particles.size();
-        m_device->DrawParticles(particles);
-        const auto gpuEmitters = m_vfxSystem->BuildGpuEmitterList();
-        for (const auto &emitter : gpuEmitters)
-            particleCount += emitter.settings.maximumParticles;
-        m_device->DrawGpuParticles(gpuEmitters);
-    }
-    if (m_uiSystem)
-    {
-        const Vec2 viewport = m_device->GetViewportSize();
-        m_uiSystem->SetViewportSize(viewport.x, viewport.y);
-        m_device->DrawUi(m_uiSystem->BuildDrawList());
-    }
     m_device->EndFrame();
     if (m_overlayCallback)
         m_overlayCallback();
@@ -437,8 +482,13 @@ void Renderer::RenderFrame(World &world)
     const auto milliseconds = [](const auto start, const auto end) {
         return std::chrono::duration<float, std::milli>(end - start).count();
     };
-    m_lastFrameProfile = {milliseconds(totalStart, queueEnd), milliseconds(queueEnd, shadowEnd), milliseconds(shadowEnd, sceneEnd),
-                          milliseconds(totalStart, sceneEnd)};
+    m_lastFrameProfile = {milliseconds(totalStart, queueEnd),
+                          milliseconds(queueEnd, shadowEnd),
+                          milliseconds(shadowEnd, sceneEnd),
+                          milliseconds(totalStart, sceneEnd),
+                          m_renderGraph.GetPassCount(),
+                          m_renderGraph.GetPhysicalResourceCount(),
+                          m_frameView.clusteredLights.lightIndices.size()};
     if (m_logger)
         m_logger->Debug("RenderFrame draw calls: " + std::to_string(m_lastDrawCalls));
 }
@@ -478,6 +528,10 @@ std::size_t Renderer::GetLastLodSwitchCount() const
 const FrameProfile &Renderer::GetLastFrameProfile() const
 {
     return m_lastFrameProfile;
+}
+const RenderGraph &Renderer::GetLastRenderGraph() const
+{
+    return m_renderGraph;
 }
 void Renderer::SetCameraOverride(const bool enabled, const Vec3 &position, const Vec3 &rotation, const float fov)
 {

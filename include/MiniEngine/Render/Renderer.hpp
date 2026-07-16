@@ -1,6 +1,8 @@
 #pragma once
 
 #include "MiniEngine/Math/Math.hpp"
+#include "MiniEngine/Render/ClusteredLighting.hpp"
+#include "MiniEngine/Render/RenderGraph.hpp"
 #include "MiniEngine/Resource/Resource.hpp"
 #include "MiniEngine/Types.hpp"
 #include "MiniEngine/UI/UISystem.hpp"
@@ -10,6 +12,7 @@
 #include <functional>
 #include <memory>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace MiniEngine
@@ -40,10 +43,12 @@ struct InputState
 
 struct FrameView
 {
-    static constexpr std::size_t MaxLights = 4;
+    static constexpr std::size_t MaxLights = 64;
     static constexpr std::size_t MaxShadowCascades = 3;
     Mat4 view = Mat4::Identity();
     Mat4 projection = Mat4::Identity();
+    Mat4 previousViewProjection = Mat4::Identity();
+    Vec2 temporalJitter{};
     Vec3 cameraPosition{0.0f, 0.0f, 5.0f};
     Vec3 lightDirection{-0.4f, -1.0f, -0.3f};
     Vec3 lightColor{1.0f, 1.0f, 1.0f};
@@ -51,10 +56,9 @@ struct FrameView
     Mat4 lightViewProjection = Mat4::Identity();
     std::array<Mat4, MaxShadowCascades> shadowViewProjections{};
     std::array<float, MaxShadowCascades> shadowCascadeSplits{};
-    std::array<Vec3, MaxLights> lightDirections{};
-    std::array<Vec3, MaxLights> lightColors{};
-    std::array<float, MaxLights> lightIntensities{};
+    std::array<RenderLight, MaxLights> lights{};
     int lightCount = 0;
+    ClusteredLightGrid clusteredLights;
     std::shared_ptr<TextureResource> environmentTexture;
     std::shared_ptr<TextureResource> environmentIrradiance;
     std::shared_ptr<TextureResource> environmentPrefilter;
@@ -66,6 +70,7 @@ struct RenderItem
     Entity entity = InvalidEntity;
     float distanceToCamera = 0.0f;
     Mat4 model = Mat4::Identity();
+    Mat4 previousModel = Mat4::Identity();
     std::shared_ptr<MeshResource> mesh;
     std::shared_ptr<MaterialResource> material;
     std::shared_ptr<TextureResource> texture;
@@ -86,6 +91,18 @@ struct FrameProfile
     float shadowMilliseconds = 0.0f;
     float sceneMilliseconds = 0.0f;
     float totalMilliseconds = 0.0f;
+    std::size_t graphPasses = 0;
+    std::size_t graphPhysicalResources = 0;
+    std::size_t clusteredLightReferences = 0;
+};
+
+enum class PostProcessPass
+{
+    HierarchicalDepth,
+    Gtao,
+    Bloom,
+    TemporalResolve,
+    ToneMap
 };
 
 class RenderDevice
@@ -107,6 +124,7 @@ class RenderDevice
     virtual void DrawInstanced(const std::vector<RenderItem> &items) = 0;
     virtual void DrawParticles(const std::vector<Particle> &particles) = 0;
     virtual void DrawGpuParticles(const std::vector<GpuParticleEmitter> &emitters) = 0;
+    virtual void ExecutePostProcess(PostProcessPass pass) = 0;
     virtual void EndFrame() = 0;
     virtual void DrawUi(const std::vector<UIDrawCommand> &commands) = 0;
     virtual void Present() = 0;
@@ -133,6 +151,7 @@ class NullRenderDevice final : public RenderDevice
     void DrawInstanced(const std::vector<RenderItem> &items) override;
     void DrawParticles(const std::vector<Particle> &particles) override;
     void DrawGpuParticles(const std::vector<GpuParticleEmitter> &emitters) override;
+    void ExecutePostProcess(PostProcessPass pass) override;
     void EndFrame() override;
     void DrawUi(const std::vector<UIDrawCommand> &commands) override;
     void Present() override;
@@ -152,7 +171,6 @@ class RenderQueue
     void Sort();
     void Clear();
     const std::vector<RenderItem> &GetItems() const;
-    void ApplyConservativeOcclusion(const Vec3 &cameraPosition);
 
   private:
     std::vector<RenderItem> m_items;
@@ -178,6 +196,7 @@ class Renderer
     std::size_t GetLastCulledCount() const;
     std::size_t GetLastLodSwitchCount() const;
     const FrameProfile &GetLastFrameProfile() const;
+    const RenderGraph &GetLastRenderGraph() const;
     void SetCameraOverride(bool enabled, const Vec3 &position = {}, const Vec3 &rotation = {}, float fov = 60.0f);
     void SetEnvironmentPath(std::string path);
 
@@ -202,5 +221,10 @@ class Renderer
     std::string m_environmentPrefilterPath;
     std::string m_environmentBrdfPath;
     FrameProfile m_lastFrameProfile;
+    RenderGraph m_renderGraph;
+    Mat4 m_previousViewProjection = Mat4::Identity();
+    bool m_hasPreviousView = false;
+    std::unordered_map<Entity, Mat4> m_previousModels;
+    std::uint64_t m_frameNumber = 0;
 };
 } // namespace MiniEngine

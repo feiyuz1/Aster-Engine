@@ -177,77 +177,230 @@ constexpr const char *ToneVertexShaderSource = R"GLSL(
             }
         )GLSL";
 
-constexpr const char *ToneFragmentShaderSource = R"GLSL(
+constexpr const char *HzbFragmentShaderSource = R"GLSL(
             #version 330 core
             in vec2 vUv;
-            uniform sampler2D uHdrTexture;
-            uniform sampler2D uDepthTexture;
-            uniform sampler2D uHistoryTexture;
+            uniform sampler2D uSource;
+            uniform vec2 uSourceTexel;
+            out float outDepth;
+            void main()
+            {
+                vec2 base = vUv - uSourceTexel * 0.5;
+                float a = texture(uSource, base).r;
+                float b = texture(uSource, base + vec2(uSourceTexel.x, 0.0)).r;
+                float c = texture(uSource, base + vec2(0.0, uSourceTexel.y)).r;
+                float d = texture(uSource, base + uSourceTexel).r;
+                outDepth = max(max(a, b), max(c, d));
+            }
+        )GLSL";
+
+constexpr const char *GtaoFragmentShaderSource = R"GLSL(
+            #version 330 core
+            in vec2 vUv;
+            uniform sampler2D uDepth;
+            uniform vec2 uInverseResolution;
+            out float outOcclusion;
+            void main()
+            {
+                float center = texture(uDepth, vUv).r;
+                if (center >= 0.99999) { outOcclusion = 1.0; return; }
+                float horizon = 0.0;
+                const int directions = 8;
+                const int steps = 4;
+                for (int direction = 0; direction < directions; ++direction)
+                {
+                    float angle = 6.2831853 * (float(direction) + fract(sin(dot(gl_FragCoord.xy, vec2(12.9898, 78.233))) * 43758.5453)) /
+                                  float(directions);
+                    vec2 ray = vec2(cos(angle), sin(angle));
+                    float directionOcclusion = 0.0;
+                    for (int stepIndex = 1; stepIndex <= steps; ++stepIndex)
+                    {
+                        vec2 offset = ray * uInverseResolution * float(stepIndex * stepIndex) * 3.0;
+                        float sampleDepth = texture(uDepth, vUv + offset).r;
+                        float thickness = 0.00035 * float(stepIndex);
+                        directionOcclusion = max(directionOcclusion, sampleDepth + thickness < center ? 1.0 / float(stepIndex) : 0.0);
+                    }
+                    horizon += directionOcclusion;
+                }
+                outOcclusion = clamp(1.0 - horizon / float(directions) * 0.72, 0.18, 1.0);
+            }
+        )GLSL";
+
+constexpr const char *BloomFragmentShaderSource = R"GLSL(
+            #version 330 core
+            in vec2 vUv;
+            uniform sampler2D uSource;
+            uniform vec2 uSourceTexel;
+            uniform int uExtract;
+            out vec4 outColor;
+            void main()
+            {
+                vec3 color = vec3(0.0);
+                float weights[5] = float[5](0.227027, 0.1945946, 0.1216216, 0.054054, 0.016216);
+                color += texture(uSource, vUv).rgb * weights[0];
+                for (int offset = 1; offset < 5; ++offset)
+                {
+                    vec2 delta = uSourceTexel * float(offset);
+                    color += (texture(uSource, vUv + delta).rgb + texture(uSource, vUv - delta).rgb) * weights[offset];
+                }
+                if (uExtract != 0)
+                {
+                    float brightness = max(color.r, max(color.g, color.b));
+                    color *= smoothstep(0.8, 1.8, brightness);
+                }
+                outColor = vec4(color, 1.0);
+            }
+        )GLSL";
+
+constexpr const char *TaaFragmentShaderSource = R"GLSL(
+            #version 330 core
+            in vec2 vUv;
+            uniform sampler2D uScene;
+            uniform sampler2D uVelocity;
+            uniform sampler2D uHistory;
+            uniform sampler2D uGtao;
+            uniform sampler2D uBloom0;
+            uniform sampler2D uBloom1;
+            uniform sampler2D uBloom2;
+            uniform sampler2D uBloom3;
+            uniform sampler2D uBloom4;
+            uniform vec2 uInverseResolution;
+            uniform int uHistoryValid;
+            uniform int uTaaEnabled;
+            out vec4 outColor;
+            vec3 Composite(vec2 uv)
+            {
+                vec3 scene = texture(uScene, uv).rgb * texture(uGtao, uv).r;
+                vec3 bloom = texture(uBloom0, uv).rgb * 0.34 + texture(uBloom1, uv).rgb * 0.25 +
+                             texture(uBloom2, uv).rgb * 0.18 + texture(uBloom3, uv).rgb * 0.13 +
+                             texture(uBloom4, uv).rgb * 0.10;
+                return scene + bloom;
+            }
+            void main()
+            {
+                vec3 current = Composite(vUv);
+                if (uTaaEnabled == 0 || uHistoryValid == 0)
+                {
+                    outColor = vec4(current, 1.0);
+                    return;
+                }
+                vec2 velocity = texture(uVelocity, vUv).rg;
+                vec2 historyUv = vUv - velocity;
+                vec3 minimumColor = vec3(1e20), maximumColor = vec3(-1e20);
+                for (int y = -1; y <= 1; ++y)
+                    for (int x = -1; x <= 1; ++x)
+                    {
+                        vec3 sampleColor = Composite(vUv + vec2(x, y) * uInverseResolution);
+                        minimumColor = min(minimumColor, sampleColor);
+                        maximumColor = max(maximumColor, sampleColor);
+                    }
+                vec3 history = clamp(texture(uHistory, historyUv).rgb, minimumColor, maximumColor);
+                float historyWeight = mix(0.92, 0.72, clamp(length(velocity) * 120.0, 0.0, 1.0));
+                outColor = vec4(mix(current, history, historyWeight), 1.0);
+            }
+        )GLSL";
+
+constexpr const char *FinalToneFragmentShaderSource = R"GLSL(
+            #version 330 core
+            in vec2 vUv;
+            uniform sampler2D uResolved;
             uniform float uExposure;
             uniform vec2 uInverseResolution;
             uniform int uFxaaEnabled;
-            uniform int uBloomEnabled;
-            uniform int uSsaoEnabled;
-            uniform int uTaaEnabled;
-            uniform int uHistoryValid;
             out vec4 outColor;
             vec3 AcesFilm(vec3 color)
             {
                 return clamp((color * (2.51 * color + 0.03)) / (color * (2.43 * color + 0.59) + 0.14), 0.0, 1.0);
             }
-            vec3 SceneColor(vec2 uv)
+            void main()
             {
-                vec4 scene = texture(uHdrTexture, uv);
-                vec3 sky = mix(vec3(0.035, 0.055, 0.09), vec3(0.22, 0.42, 0.72), clamp(uv.y, 0.0, 1.0));
-                return mix(sky, scene.rgb, scene.a);
+                vec3 color = texture(uResolved, vUv).rgb;
+                if (uFxaaEnabled != 0)
+                {
+                    vec3 nw = texture(uResolved, vUv + vec2(-1.0, -1.0) * uInverseResolution).rgb;
+                    vec3 ne = texture(uResolved, vUv + vec2(1.0, -1.0) * uInverseResolution).rgb;
+                    vec3 sw = texture(uResolved, vUv + vec2(-1.0, 1.0) * uInverseResolution).rgb;
+                    vec3 se = texture(uResolved, vUv + vec2(1.0, 1.0) * uInverseResolution).rgb;
+                    vec3 weights = vec3(0.299, 0.587, 0.114);
+                    float center = dot(color, weights);
+                    float minimumLuma = min(center, min(min(dot(nw, weights), dot(ne, weights)), min(dot(sw, weights), dot(se, weights))));
+                    float maximumLuma = max(center, max(max(dot(nw, weights), dot(ne, weights)), max(dot(sw, weights), dot(se, weights))));
+                    if (maximumLuma - minimumLuma > max(0.0312, maximumLuma * 0.125))
+                        color = (nw + ne + sw + se + color * 2.0) / 6.0;
+                }
+                outColor = vec4(pow(AcesFilm(color * uExposure), vec3(1.0 / 2.2)), 1.0);
+            }
+        )GLSL";
+
+constexpr const char *PresentFragmentShaderSource = R"GLSL(
+            #version 330 core
+            in vec2 vUv;
+            uniform sampler2D uSceneColor;
+            out vec4 outColor;
+            void main() { outColor = texture(uSceneColor, vUv); }
+        )GLSL";
+
+constexpr const char *GpuCullComputeShaderSource = R"GLSL(
+            #version 430 core
+            layout(local_size_x = 64) in;
+            struct CullInstance { mat4 model; mat4 previousModel; vec4 bounds; };
+            layout(std430, binding = 0) readonly buffer CullInput { CullInstance instances[]; };
+            layout(std430, binding = 1) writeonly buffer VisibleModels { mat4 visibleModels[]; };
+            layout(std430, binding = 2) writeonly buffer VisiblePreviousModels { mat4 visiblePreviousModels[]; };
+            layout(std430, binding = 3) buffer IndirectCommand
+            {
+                uint count;
+                uint instanceCount;
+                uint firstIndex;
+                int baseVertex;
+                uint baseInstance;
+            } command;
+            uniform mat4 uPreviousViewProjection;
+            uniform uint uInputCount;
+            uniform int uHzbValid;
+            uniform int uHzbCount;
+            uniform sampler2D uHzb[12];
+            bool Visible(CullInstance instance)
+            {
+                vec4 bounds = instance.bounds;
+                vec4 clip = uPreviousViewProjection * vec4(bounds.xyz, 1.0);
+                if (clip.w <= 0.0001) return true;
+                vec3 ndc = clip.xyz / clip.w;
+                float radiusNdc = abs(bounds.w / clip.w) * 1.75;
+                if (ndc.x + radiusNdc < -1.0 || ndc.x - radiusNdc > 1.0 ||
+                    ndc.y + radiusNdc < -1.0 || ndc.y - radiusNdc > 1.0)
+                    return false;
+                float matrixDelta = 0.0;
+                for (int column = 0; column < 4; ++column)
+                    matrixDelta += dot(abs(instance.model[column] - instance.previousModel[column]), vec4(1.0));
+                if (matrixDelta > 0.0001) return true;
+                if (uHzbValid == 0 || uHzbCount == 0) return true;
+                vec2 uv = ndc.xy * 0.5 + 0.5;
+                float diameterPixels = radiusNdc * float(textureSize(uHzb[0], 0).x) * 2.0;
+                int level = clamp(int(floor(log2(max(1.0, diameterPixels)))), 0, uHzbCount - 1);
+                float maximumDepth = level == 0 ? texture(uHzb[0], uv).r :
+                                     level == 1 ? texture(uHzb[1], uv).r :
+                                     level == 2 ? texture(uHzb[2], uv).r :
+                                     level == 3 ? texture(uHzb[3], uv).r :
+                                     level == 4 ? texture(uHzb[4], uv).r :
+                                     level == 5 ? texture(uHzb[5], uv).r :
+                                     level == 6 ? texture(uHzb[6], uv).r :
+                                     level == 7 ? texture(uHzb[7], uv).r :
+                                     level == 8 ? texture(uHzb[8], uv).r :
+                                     level == 9 ? texture(uHzb[9], uv).r :
+                                     level == 10 ? texture(uHzb[10], uv).r : texture(uHzb[11], uv).r;
+                float nearestDepth = ndc.z * 0.5 + 0.5 - radiusNdc * 0.5;
+                return nearestDepth <= maximumDepth + 0.002;
             }
             void main()
             {
-                vec3 hdr = SceneColor(vUv);
-                if (uTaaEnabled != 0 && uHistoryValid != 0)
-                {
-                    vec3 history = texture(uHistoryTexture, vUv).rgb;
-                    vec3 minimumColor = min(hdr, min(SceneColor(vUv + vec2(uInverseResolution.x, 0.0)), SceneColor(vUv - vec2(uInverseResolution.x, 0.0))));
-                    vec3 maximumColor = max(hdr, max(SceneColor(vUv + vec2(uInverseResolution.x, 0.0)), SceneColor(vUv - vec2(uInverseResolution.x, 0.0))));
-                    hdr = mix(hdr, clamp(history, minimumColor, maximumColor), 0.88);
-                }
-                if (uSsaoEnabled != 0)
-                {
-                    float centerDepth = texture(uDepthTexture, vUv).r;
-                    float occlusion = 0.0;
-                    for (int x = -2; x <= 2; ++x)
-                        for (int y = -2; y <= 2; ++y)
-                        {
-                            float sampleDepth = texture(uDepthTexture, vUv + vec2(x, y) * uInverseResolution * 2.0).r;
-                            occlusion += sampleDepth + 0.0008 < centerDepth ? 1.0 : 0.0;
-                        }
-                    hdr *= 1.0 - occlusion / 25.0 * 0.42;
-                }
-                if (uBloomEnabled != 0)
-                {
-                    vec3 bloom = vec3(0.0);
-                    float weights[5] = float[5](0.22, 0.19, 0.12, 0.07, 0.035);
-                    for (int offset = -4; offset <= 4; ++offset)
-                    {
-                        vec3 horizontal = SceneColor(vUv + vec2(offset, 0.0) * uInverseResolution * 2.0);
-                        vec3 vertical = SceneColor(vUv + vec2(0.0, offset) * uInverseResolution * 2.0);
-                        bloom += (max(horizontal - vec3(1.0), vec3(0.0)) + max(vertical - vec3(1.0), vec3(0.0))) * weights[abs(offset)];
-                    }
-                    hdr += bloom * 0.28;
-                }
-                if (uFxaaEnabled != 0)
-                {
-                    vec3 northWest = SceneColor(vUv + vec2(-1.0, -1.0) * uInverseResolution);
-                    vec3 northEast = SceneColor(vUv + vec2(1.0, -1.0) * uInverseResolution);
-                    vec3 southWest = SceneColor(vUv + vec2(-1.0, 1.0) * uInverseResolution);
-                    vec3 southEast = SceneColor(vUv + vec2(1.0, 1.0) * uInverseResolution);
-                    vec3 lumaWeights = vec3(0.299, 0.587, 0.114);
-                    float centerLuma = dot(hdr, lumaWeights), minimumLuma = min(centerLuma, min(min(dot(northWest, lumaWeights), dot(northEast, lumaWeights)), min(dot(southWest, lumaWeights), dot(southEast, lumaWeights))));
-                    float maximumLuma = max(centerLuma, max(max(dot(northWest, lumaWeights), dot(northEast, lumaWeights)), max(dot(southWest, lumaWeights), dot(southEast, lumaWeights))));
-                    if (maximumLuma - minimumLuma > max(0.0312, maximumLuma * 0.125)) hdr = (northWest + northEast + southWest + southEast + hdr * 2.0) / 6.0;
-                }
-                hdr *= uExposure;
-                outColor = vec4(pow(AcesFilm(hdr), vec3(1.0 / 2.2)), 1.0);
+                uint index = gl_GlobalInvocationID.x;
+                if (index >= uInputCount) return;
+                CullInstance instance = instances[index];
+                if (!Visible(instance)) return;
+                uint visibleIndex = atomicAdd(command.instanceCount, 1u);
+                visibleModels[visibleIndex] = instance.model;
+                visiblePreviousModels[visibleIndex] = instance.previousModel;
             }
         )GLSL";
 
@@ -388,6 +541,10 @@ struct SdlGlRenderDevice::Impl
     using VertexAttribDivisorProc = void(APIENTRY *)(GLuint, GLuint);
     using DrawElementsInstancedProc = void(APIENTRY *)(GLenum, GLsizei, GLenum, const void *, GLsizei);
     using DrawArraysInstancedProc = void(APIENTRY *)(GLenum, GLint, GLsizei, GLsizei);
+    using DrawElementsIndirectProc = void(APIENTRY *)(GLenum, GLenum, const void *);
+    using DispatchComputeProc = void(APIENTRY *)(GLuint, GLuint, GLuint);
+    using BindBufferBaseProc = void(APIENTRY *)(GLenum, GLuint, GLuint);
+    using MemoryBarrierProc = void(APIENTRY *)(GLbitfield);
     using CreateShaderProc = GLuint(APIENTRY *)(GLenum);
     using ShaderSourceProc = void(APIENTRY *)(GLuint, GLsizei, const GLchar *const *, const GLint *);
     using CompileShaderProc = void(APIENTRY *)(GLuint);
@@ -405,9 +562,11 @@ struct SdlGlRenderDevice::Impl
     using UniformMatrix4fvProc = void(APIENTRY *)(GLint, GLsizei, GLboolean, const GLfloat *);
     using Uniform4fProc = void(APIENTRY *)(GLint, GLfloat, GLfloat, GLfloat, GLfloat);
     using Uniform3fProc = void(APIENTRY *)(GLint, GLfloat, GLfloat, GLfloat);
+    using Uniform3iProc = void(APIENTRY *)(GLint, GLint, GLint, GLint);
     using Uniform2fProc = void(APIENTRY *)(GLint, GLfloat, GLfloat);
     using Uniform1fProc = void(APIENTRY *)(GLint, GLfloat);
     using Uniform1iProc = void(APIENTRY *)(GLint, GLint);
+    using Uniform1uiProc = void(APIENTRY *)(GLint, GLuint);
     using ActiveTextureProc = void(APIENTRY *)(GLenum);
     using GenerateMipmapProc = void(APIENTRY *)(GLenum);
     using CompressedTexImage2DProc = void(APIENTRY *)(GLenum, GLint, GLenum, GLsizei, GLsizei, GLint, GLsizei, const void *);
@@ -416,6 +575,8 @@ struct SdlGlRenderDevice::Impl
     using DeleteFramebuffersProc = void(APIENTRY *)(GLsizei, const GLuint *);
     using FramebufferTexture2DProc = void(APIENTRY *)(GLenum, GLenum, GLenum, GLuint, GLint);
     using CheckFramebufferStatusProc = GLenum(APIENTRY *)(GLenum);
+    using DrawBuffersProc = void(APIENTRY *)(GLsizei, const GLenum *);
+    using TexBufferProc = void(APIENTRY *)(GLenum, GLenum, GLuint);
     using GenQueriesProc = void(APIENTRY *)(GLsizei, GLuint *);
     using DeleteQueriesProc = void(APIENTRY *)(GLsizei, const GLuint *);
     using BeginQueryProc = void(APIENTRY *)(GLenum, GLuint);
@@ -427,7 +588,8 @@ struct SdlGlRenderDevice::Impl
     SDL_GLContext context = nullptr;
     InputState input;
     FrameView view;
-    GLuint program = 0, shadowProgram = 0, toneProgram = 0, uiProgram = 0, particleProgram = 0, gpuParticleProgram = 0, fullScreenVao = 0,
+    GLuint program = 0, shadowProgram = 0, toneProgram = 0, presentProgram = 0, hzbProgram = 0, gtaoProgram = 0, bloomProgram = 0,
+           taaProgram = 0, gpuCullProgram = 0, uiProgram = 0, particleProgram = 0, gpuParticleProgram = 0, fullScreenVao = 0,
            particleInstanceBuffer = 0;
     GLuint uiVao = 0, uiVertexBuffer = 0, uiIndexBuffer = 0, fontAtlas = 0;
     struct Glyph
@@ -441,13 +603,20 @@ struct SdlGlRenderDevice::Impl
     FT_Library freeType = nullptr;
     FT_Face freeTypeFace = nullptr;
 #endif
-    GLuint sceneFramebuffer = 0, toneFramebuffer = 0, sceneHdrColor = 0, sceneColor = 0, sceneDepth = 0, historyHdrColor = 0;
+    GLuint sceneFramebuffer = 0, toneFramebuffer = 0, postFramebuffer = 0, sceneHdrColor = 0, sceneColor = 0, sceneDepth = 0,
+           sceneVelocity = 0, historyHdrColor = 0, gtaoTexture = 0;
+    std::vector<GLuint> hzbTextures;
+    std::array<GLuint, 5> bloomTextures{};
+    std::array<GLuint, 2> taaTextures{};
+    int temporalTextureIndex = 0;
     std::array<GLuint, FrameView::MaxShadowCascades> shadowFramebuffers{}, shadowDepths{};
     int shadowResolution = 2048;
     std::size_t activeShadowCascade = 0;
     float exposure = 1.0f;
     bool fxaaEnabled = true;
-    bool bloomEnabled = true, ssaoEnabled = true, taaEnabled = true, historyValid = false;
+    bool bloomEnabled = true, gtaoEnabled = true, taaEnabled = true, historyValid = false;
+    bool indirectDrawSupported = false;
+    bool computeCullingSupported = false;
     float maximumAnisotropy = 1.0f;
     GLuint timerQueries[2]{};
     bool timerIssued[2]{};
@@ -456,17 +625,19 @@ struct SdlGlRenderDevice::Impl
     float lastGpuFrameMilliseconds = 0.0f;
     int sceneWidth = 0, sceneHeight = 0;
     bool sceneTargetEnabled = false;
+    bool presentSceneToWindow = true;
     bool previousUiNext = false, previousUiAccept = false;
     SDL_GameController *controller = nullptr;
-    GLint mvpLocation = -1, modelLocation = -1, viewProjectionLocation = -1, viewLocation = -1, instancedLocation = -1,
-          baseColorLocation = -1;
+    GLint mvpLocation = -1, modelLocation = -1, previousModelLocation = -1, viewProjectionLocation = -1,
+          previousViewProjectionLocation = -1, viewLocation = -1, instancedLocation = -1, baseColorLocation = -1;
     std::array<GLint, FrameView::MaxShadowCascades> shadowViewProjectionLocations{}, shadowCascadeSplitLocations{}, shadowMapLocations{};
     GLint bonesLocation = -1;
     GLint metallicLocation = -1, roughnessLocation = -1, emissiveLocation = -1, cameraPositionLocation = -1;
-    GLint lightDirectionLocation = -1, lightColorLocation = -1, lightIntensityLocation = -1;
     GLint textureLocation = -1, hasTextureLocation = -1;
     GLint lightCountLocation = -1;
-    std::array<GLint, FrameView::MaxLights> lightDirectionsLocations{}, lightColorsLocations{}, lightIntensitiesLocations{};
+    GLint lightDataLocation = -1, clusterDataLocation = -1, clusterDimensionsLocation = -1, clusterDepthRangeLocation = -1,
+          clusterViewportLocation = -1;
+    GLuint lightDataBuffer = 0, lightDataTexture = 0, clusterDataBuffer = 0, clusterDataTexture = 0;
     GLint normalTextureLocation = -1, hasNormalTextureLocation = -1, metallicTextureLocation = -1, hasMetallicTextureLocation = -1;
     GLint roughnessTextureLocation = -1, hasRoughnessTextureLocation = -1, aoTextureLocation = -1, hasAoTextureLocation = -1;
     GLint emissiveTextureLocation = -1, hasEmissiveTextureLocation = -1;
@@ -474,9 +645,18 @@ struct SdlGlRenderDevice::Impl
     GLint environmentIrradianceLocation = -1, environmentPrefilterLocation = -1, environmentBrdfLocation = -1, hasEnvironmentLocation = -1;
     GLint shadowMvpLocation = -1, shadowLightViewProjectionLocation = -1, shadowInstancedLocation = -1, shadowAlphaTextureLocation = -1,
           shadowHasAlphaTextureLocation = -1, shadowOpacityLocation = -1;
-    GLint toneTextureLocation = -1, toneDepthTextureLocation = -1, toneHistoryTextureLocation = -1, exposureLocation = -1,
-          inverseResolutionLocation = -1, fxaaEnabledLocation = -1, bloomEnabledLocation = -1, ssaoEnabledLocation = -1,
-          taaEnabledLocation = -1, historyValidLocation = -1;
+    GLint exposureLocation = -1, inverseResolutionLocation = -1, fxaaEnabledLocation = -1;
+    GLint hzbSourceLocation = -1, hzbSourceTexelLocation = -1;
+    GLint gtaoDepthLocation = -1, gtaoInverseResolutionLocation = -1;
+    GLint bloomSourceLocation = -1, bloomSourceTexelLocation = -1, bloomExtractLocation = -1;
+    GLint taaSceneLocation = -1, taaVelocityLocation = -1, taaHistoryLocation = -1, taaGtaoLocation = -1, taaInverseResolutionLocation = -1,
+          taaHistoryValidLocation = -1, taaEnabledLocation = -1;
+    std::array<GLint, 5> taaBloomLocations{};
+    GLint toneResolvedLocation = -1;
+    GLint presentSceneColorLocation = -1;
+    GLint gpuCullPreviousViewProjectionLocation = -1, gpuCullInputCountLocation = -1, gpuCullHzbValidLocation = -1,
+          gpuCullHzbCountLocation = -1;
+    std::array<GLint, 12> gpuCullHzbLocations{};
     GLint uiViewportLocation = -1, uiColorLocation = -1, uiTextureLocation = -1, uiHasTextureLocation = -1;
     GLint particleViewLocation = -1, particleProjectionLocation = -1, particlePositionLocation = -1, particleSizeLocation = -1,
           particleColorLocation = -1, particleTextureLocation = -1, particleHasTextureLocation = -1;
@@ -501,6 +681,10 @@ struct SdlGlRenderDevice::Impl
     VertexAttribDivisorProc VertexAttribDivisor = nullptr;
     DrawElementsInstancedProc DrawElementsInstanced = nullptr;
     DrawArraysInstancedProc DrawArraysInstanced = nullptr;
+    DrawElementsIndirectProc DrawElementsIndirect = nullptr;
+    DispatchComputeProc DispatchCompute = nullptr;
+    BindBufferBaseProc BindBufferBase = nullptr;
+    MemoryBarrierProc MemoryBarrier = nullptr;
     CreateShaderProc CreateShader = nullptr;
     ShaderSourceProc ShaderSource = nullptr;
     CompileShaderProc CompileShader = nullptr;
@@ -518,9 +702,11 @@ struct SdlGlRenderDevice::Impl
     UniformMatrix4fvProc UniformMatrix4fv = nullptr;
     Uniform4fProc Uniform4f = nullptr;
     Uniform3fProc Uniform3f = nullptr;
+    Uniform3iProc Uniform3i = nullptr;
     Uniform2fProc Uniform2f = nullptr;
     Uniform1fProc Uniform1f = nullptr;
     Uniform1iProc Uniform1i = nullptr;
+    Uniform1uiProc Uniform1ui = nullptr;
     ActiveTextureProc ActiveTexture = nullptr;
     GenerateMipmapProc GenerateMipmap = nullptr;
     CompressedTexImage2DProc CompressedTexImage2D = nullptr;
@@ -529,6 +715,8 @@ struct SdlGlRenderDevice::Impl
     DeleteFramebuffersProc DeleteFramebuffers = nullptr;
     FramebufferTexture2DProc FramebufferTexture2D = nullptr;
     CheckFramebufferStatusProc CheckFramebufferStatus = nullptr;
+    DrawBuffersProc DrawBuffers = nullptr;
+    TexBufferProc TexBuffer = nullptr;
     GenQueriesProc GenQueries = nullptr;
     DeleteQueriesProc DeleteQueries = nullptr;
     BeginQueryProc BeginQuery = nullptr;
@@ -538,7 +726,8 @@ struct SdlGlRenderDevice::Impl
 
     struct GpuMesh
     {
-        GLuint vao = 0, vertexBuffer = 0, indexBuffer = 0, instanceBuffer = 0;
+        GLuint vao = 0, vertexBuffer = 0, indexBuffer = 0, instanceBuffer = 0, previousInstanceBuffer = 0, indirectBuffer = 0,
+               cullInputBuffer = 0;
         GLsizei indexCount = 0;
         std::size_t byteSize = 0;
     };
@@ -571,6 +760,12 @@ struct SdlGlRenderDevice::Impl
             DeleteBuffers(1, &pair.second.indexBuffer);
             if (pair.second.instanceBuffer)
                 DeleteBuffers(1, &pair.second.instanceBuffer);
+            if (pair.second.previousInstanceBuffer)
+                DeleteBuffers(1, &pair.second.previousInstanceBuffer);
+            if (pair.second.indirectBuffer)
+                DeleteBuffers(1, &pair.second.indirectBuffer);
+            if (pair.second.cullInputBuffer)
+                DeleteBuffers(1, &pair.second.cullInputBuffer);
             DeleteVertexArrays(1, &pair.second.vao);
         }
         meshes.clear();
@@ -583,26 +778,33 @@ struct SdlGlRenderDevice::Impl
 
     bool LoadFunctions()
     {
-        return LoadGl(GenVertexArrays, "glGenVertexArrays") && LoadGl(BindVertexArray, "glBindVertexArray") &&
-               LoadGl(DeleteVertexArrays, "glDeleteVertexArrays") && LoadGl(GenBuffers, "glGenBuffers") &&
-               LoadGl(BindBuffer, "glBindBuffer") && LoadGl(BufferData, "glBufferData") && LoadGl(DeleteBuffers, "glDeleteBuffers") &&
-               LoadGl(VertexAttribPointer, "glVertexAttribPointer") && LoadGl(EnableVertexAttribArray, "glEnableVertexAttribArray") &&
-               LoadGl(VertexAttribDivisor, "glVertexAttribDivisor") && LoadGl(DrawElementsInstanced, "glDrawElementsInstanced") &&
-               LoadGl(DrawArraysInstanced, "glDrawArraysInstanced") && LoadGl(CreateShader, "glCreateShader") &&
-               LoadGl(ShaderSource, "glShaderSource") && LoadGl(CompileShader, "glCompileShader") && LoadGl(GetShaderiv, "glGetShaderiv") &&
-               LoadGl(GetShaderInfoLog, "glGetShaderInfoLog") && LoadGl(DeleteShader, "glDeleteShader") &&
-               LoadGl(CreateProgram, "glCreateProgram") && LoadGl(AttachShader, "glAttachShader") && LoadGl(LinkProgram, "glLinkProgram") &&
-               LoadGl(GetProgramiv, "glGetProgramiv") && LoadGl(GetProgramInfoLog, "glGetProgramInfoLog") &&
-               LoadGl(DeleteProgram, "glDeleteProgram") && LoadGl(UseProgram, "glUseProgram") &&
-               LoadGl(GetUniformLocation, "glGetUniformLocation") && LoadGl(UniformMatrix4fv, "glUniformMatrix4fv") &&
-               LoadGl(Uniform4f, "glUniform4f") && LoadGl(Uniform3f, "glUniform3f") && LoadGl(Uniform2f, "glUniform2f") &&
-               LoadGl(Uniform1f, "glUniform1f") && LoadGl(Uniform1i, "glUniform1i") && LoadGl(ActiveTexture, "glActiveTexture") &&
-               LoadGl(GenerateMipmap, "glGenerateMipmap") && LoadGl(CompressedTexImage2D, "glCompressedTexImage2D") &&
-               LoadGl(GenFramebuffers, "glGenFramebuffers") && LoadGl(BindFramebuffer, "glBindFramebuffer") &&
-               LoadGl(DeleteFramebuffers, "glDeleteFramebuffers") && LoadGl(FramebufferTexture2D, "glFramebufferTexture2D") &&
-               LoadGl(CheckFramebufferStatus, "glCheckFramebufferStatus") && LoadGl(GenQueries, "glGenQueries") &&
-               LoadGl(DeleteQueries, "glDeleteQueries") && LoadGl(BeginQuery, "glBeginQuery") && LoadGl(EndQuery, "glEndQuery") &&
-               LoadGl(GetQueryObjectiv, "glGetQueryObjectiv") && LoadGl(GetQueryObjectui64v, "glGetQueryObjectui64v");
+        const bool required =
+            LoadGl(GenVertexArrays, "glGenVertexArrays") && LoadGl(BindVertexArray, "glBindVertexArray") &&
+            LoadGl(DeleteVertexArrays, "glDeleteVertexArrays") && LoadGl(GenBuffers, "glGenBuffers") &&
+            LoadGl(BindBuffer, "glBindBuffer") && LoadGl(BufferData, "glBufferData") && LoadGl(DeleteBuffers, "glDeleteBuffers") &&
+            LoadGl(VertexAttribPointer, "glVertexAttribPointer") && LoadGl(EnableVertexAttribArray, "glEnableVertexAttribArray") &&
+            LoadGl(VertexAttribDivisor, "glVertexAttribDivisor") && LoadGl(DrawElementsInstanced, "glDrawElementsInstanced") &&
+            LoadGl(DrawArraysInstanced, "glDrawArraysInstanced") && LoadGl(CreateShader, "glCreateShader") &&
+            LoadGl(ShaderSource, "glShaderSource") && LoadGl(CompileShader, "glCompileShader") && LoadGl(GetShaderiv, "glGetShaderiv") &&
+            LoadGl(GetShaderInfoLog, "glGetShaderInfoLog") && LoadGl(DeleteShader, "glDeleteShader") &&
+            LoadGl(CreateProgram, "glCreateProgram") && LoadGl(AttachShader, "glAttachShader") && LoadGl(LinkProgram, "glLinkProgram") &&
+            LoadGl(GetProgramiv, "glGetProgramiv") && LoadGl(GetProgramInfoLog, "glGetProgramInfoLog") &&
+            LoadGl(DeleteProgram, "glDeleteProgram") && LoadGl(UseProgram, "glUseProgram") &&
+            LoadGl(GetUniformLocation, "glGetUniformLocation") && LoadGl(UniformMatrix4fv, "glUniformMatrix4fv") &&
+            LoadGl(Uniform4f, "glUniform4f") && LoadGl(Uniform3f, "glUniform3f") && LoadGl(Uniform2f, "glUniform2f") &&
+            LoadGl(Uniform3i, "glUniform3i") && LoadGl(Uniform1f, "glUniform1f") && LoadGl(Uniform1i, "glUniform1i") &&
+            LoadGl(ActiveTexture, "glActiveTexture") && LoadGl(GenerateMipmap, "glGenerateMipmap") &&
+            LoadGl(CompressedTexImage2D, "glCompressedTexImage2D") && LoadGl(GenFramebuffers, "glGenFramebuffers") &&
+            LoadGl(BindFramebuffer, "glBindFramebuffer") && LoadGl(DeleteFramebuffers, "glDeleteFramebuffers") &&
+            LoadGl(FramebufferTexture2D, "glFramebufferTexture2D") && LoadGl(CheckFramebufferStatus, "glCheckFramebufferStatus") &&
+            LoadGl(DrawBuffers, "glDrawBuffers") && LoadGl(TexBuffer, "glTexBuffer") && LoadGl(GenQueries, "glGenQueries") &&
+            LoadGl(DeleteQueries, "glDeleteQueries") && LoadGl(BeginQuery, "glBeginQuery") && LoadGl(EndQuery, "glEndQuery") &&
+            LoadGl(GetQueryObjectiv, "glGetQueryObjectiv") && LoadGl(GetQueryObjectui64v, "glGetQueryObjectui64v");
+        indirectDrawSupported = LoadGl(DrawElementsIndirect, "glDrawElementsIndirect");
+        computeCullingSupported = indirectDrawSupported && LoadGl(DispatchCompute, "glDispatchCompute") &&
+                                  LoadGl(BindBufferBase, "glBindBufferBase") && LoadGl(MemoryBarrier, "glMemoryBarrier") &&
+                                  LoadGl(Uniform1ui, "glUniform1ui");
+        return required;
     }
 
     void DestroySceneTarget()
@@ -613,14 +815,38 @@ struct SdlGlRenderDevice::Impl
             glDeleteTextures(1, &sceneColor);
         if (sceneDepth)
             glDeleteTextures(1, &sceneDepth);
+        if (sceneVelocity)
+            glDeleteTextures(1, &sceneVelocity);
         if (historyHdrColor)
             glDeleteTextures(1, &historyHdrColor);
+        if (gtaoTexture)
+            glDeleteTextures(1, &gtaoTexture);
+        for (const GLuint texture : hzbTextures)
+            if (texture)
+                glDeleteTextures(1, &texture);
+        hzbTextures.clear();
+        for (GLuint &texture : bloomTextures)
+        {
+            if (texture)
+                glDeleteTextures(1, &texture);
+            texture = 0;
+        }
+        for (GLuint &texture : taaTextures)
+        {
+            if (texture)
+                glDeleteTextures(1, &texture);
+            texture = 0;
+        }
         if (sceneFramebuffer)
             DeleteFramebuffers(1, &sceneFramebuffer);
         if (toneFramebuffer)
             DeleteFramebuffers(1, &toneFramebuffer);
-        sceneHdrColor = sceneColor = sceneDepth = historyHdrColor = sceneFramebuffer = toneFramebuffer = 0;
+        if (postFramebuffer)
+            DeleteFramebuffers(1, &postFramebuffer);
+        sceneHdrColor = sceneColor = sceneDepth = sceneVelocity = historyHdrColor = gtaoTexture = sceneFramebuffer = toneFramebuffer =
+            postFramebuffer = 0;
         historyValid = false;
+        temporalTextureIndex = 0;
         sceneWidth = sceneHeight = 0;
     }
 
@@ -645,6 +871,16 @@ struct SdlGlRenderDevice::Impl
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
         FramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, sceneDepth, 0);
+        glGenTextures(1, &sceneVelocity);
+        glBindTexture(GL_TEXTURE_2D, sceneVelocity);
+        glTexImage2D(GL_TEXTURE_2D, 0, 0x822F, width, height, 0, 0x8227, GL_FLOAT, nullptr);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        FramebufferTexture2D(GL_FRAMEBUFFER, 0x8CE1, GL_TEXTURE_2D, sceneVelocity, 0);
+        const GLenum sceneAttachments[] = {GL_COLOR_ATTACHMENT0, 0x8CE1};
+        DrawBuffers(2, sceneAttachments);
         bool complete = CheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE;
         GenFramebuffers(1, &toneFramebuffer);
         BindFramebuffer(GL_FRAMEBUFFER, toneFramebuffer);
@@ -655,13 +891,38 @@ struct SdlGlRenderDevice::Impl
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
         FramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, sceneColor, 0);
         complete = complete && CheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE;
-        glGenTextures(1, &historyHdrColor);
-        glBindTexture(GL_TEXTURE_2D, historyHdrColor);
-        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA16F, width, height, 0, GL_RGBA, GL_FLOAT, nullptr);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        GenFramebuffers(1, &postFramebuffer);
+        const auto createTexture = [](GLuint &texture, const GLint internalFormat, const int textureWidth, const int textureHeight,
+                                      const GLenum format, const GLenum type, const GLint filter) {
+            glGenTextures(1, &texture);
+            glBindTexture(GL_TEXTURE_2D, texture);
+            glTexImage2D(GL_TEXTURE_2D, 0, internalFormat, textureWidth, textureHeight, 0, format, type, nullptr);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, filter);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, filter);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        };
+        int hzbWidth = std::max(1, (width + 1) / 2), hzbHeight = std::max(1, (height + 1) / 2);
+        while (true)
+        {
+            GLuint texture = 0;
+            createTexture(texture, 0x822E, hzbWidth, hzbHeight, GL_RED, GL_FLOAT, GL_NEAREST);
+            hzbTextures.push_back(texture);
+            if (hzbWidth == 1 && hzbHeight == 1)
+                break;
+            hzbWidth = std::max(1, (hzbWidth + 1) / 2);
+            hzbHeight = std::max(1, (hzbHeight + 1) / 2);
+        }
+        createTexture(gtaoTexture, 0x822D, std::max(1, width / 2), std::max(1, height / 2), GL_RED, GL_FLOAT, GL_LINEAR);
+        int bloomWidth = std::max(1, width / 2), bloomHeight = std::max(1, height / 2);
+        for (GLuint &texture : bloomTextures)
+        {
+            createTexture(texture, GL_RGBA16F, bloomWidth, bloomHeight, GL_RGBA, GL_FLOAT, GL_LINEAR);
+            bloomWidth = std::max(1, bloomWidth / 2);
+            bloomHeight = std::max(1, bloomHeight / 2);
+        }
+        for (GLuint &texture : taaTextures)
+            createTexture(texture, GL_RGBA16F, width, height, GL_RGBA, GL_FLOAT, GL_LINEAR);
         BindFramebuffer(GL_FRAMEBUFFER, 0);
         glBindTexture(GL_TEXTURE_2D, 0);
         if (!complete)
@@ -765,6 +1026,26 @@ struct SdlGlRenderDevice::Impl
         return candidate;
     }
 
+    GLuint CreateComputeProgram(const char *source)
+    {
+        const GLuint shader = Compile(0x91B9, source);
+        if (!shader)
+            return 0;
+        const GLuint candidate = CreateProgram();
+        AttachShader(candidate, shader);
+        LinkProgram(candidate);
+        DeleteShader(shader);
+        GLint success = GL_FALSE;
+        GetProgramiv(candidate, GL_LINK_STATUS, &success);
+        if (success == GL_TRUE)
+            return candidate;
+        GLchar log[4096]{};
+        GetProgramInfoLog(candidate, sizeof(log), nullptr, log);
+        lastShaderError = log;
+        DeleteProgram(candidate);
+        return 0;
+    }
+
     bool CreateDefaultProgram(const char *vertexSource = VertexShaderSource, const char *fragmentSource = FragmentShaderSource)
     {
         const GLuint candidate = CreateLinkedProgram(vertexSource, fragmentSource);
@@ -777,7 +1058,9 @@ struct SdlGlRenderDevice::Impl
         mvpLocation = GetUniformLocation(program, "uMvp");
         bonesLocation = GetUniformLocation(program, "uBones");
         modelLocation = GetUniformLocation(program, "uModel");
+        previousModelLocation = GetUniformLocation(program, "uPreviousModel");
         viewProjectionLocation = GetUniformLocation(program, "uViewProjection");
+        previousViewProjectionLocation = GetUniformLocation(program, "uPreviousViewProjection");
         viewLocation = GetUniformLocation(program, "uView");
         instancedLocation = GetUniformLocation(program, "uInstanced");
         for (std::size_t index = 0; index < FrameView::MaxShadowCascades; ++index)
@@ -788,17 +1071,12 @@ struct SdlGlRenderDevice::Impl
             shadowMapLocations[index] = GetUniformLocation(program, ("uShadowMaps" + suffix).c_str());
         }
         baseColorLocation = GetUniformLocation(program, "uBaseColor");
-        lightDirectionLocation = GetUniformLocation(program, "uLightDirection");
-        lightColorLocation = GetUniformLocation(program, "uLightColor");
-        lightIntensityLocation = GetUniformLocation(program, "uLightIntensity");
         lightCountLocation = GetUniformLocation(program, "uLightCount");
-        for (std::size_t index = 0; index < FrameView::MaxLights; ++index)
-        {
-            const std::string suffix = "[" + std::to_string(index) + "]";
-            lightDirectionsLocations[index] = GetUniformLocation(program, ("uLightDirections" + suffix).c_str());
-            lightColorsLocations[index] = GetUniformLocation(program, ("uLightColors" + suffix).c_str());
-            lightIntensitiesLocations[index] = GetUniformLocation(program, ("uLightIntensities" + suffix).c_str());
-        }
+        lightDataLocation = GetUniformLocation(program, "uLightData");
+        clusterDataLocation = GetUniformLocation(program, "uClusterData");
+        clusterDimensionsLocation = GetUniformLocation(program, "uClusterDimensions");
+        clusterDepthRangeLocation = GetUniformLocation(program, "uClusterDepthRange");
+        clusterViewportLocation = GetUniformLocation(program, "uViewportSize");
         metallicLocation = GetUniformLocation(program, "uMetallic");
         roughnessLocation = GetUniformLocation(program, "uRoughness");
         emissiveLocation = GetUniformLocation(program, "uEmissive");
@@ -959,11 +1237,22 @@ struct SdlGlRenderDevice::Impl
     bool CreateAuxiliaryPrograms()
     {
         shadowProgram = CreateLinkedProgram(ShadowVertexShaderSource, ShadowFragmentShaderSource);
-        toneProgram = CreateLinkedProgram(ToneVertexShaderSource, ToneFragmentShaderSource);
+        toneProgram = CreateLinkedProgram(ToneVertexShaderSource, FinalToneFragmentShaderSource);
+        presentProgram = CreateLinkedProgram(ToneVertexShaderSource, PresentFragmentShaderSource);
+        hzbProgram = CreateLinkedProgram(ToneVertexShaderSource, HzbFragmentShaderSource);
+        gtaoProgram = CreateLinkedProgram(ToneVertexShaderSource, GtaoFragmentShaderSource);
+        bloomProgram = CreateLinkedProgram(ToneVertexShaderSource, BloomFragmentShaderSource);
+        taaProgram = CreateLinkedProgram(ToneVertexShaderSource, TaaFragmentShaderSource);
+        if (computeCullingSupported)
+        {
+            gpuCullProgram = CreateComputeProgram(GpuCullComputeShaderSource);
+            computeCullingSupported = gpuCullProgram != 0;
+        }
         uiProgram = CreateLinkedProgram(UiVertexShaderSource, UiFragmentShaderSource);
         particleProgram = CreateLinkedProgram(ParticleVertexShaderSource, ParticleFragmentShaderSource);
         gpuParticleProgram = CreateLinkedProgram(GpuParticleVertexShaderSource, GpuParticleFragmentShaderSource);
-        if (!shadowProgram || !toneProgram || !uiProgram || !particleProgram || !gpuParticleProgram)
+        if (!shadowProgram || !toneProgram || !presentProgram || !hzbProgram || !gtaoProgram || !bloomProgram || !taaProgram ||
+            !uiProgram || !particleProgram || !gpuParticleProgram)
             return false;
         shadowMvpLocation = GetUniformLocation(shadowProgram, "uLightMvp");
         shadowLightViewProjectionLocation = GetUniformLocation(shadowProgram, "uLightViewProjection");
@@ -971,16 +1260,36 @@ struct SdlGlRenderDevice::Impl
         shadowAlphaTextureLocation = GetUniformLocation(shadowProgram, "uShadowAlphaTexture");
         shadowHasAlphaTextureLocation = GetUniformLocation(shadowProgram, "uShadowHasAlphaTexture");
         shadowOpacityLocation = GetUniformLocation(shadowProgram, "uShadowOpacity");
-        toneTextureLocation = GetUniformLocation(toneProgram, "uHdrTexture");
-        toneDepthTextureLocation = GetUniformLocation(toneProgram, "uDepthTexture");
-        toneHistoryTextureLocation = GetUniformLocation(toneProgram, "uHistoryTexture");
+        toneResolvedLocation = GetUniformLocation(toneProgram, "uResolved");
+        presentSceneColorLocation = GetUniformLocation(presentProgram, "uSceneColor");
         exposureLocation = GetUniformLocation(toneProgram, "uExposure");
         inverseResolutionLocation = GetUniformLocation(toneProgram, "uInverseResolution");
         fxaaEnabledLocation = GetUniformLocation(toneProgram, "uFxaaEnabled");
-        bloomEnabledLocation = GetUniformLocation(toneProgram, "uBloomEnabled");
-        ssaoEnabledLocation = GetUniformLocation(toneProgram, "uSsaoEnabled");
-        taaEnabledLocation = GetUniformLocation(toneProgram, "uTaaEnabled");
-        historyValidLocation = GetUniformLocation(toneProgram, "uHistoryValid");
+        hzbSourceLocation = GetUniformLocation(hzbProgram, "uSource");
+        hzbSourceTexelLocation = GetUniformLocation(hzbProgram, "uSourceTexel");
+        gtaoDepthLocation = GetUniformLocation(gtaoProgram, "uDepth");
+        gtaoInverseResolutionLocation = GetUniformLocation(gtaoProgram, "uInverseResolution");
+        bloomSourceLocation = GetUniformLocation(bloomProgram, "uSource");
+        bloomSourceTexelLocation = GetUniformLocation(bloomProgram, "uSourceTexel");
+        bloomExtractLocation = GetUniformLocation(bloomProgram, "uExtract");
+        taaSceneLocation = GetUniformLocation(taaProgram, "uScene");
+        taaVelocityLocation = GetUniformLocation(taaProgram, "uVelocity");
+        taaHistoryLocation = GetUniformLocation(taaProgram, "uHistory");
+        taaGtaoLocation = GetUniformLocation(taaProgram, "uGtao");
+        taaInverseResolutionLocation = GetUniformLocation(taaProgram, "uInverseResolution");
+        taaHistoryValidLocation = GetUniformLocation(taaProgram, "uHistoryValid");
+        taaEnabledLocation = GetUniformLocation(taaProgram, "uTaaEnabled");
+        for (std::size_t index = 0; index < taaBloomLocations.size(); ++index)
+            taaBloomLocations[index] = GetUniformLocation(taaProgram, ("uBloom" + std::to_string(index)).c_str());
+        if (gpuCullProgram)
+        {
+            gpuCullPreviousViewProjectionLocation = GetUniformLocation(gpuCullProgram, "uPreviousViewProjection");
+            gpuCullInputCountLocation = GetUniformLocation(gpuCullProgram, "uInputCount");
+            gpuCullHzbValidLocation = GetUniformLocation(gpuCullProgram, "uHzbValid");
+            gpuCullHzbCountLocation = GetUniformLocation(gpuCullProgram, "uHzbCount");
+            for (std::size_t index = 0; index < gpuCullHzbLocations.size(); ++index)
+                gpuCullHzbLocations[index] = GetUniformLocation(gpuCullProgram, ("uHzb[" + std::to_string(index) + "]").c_str());
+        }
         GenVertexArrays(1, &fullScreenVao);
         BindVertexArray(fullScreenVao);
         GenBuffers(1, &particleInstanceBuffer);
@@ -994,6 +1303,10 @@ struct SdlGlRenderDevice::Impl
             VertexAttribDivisor(attribute, 1);
         }
         BindVertexArray(0);
+        GenBuffers(1, &lightDataBuffer);
+        glGenTextures(1, &lightDataTexture);
+        GenBuffers(1, &clusterDataBuffer);
+        glGenTextures(1, &clusterDataTexture);
         uiViewportLocation = GetUniformLocation(uiProgram, "uViewport");
         uiColorLocation = GetUniformLocation(uiProgram, "uColor");
         uiTextureLocation = GetUniformLocation(uiProgram, "uUiTexture");
@@ -1110,6 +1423,24 @@ struct SdlGlRenderDevice::Impl
             EnableVertexAttribArray(8 + column);
             VertexAttribDivisor(8 + column, 1);
         }
+        GenBuffers(1, &mesh.previousInstanceBuffer);
+        BindBuffer(GL_ARRAY_BUFFER, mesh.previousInstanceBuffer);
+        BufferData(GL_ARRAY_BUFFER, 0, nullptr, GL_DYNAMIC_DRAW);
+        for (GLuint column = 0; column < 4; ++column)
+        {
+            VertexAttribPointer(12 + column, 4, GL_FLOAT, GL_FALSE, sizeof(Mat4),
+                                reinterpret_cast<void *>(static_cast<std::uintptr_t>(column * sizeof(float) * 4)));
+            EnableVertexAttribArray(12 + column);
+            VertexAttribDivisor(12 + column, 1);
+        }
+        GenBuffers(1, &mesh.indirectBuffer);
+        BindBuffer(0x8F3F, mesh.indirectBuffer);
+        BufferData(0x8F3F, sizeof(std::uint32_t) * 5, nullptr, GL_DYNAMIC_DRAW);
+        BindBuffer(0x8F3F, 0);
+        GenBuffers(1, &mesh.cullInputBuffer);
+        BindBuffer(0x90D2, mesh.cullInputBuffer);
+        BufferData(0x90D2, 0, nullptr, GL_DYNAMIC_DRAW);
+        BindBuffer(0x90D2, 0);
         BindVertexArray(0);
         mesh.indexCount = static_cast<GLsizei>(indices.size());
         mesh.byteSize = requiredBytes;
@@ -1239,7 +1570,7 @@ bool SdlGlRenderDevice::Initialize()
 {
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMECONTROLLER | SDL_INIT_AUDIO) != 0)
         return false;
-    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 4);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 3);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
     SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
@@ -1282,6 +1613,13 @@ bool SdlGlRenderDevice::Initialize()
     SDL_GL_GetDrawableSize(m_impl->window, &drawableWidth, &drawableHeight);
     if (drawableHeight > 0)
         m_aspect = static_cast<float>(drawableWidth) / static_cast<float>(drawableHeight);
+    m_impl->sceneTargetEnabled = true;
+    m_impl->presentSceneToWindow = true;
+    if (!m_impl->CreateSceneTarget(std::max(1, drawableWidth), std::max(1, drawableHeight)))
+    {
+        Shutdown();
+        return false;
+    }
     return true;
 }
 
@@ -1304,6 +1642,12 @@ void SdlGlRenderDevice::Shutdown()
             m_impl->DeleteBuffers(1, &pair.second.indexBuffer);
             if (pair.second.instanceBuffer)
                 m_impl->DeleteBuffers(1, &pair.second.instanceBuffer);
+            if (pair.second.previousInstanceBuffer)
+                m_impl->DeleteBuffers(1, &pair.second.previousInstanceBuffer);
+            if (pair.second.indirectBuffer)
+                m_impl->DeleteBuffers(1, &pair.second.indirectBuffer);
+            if (pair.second.cullInputBuffer)
+                m_impl->DeleteBuffers(1, &pair.second.cullInputBuffer);
             m_impl->DeleteVertexArrays(1, &pair.second.vao);
         }
         m_impl->meshes.clear();
@@ -1344,6 +1688,24 @@ void SdlGlRenderDevice::Shutdown()
             m_impl->DeleteProgram(m_impl->toneProgram);
             m_impl->toneProgram = 0;
         }
+        if (m_impl->presentProgram)
+        {
+            m_impl->DeleteProgram(m_impl->presentProgram);
+            m_impl->presentProgram = 0;
+        }
+        for (GLuint *program : {&m_impl->hzbProgram, &m_impl->gtaoProgram, &m_impl->bloomProgram, &m_impl->taaProgram})
+        {
+            if (*program)
+            {
+                m_impl->DeleteProgram(*program);
+                *program = 0;
+            }
+        }
+        if (m_impl->gpuCullProgram)
+        {
+            m_impl->DeleteProgram(m_impl->gpuCullProgram);
+            m_impl->gpuCullProgram = 0;
+        }
         if (m_impl->uiProgram)
         {
             m_impl->DeleteProgram(m_impl->uiProgram);
@@ -1368,6 +1730,22 @@ void SdlGlRenderDevice::Shutdown()
         {
             m_impl->DeleteBuffers(1, &m_impl->particleInstanceBuffer);
             m_impl->particleInstanceBuffer = 0;
+        }
+        for (GLuint *buffer : {&m_impl->lightDataBuffer, &m_impl->clusterDataBuffer})
+        {
+            if (*buffer)
+            {
+                m_impl->DeleteBuffers(1, buffer);
+                *buffer = 0;
+            }
+        }
+        for (GLuint *texture : {&m_impl->lightDataTexture, &m_impl->clusterDataTexture})
+        {
+            if (*texture)
+            {
+                glDeleteTextures(1, texture);
+                *texture = 0;
+            }
         }
         if (m_impl->uiVertexBuffer)
         {
@@ -1606,6 +1984,13 @@ void SdlGlRenderDevice::EndShadowPass()
 void SdlGlRenderDevice::BeginFrame(const FrameView &view)
 {
     m_impl->view = view;
+    if (m_impl->sceneTargetEnabled && m_impl->presentSceneToWindow)
+    {
+        int width = 0, height = 0;
+        SDL_GL_GetDrawableSize(m_impl->window, &width, &height);
+        if (width > 0 && height > 0 && (width != m_impl->sceneWidth || height != m_impl->sceneHeight))
+            m_impl->CreateSceneTarget(width, height);
+    }
     if (m_impl->sceneTargetEnabled && m_impl->sceneFramebuffer)
     {
         m_impl->BindFramebuffer(GL_FRAMEBUFFER, m_impl->sceneFramebuffer);
@@ -1625,6 +2010,7 @@ void SdlGlRenderDevice::BeginFrame(const FrameView &view)
     m_impl->UseProgram(m_impl->program);
     const Mat4 viewProjection = view.projection * view.view;
     m_impl->UniformMatrix4fv(m_impl->viewProjectionLocation, 1, GL_FALSE, viewProjection.Data());
+    m_impl->UniformMatrix4fv(m_impl->previousViewProjectionLocation, 1, GL_FALSE, view.previousViewProjection.Data());
     m_impl->UniformMatrix4fv(m_impl->viewLocation, 1, GL_FALSE, view.view.Data());
     for (std::size_t cascade = 0; cascade < FrameView::MaxShadowCascades; ++cascade)
     {
@@ -1634,18 +2020,43 @@ void SdlGlRenderDevice::BeginFrame(const FrameView &view)
         m_impl->ActiveTexture(GL_TEXTURE0 + 8 + static_cast<GLenum>(cascade));
         glBindTexture(GL_TEXTURE_2D, m_impl->shadowDepths[cascade]);
     }
-    m_impl->Uniform3f(m_impl->lightDirectionLocation, view.lightDirection.x, view.lightDirection.y, view.lightDirection.z);
-    m_impl->Uniform3f(m_impl->lightColorLocation, view.lightColor.x, view.lightColor.y, view.lightColor.z);
-    m_impl->Uniform1f(m_impl->lightIntensityLocation, view.lightIntensity);
     m_impl->Uniform1i(m_impl->lightCountLocation, view.lightCount);
+    std::vector<float> lightData;
+    lightData.reserve(static_cast<std::size_t>(view.lightCount) * 16);
     for (int index = 0; index < view.lightCount && index < static_cast<int>(FrameView::MaxLights); ++index)
     {
-        m_impl->Uniform3f(m_impl->lightDirectionsLocations[index], view.lightDirections[index].x, view.lightDirections[index].y,
-                          view.lightDirections[index].z);
-        m_impl->Uniform3f(m_impl->lightColorsLocations[index], view.lightColors[index].x, view.lightColors[index].y,
-                          view.lightColors[index].z);
-        m_impl->Uniform1f(m_impl->lightIntensitiesLocations[index], view.lightIntensities[index]);
+        const auto &light = view.lights[index];
+        lightData.insert(lightData.end(),
+                         {light.position.x, light.position.y, light.position.z, static_cast<float>(light.type), light.direction.x,
+                          light.direction.y, light.direction.z, light.range, light.color.x, light.color.y, light.color.z, light.intensity,
+                          light.innerConeCosine, light.outerConeCosine, 0.0f, 0.0f});
     }
+    m_impl->BindBuffer(0x8C2A, m_impl->lightDataBuffer);
+    m_impl->BufferData(0x8C2A, static_cast<GLsizeiptr>(lightData.size() * sizeof(float)), lightData.data(), GL_DYNAMIC_DRAW);
+    m_impl->ActiveTexture(GL_TEXTURE14);
+    glBindTexture(0x8C2A, m_impl->lightDataTexture);
+    m_impl->TexBuffer(0x8C2A, 0x8814, m_impl->lightDataBuffer);
+    m_impl->Uniform1i(m_impl->lightDataLocation, 14);
+    const auto &clusters = view.clusteredLights;
+    std::vector<std::uint32_t> clusterData;
+    clusterData.reserve(clusters.offsets.size() * 2 + clusters.lightIndices.size());
+    for (std::size_t index = 0; index < clusters.offsets.size(); ++index)
+    {
+        clusterData.push_back(clusters.offsets[index]);
+        clusterData.push_back(clusters.counts[index]);
+    }
+    clusterData.insert(clusterData.end(), clusters.lightIndices.begin(), clusters.lightIndices.end());
+    m_impl->BindBuffer(0x8C2A, m_impl->clusterDataBuffer);
+    m_impl->BufferData(0x8C2A, static_cast<GLsizeiptr>(clusterData.size() * sizeof(std::uint32_t)), clusterData.data(), GL_DYNAMIC_DRAW);
+    m_impl->ActiveTexture(GL_TEXTURE15);
+    glBindTexture(0x8C2A, m_impl->clusterDataTexture);
+    m_impl->TexBuffer(0x8C2A, 0x8236, m_impl->clusterDataBuffer);
+    m_impl->Uniform1i(m_impl->clusterDataLocation, 15);
+    m_impl->Uniform3i(m_impl->clusterDimensionsLocation, static_cast<GLint>(clusters.tilesX), static_cast<GLint>(clusters.tilesY),
+                      static_cast<GLint>(clusters.slicesZ));
+    m_impl->Uniform2f(m_impl->clusterDepthRangeLocation, clusters.nearPlane, clusters.farPlane);
+    const Vec2 viewport = GetViewportSize();
+    m_impl->Uniform2f(m_impl->clusterViewportLocation, viewport.x, viewport.y);
     m_impl->Uniform3f(m_impl->cameraPositionLocation, view.cameraPosition.x, view.cameraPosition.y, view.cameraPosition.z);
     m_impl->Uniform1i(m_impl->textureLocation, 0);
     m_impl->ActiveTexture(GL_TEXTURE0);
@@ -1681,6 +2092,7 @@ void SdlGlRenderDevice::Draw(const RenderItem &item)
         identityBones[index] = item.skinMatrices[index];
     m_impl->UniformMatrix4fv(m_impl->bonesLocation, static_cast<GLsizei>(identityBones.size()), GL_FALSE, identityBones[0].Data());
     m_impl->UniformMatrix4fv(m_impl->modelLocation, 1, GL_FALSE, item.model.Data());
+    m_impl->UniformMatrix4fv(m_impl->previousModelLocation, 1, GL_FALSE, item.previousModel.Data());
     m_impl->Uniform4f(m_impl->baseColorLocation, color.x, color.y, color.z, color.w);
     m_impl->Uniform1f(m_impl->metallicLocation, metallic);
     m_impl->Uniform1f(m_impl->roughnessLocation, roughness);
@@ -1713,7 +2125,16 @@ void SdlGlRenderDevice::Draw(const RenderItem &item)
                                                           : 0);
     m_impl->ActiveTexture(GL_TEXTURE0);
     m_impl->BindVertexArray(mesh->vao);
-    glDrawElements(GL_TRIANGLES, mesh->indexCount, GL_UNSIGNED_INT, nullptr);
+    if (m_impl->indirectDrawSupported)
+    {
+        const std::uint32_t command[5] = {static_cast<std::uint32_t>(mesh->indexCount), 1, 0, 0, 0};
+        m_impl->BindBuffer(0x8F3F, mesh->indirectBuffer);
+        m_impl->BufferData(0x8F3F, sizeof(command), command, GL_STREAM_DRAW);
+        m_impl->DrawElementsIndirect(GL_TRIANGLES, GL_UNSIGNED_INT, nullptr);
+        m_impl->BindBuffer(0x8F3F, 0);
+    }
+    else
+        glDrawElements(GL_TRIANGLES, mesh->indexCount, GL_UNSIGNED_INT, nullptr);
     m_impl->BindVertexArray(0);
 }
 
@@ -1727,14 +2148,78 @@ void SdlGlRenderDevice::DrawInstanced(const std::vector<RenderItem> &items)
     if (!mesh)
         return;
     std::vector<Mat4> models;
+    std::vector<Mat4> previousModels;
     models.reserve(items.size());
+    previousModels.reserve(items.size());
     for (const auto &item : items)
+    {
         models.push_back(item.model);
+        previousModels.push_back(item.previousModel);
+    }
     m_impl->BindVertexArray(mesh->vao);
-    m_impl->BindBuffer(GL_ARRAY_BUFFER, mesh->instanceBuffer);
-    m_impl->BufferData(GL_ARRAY_BUFFER, static_cast<GLsizeiptr>(models.size() * sizeof(Mat4)), models.data(), GL_DYNAMIC_DRAW);
+    bool gpuCulled = false;
+    if (m_impl->computeCullingSupported && m_impl->gpuCullProgram)
+    {
+        struct CullInput
+        {
+            Mat4 model;
+            Mat4 previousModel;
+            float bounds[4];
+        };
+        std::vector<CullInput> inputs;
+        inputs.reserve(items.size());
+        for (const auto &item : items)
+        {
+            const Vec3 center = (item.worldBounds.minimum + item.worldBounds.maximum) * 0.5f;
+            const float radius = Length(item.worldBounds.maximum - item.worldBounds.minimum) * 0.5f;
+            inputs.push_back({item.model, item.previousModel, {center.x, center.y, center.z, radius}});
+        }
+        const std::uint32_t command[5] = {static_cast<std::uint32_t>(mesh->indexCount), 0, 0, 0, 0};
+        m_impl->BindBuffer(0x90D2, mesh->cullInputBuffer);
+        m_impl->BufferData(0x90D2, static_cast<GLsizeiptr>(inputs.size() * sizeof(CullInput)), inputs.data(), GL_STREAM_DRAW);
+        m_impl->BindBuffer(0x90D2, mesh->instanceBuffer);
+        m_impl->BufferData(0x90D2, static_cast<GLsizeiptr>(models.size() * sizeof(Mat4)), nullptr, GL_STREAM_DRAW);
+        m_impl->BindBuffer(0x90D2, mesh->previousInstanceBuffer);
+        m_impl->BufferData(0x90D2, static_cast<GLsizeiptr>(previousModels.size() * sizeof(Mat4)), nullptr, GL_STREAM_DRAW);
+        m_impl->BindBuffer(0x8F3F, mesh->indirectBuffer);
+        m_impl->BufferData(0x8F3F, sizeof(command), command, GL_STREAM_DRAW);
+        m_impl->BindBufferBase(0x90D2, 0, mesh->cullInputBuffer);
+        m_impl->BindBufferBase(0x90D2, 1, mesh->instanceBuffer);
+        m_impl->BindBufferBase(0x90D2, 2, mesh->previousInstanceBuffer);
+        m_impl->BindBufferBase(0x90D2, 3, mesh->indirectBuffer);
+        m_impl->UseProgram(m_impl->gpuCullProgram);
+        m_impl->UniformMatrix4fv(m_impl->gpuCullPreviousViewProjectionLocation, 1, GL_FALSE, m_impl->view.previousViewProjection.Data());
+        m_impl->Uniform1ui(m_impl->gpuCullInputCountLocation, static_cast<GLuint>(inputs.size()));
+        m_impl->Uniform1i(m_impl->gpuCullHzbValidLocation, m_impl->historyValid ? 1 : 0);
+        const int hzbCount = static_cast<int>(std::min<std::size_t>(m_impl->hzbTextures.size(), m_impl->gpuCullHzbLocations.size()));
+        m_impl->Uniform1i(m_impl->gpuCullHzbCountLocation, hzbCount);
+        for (int index = 0; index < hzbCount; ++index)
+        {
+            m_impl->ActiveTexture(GL_TEXTURE0 + static_cast<GLenum>(index));
+            glBindTexture(GL_TEXTURE_2D, m_impl->hzbTextures[index]);
+            m_impl->Uniform1i(m_impl->gpuCullHzbLocations[index], index);
+        }
+        m_impl->DispatchCompute(static_cast<GLuint>((inputs.size() + 63) / 64), 1, 1);
+        m_impl->MemoryBarrier(0x00000001 | 0x00000040 | 0x00002000);
+        m_impl->UseProgram(m_impl->program);
+        for (std::size_t cascade = 0; cascade < FrameView::MaxShadowCascades; ++cascade)
+        {
+            m_impl->ActiveTexture(GL_TEXTURE0 + 8 + static_cast<GLenum>(cascade));
+            glBindTexture(GL_TEXTURE_2D, m_impl->shadowDepths[cascade]);
+        }
+        gpuCulled = true;
+    }
+    else
+    {
+        m_impl->BindBuffer(GL_ARRAY_BUFFER, mesh->instanceBuffer);
+        m_impl->BufferData(GL_ARRAY_BUFFER, static_cast<GLsizeiptr>(models.size() * sizeof(Mat4)), models.data(), GL_DYNAMIC_DRAW);
+        m_impl->BindBuffer(GL_ARRAY_BUFFER, mesh->previousInstanceBuffer);
+        m_impl->BufferData(GL_ARRAY_BUFFER, static_cast<GLsizeiptr>(previousModels.size() * sizeof(Mat4)), previousModels.data(),
+                           GL_DYNAMIC_DRAW);
+    }
     m_impl->Uniform1i(m_impl->instancedLocation, 1);
     m_impl->UniformMatrix4fv(m_impl->modelLocation, 1, GL_FALSE, Mat4::Identity().Data());
+    m_impl->UniformMatrix4fv(m_impl->previousModelLocation, 1, GL_FALSE, Mat4::Identity().Data());
     std::array<Mat4, 64> identityBones;
     for (auto &bone : identityBones)
         bone = Mat4::Identity();
@@ -1772,7 +2257,22 @@ void SdlGlRenderDevice::DrawInstanced(const std::vector<RenderItem> &items)
                                                               prefilter->IsReady() && m_impl->view.environmentBrdfLut->IsReady()
                                                           ? 1
                                                           : 0);
-    m_impl->DrawElementsInstanced(GL_TRIANGLES, mesh->indexCount, GL_UNSIGNED_INT, nullptr, static_cast<GLsizei>(models.size()));
+    if (m_impl->indirectDrawSupported)
+    {
+        if (!gpuCulled)
+        {
+            const std::uint32_t command[5] = {static_cast<std::uint32_t>(mesh->indexCount), static_cast<std::uint32_t>(models.size()), 0, 0,
+                                              0};
+            m_impl->BindBuffer(0x8F3F, mesh->indirectBuffer);
+            m_impl->BufferData(0x8F3F, sizeof(command), command, GL_STREAM_DRAW);
+        }
+        else
+            m_impl->BindBuffer(0x8F3F, mesh->indirectBuffer);
+        m_impl->DrawElementsIndirect(GL_TRIANGLES, GL_UNSIGNED_INT, nullptr);
+        m_impl->BindBuffer(0x8F3F, 0);
+    }
+    else
+        m_impl->DrawElementsInstanced(GL_TRIANGLES, mesh->indexCount, GL_UNSIGNED_INT, nullptr, static_cast<GLsizei>(models.size()));
     m_impl->BindVertexArray(0);
     m_impl->ActiveTexture(GL_TEXTURE0);
 }
@@ -1863,6 +2363,124 @@ void SdlGlRenderDevice::DrawGpuParticles(const std::vector<GpuParticleEmitter> &
     glDisable(GL_BLEND);
 }
 
+void SdlGlRenderDevice::ExecutePostProcess(const PostProcessPass pass)
+{
+    if (!m_impl || !m_impl->sceneTargetEnabled || !m_impl->postFramebuffer)
+        return;
+    glDisable(GL_DEPTH_TEST);
+    glDisable(GL_CULL_FACE);
+    glDisable(GL_BLEND);
+    m_impl->BindVertexArray(m_impl->fullScreenVao);
+    const auto attach = [&](const GLuint texture, const int width, const int height, const GLuint framebuffer = 0) {
+        m_impl->BindFramebuffer(GL_FRAMEBUFFER, framebuffer ? framebuffer : m_impl->postFramebuffer);
+        m_impl->FramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, texture, 0);
+        const GLenum attachment = GL_COLOR_ATTACHMENT0;
+        m_impl->DrawBuffers(1, &attachment);
+        glViewport(0, 0, width, height);
+    };
+    const auto bindTexture = [&](const int unit, const GLuint texture, const GLint location) {
+        m_impl->ActiveTexture(GL_TEXTURE0 + static_cast<GLenum>(unit));
+        glBindTexture(GL_TEXTURE_2D, texture);
+        m_impl->Uniform1i(location, unit);
+    };
+
+    if (pass == PostProcessPass::HierarchicalDepth)
+    {
+        m_impl->UseProgram(m_impl->hzbProgram);
+        int sourceWidth = m_impl->sceneWidth, sourceHeight = m_impl->sceneHeight;
+        GLuint source = m_impl->sceneDepth;
+        for (std::size_t level = 0; level < m_impl->hzbTextures.size(); ++level)
+        {
+            const int width = std::max(1, (sourceWidth + 1) / 2), height = std::max(1, (sourceHeight + 1) / 2);
+            attach(m_impl->hzbTextures[level], width, height);
+            bindTexture(0, source, m_impl->hzbSourceLocation);
+            m_impl->Uniform2f(m_impl->hzbSourceTexelLocation, 1.0f / std::max(1, sourceWidth), 1.0f / std::max(1, sourceHeight));
+            glDrawArrays(GL_TRIANGLES, 0, 3);
+            source = m_impl->hzbTextures[level];
+            sourceWidth = width;
+            sourceHeight = height;
+        }
+    }
+    else if (pass == PostProcessPass::Gtao)
+    {
+        const int width = std::max(1, m_impl->sceneWidth / 2), height = std::max(1, m_impl->sceneHeight / 2);
+        attach(m_impl->gtaoTexture, width, height);
+        if (!m_impl->gtaoEnabled)
+        {
+            glClearColor(1.0f, 1.0f, 1.0f, 1.0f);
+            glClear(GL_COLOR_BUFFER_BIT);
+        }
+        else
+        {
+            m_impl->UseProgram(m_impl->gtaoProgram);
+            bindTexture(0, m_impl->sceneDepth, m_impl->gtaoDepthLocation);
+            m_impl->Uniform2f(m_impl->gtaoInverseResolutionLocation, 1.0f / std::max(1, m_impl->sceneWidth),
+                              1.0f / std::max(1, m_impl->sceneHeight));
+            glDrawArrays(GL_TRIANGLES, 0, 3);
+        }
+    }
+    else if (pass == PostProcessPass::Bloom)
+    {
+        int sourceWidth = m_impl->sceneWidth, sourceHeight = m_impl->sceneHeight;
+        GLuint source = m_impl->sceneHdrColor;
+        m_impl->UseProgram(m_impl->bloomProgram);
+        for (std::size_t level = 0; level < m_impl->bloomTextures.size(); ++level)
+        {
+            const int width = std::max(1, sourceWidth / 2), height = std::max(1, sourceHeight / 2);
+            attach(m_impl->bloomTextures[level], width, height);
+            if (!m_impl->bloomEnabled)
+            {
+                glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
+                glClear(GL_COLOR_BUFFER_BIT);
+            }
+            else
+            {
+                bindTexture(0, source, m_impl->bloomSourceLocation);
+                m_impl->Uniform2f(m_impl->bloomSourceTexelLocation, 1.0f / std::max(1, sourceWidth), 1.0f / std::max(1, sourceHeight));
+                m_impl->Uniform1i(m_impl->bloomExtractLocation, level == 0 ? 1 : 0);
+                glDrawArrays(GL_TRIANGLES, 0, 3);
+            }
+            source = m_impl->bloomTextures[level];
+            sourceWidth = width;
+            sourceHeight = height;
+        }
+    }
+    else if (pass == PostProcessPass::TemporalResolve)
+    {
+        const int writeIndex = 1 - m_impl->temporalTextureIndex;
+        attach(m_impl->taaTextures[writeIndex], m_impl->sceneWidth, m_impl->sceneHeight);
+        m_impl->UseProgram(m_impl->taaProgram);
+        bindTexture(0, m_impl->sceneHdrColor, m_impl->taaSceneLocation);
+        bindTexture(1, m_impl->sceneVelocity, m_impl->taaVelocityLocation);
+        bindTexture(2, m_impl->taaTextures[m_impl->temporalTextureIndex], m_impl->taaHistoryLocation);
+        bindTexture(3, m_impl->gtaoTexture, m_impl->taaGtaoLocation);
+        for (std::size_t index = 0; index < m_impl->bloomTextures.size(); ++index)
+            bindTexture(static_cast<int>(4 + index), m_impl->bloomTextures[index], m_impl->taaBloomLocations[index]);
+        m_impl->Uniform2f(m_impl->taaInverseResolutionLocation, 1.0f / std::max(1, m_impl->sceneWidth),
+                          1.0f / std::max(1, m_impl->sceneHeight));
+        m_impl->Uniform1i(m_impl->taaHistoryValidLocation, m_impl->historyValid ? 1 : 0);
+        m_impl->Uniform1i(m_impl->taaEnabledLocation, m_impl->taaEnabled ? 1 : 0);
+        glDrawArrays(GL_TRIANGLES, 0, 3);
+        m_impl->temporalTextureIndex = writeIndex;
+        m_impl->historyValid = true;
+    }
+    else if (pass == PostProcessPass::ToneMap)
+    {
+        attach(m_impl->sceneColor, m_impl->sceneWidth, m_impl->sceneHeight, m_impl->toneFramebuffer);
+        m_impl->UseProgram(m_impl->toneProgram);
+        bindTexture(0, m_impl->taaTextures[m_impl->temporalTextureIndex], m_impl->toneResolvedLocation);
+        m_impl->Uniform1f(m_impl->exposureLocation, m_impl->exposure);
+        m_impl->Uniform2f(m_impl->inverseResolutionLocation, 1.0f / std::max(1, m_impl->sceneWidth),
+                          1.0f / std::max(1, m_impl->sceneHeight));
+        m_impl->Uniform1i(m_impl->fxaaEnabledLocation, m_impl->fxaaEnabled ? 1 : 0);
+        glDrawArrays(GL_TRIANGLES, 0, 3);
+    }
+    m_impl->BindVertexArray(0);
+    m_impl->ActiveTexture(GL_TEXTURE0);
+    glEnable(GL_CULL_FACE);
+    glEnable(GL_DEPTH_TEST);
+}
+
 void SdlGlRenderDevice::EndFrame()
 {
     if (m_impl->timerActive)
@@ -1874,39 +2492,6 @@ void SdlGlRenderDevice::EndFrame()
     }
     if (!m_impl->sceneTargetEnabled)
         return;
-    m_impl->BindFramebuffer(GL_FRAMEBUFFER, m_impl->toneFramebuffer);
-    glViewport(0, 0, m_impl->sceneWidth, m_impl->sceneHeight);
-    glDisable(GL_DEPTH_TEST);
-    glDisable(GL_CULL_FACE);
-    glDisable(GL_BLEND);
-    m_impl->UseProgram(m_impl->toneProgram);
-    m_impl->ActiveTexture(GL_TEXTURE2);
-    glBindTexture(GL_TEXTURE_2D, m_impl->sceneHdrColor);
-    m_impl->Uniform1i(m_impl->toneTextureLocation, 2);
-    m_impl->ActiveTexture(GL_TEXTURE3);
-    glBindTexture(GL_TEXTURE_2D, m_impl->sceneDepth);
-    m_impl->Uniform1i(m_impl->toneDepthTextureLocation, 3);
-    m_impl->ActiveTexture(GL_TEXTURE4);
-    glBindTexture(GL_TEXTURE_2D, m_impl->historyHdrColor);
-    m_impl->Uniform1i(m_impl->toneHistoryTextureLocation, 4);
-    m_impl->Uniform1f(m_impl->exposureLocation, m_impl->exposure);
-    m_impl->Uniform2f(m_impl->inverseResolutionLocation, 1.0f / std::max(1, m_impl->sceneWidth), 1.0f / std::max(1, m_impl->sceneHeight));
-    m_impl->Uniform1i(m_impl->fxaaEnabledLocation, m_impl->fxaaEnabled ? 1 : 0);
-    m_impl->Uniform1i(m_impl->bloomEnabledLocation, m_impl->bloomEnabled ? 1 : 0);
-    m_impl->Uniform1i(m_impl->ssaoEnabledLocation, m_impl->ssaoEnabled ? 1 : 0);
-    m_impl->Uniform1i(m_impl->taaEnabledLocation, m_impl->taaEnabled ? 1 : 0);
-    m_impl->Uniform1i(m_impl->historyValidLocation, m_impl->historyValid ? 1 : 0);
-    m_impl->BindVertexArray(m_impl->fullScreenVao);
-    glDrawArrays(GL_TRIANGLES, 0, 3);
-    m_impl->BindVertexArray(0);
-    m_impl->BindFramebuffer(GL_FRAMEBUFFER, m_impl->sceneFramebuffer);
-    m_impl->ActiveTexture(GL_TEXTURE4);
-    glBindTexture(GL_TEXTURE_2D, m_impl->historyHdrColor);
-    glCopyTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 0, 0, m_impl->sceneWidth, m_impl->sceneHeight);
-    m_impl->historyValid = true;
-    m_impl->ActiveTexture(GL_TEXTURE0);
-    glEnable(GL_CULL_FACE);
-    glEnable(GL_DEPTH_TEST);
     m_impl->BindFramebuffer(GL_FRAMEBUFFER, 0);
     int width = 0, height = 0;
     SDL_GL_GetDrawableSize(m_impl->window, &width, &height);
@@ -1915,6 +2500,20 @@ void SdlGlRenderDevice::EndFrame()
     glDisable(GL_SCISSOR_TEST);
     glClearColor(0.025f, 0.03f, 0.04f, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    if (m_impl->presentSceneToWindow)
+    {
+        glDisable(GL_DEPTH_TEST);
+        glDisable(GL_CULL_FACE);
+        m_impl->UseProgram(m_impl->presentProgram);
+        m_impl->ActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, m_impl->sceneColor);
+        m_impl->Uniform1i(m_impl->presentSceneColorLocation, 0);
+        m_impl->BindVertexArray(m_impl->fullScreenVao);
+        glDrawArrays(GL_TRIANGLES, 0, 3);
+        m_impl->BindVertexArray(0);
+        glEnable(GL_CULL_FACE);
+        glEnable(GL_DEPTH_TEST);
+    }
 }
 void SdlGlRenderDevice::DrawUi(const std::vector<UIDrawCommand> &commands)
 {
@@ -2043,6 +2642,7 @@ bool SdlGlRenderDevice::EnableSceneRenderTarget(const bool enabled, const int wi
     if (!m_impl || !m_impl->context)
         return false;
     m_impl->sceneTargetEnabled = enabled;
+    m_impl->presentSceneToWindow = !enabled;
     if (!enabled)
     {
         m_impl->DestroySceneTarget();
@@ -2132,11 +2732,19 @@ bool SdlGlRenderDevice::IsBloomEnabled() const
 void SdlGlRenderDevice::SetSsaoEnabled(const bool enabled)
 {
     if (m_impl)
-        m_impl->ssaoEnabled = enabled;
+        m_impl->gtaoEnabled = enabled;
 }
 bool SdlGlRenderDevice::IsSsaoEnabled() const
 {
-    return m_impl && m_impl->ssaoEnabled;
+    return m_impl && m_impl->gtaoEnabled;
+}
+void SdlGlRenderDevice::SetGtaoEnabled(const bool enabled)
+{
+    SetSsaoEnabled(enabled);
+}
+bool SdlGlRenderDevice::IsGtaoEnabled() const
+{
+    return IsSsaoEnabled();
 }
 void SdlGlRenderDevice::SetTaaEnabled(const bool enabled)
 {
@@ -2154,6 +2762,18 @@ bool SdlGlRenderDevice::IsTaaEnabled() const
 float SdlGlRenderDevice::GetLastGpuFrameMilliseconds() const
 {
     return m_impl ? m_impl->lastGpuFrameMilliseconds : 0.0f;
+}
+std::size_t SdlGlRenderDevice::GetHzbLevelCount() const
+{
+    return m_impl ? m_impl->hzbTextures.size() : 0;
+}
+bool SdlGlRenderDevice::IsIndirectDrawSupported() const
+{
+    return m_impl && m_impl->indirectDrawSupported;
+}
+bool SdlGlRenderDevice::IsGpuDrivenCullingSupported() const
+{
+    return m_impl && m_impl->computeCullingSupported;
 }
 
 bool SdlGlRenderDevice::RumbleController(const float lowFrequency, const float highFrequency, const std::uint32_t durationMilliseconds)

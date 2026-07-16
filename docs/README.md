@@ -1,6 +1,6 @@
 # TinyEngine 文档中心
 
-本文档集对应 TinyEngine 0.26.0。第一次接触项目时，建议按“构建 → 使用 → 架构 → 专题”的顺序阅读。
+本文档集对应 TinyEngine 0.27.0。第一次接触项目时，建议按“构建 → 使用 → 架构 → 专题”的顺序阅读。
 
 ## 快速入口
 
@@ -15,7 +15,7 @@
 | 编写和加载原生插件 | [原生插件 ABI](PLUGIN_API.md) |
 | 使用 UDP、可靠通道、RPC、所有权和预测 | [联网指南](NETWORKING.md) |
 | 查看真实 FBX/glTF 验证矩阵 | [导入兼容报告](IMPORT_COMPATIBILITY.md) |
-| 查看 0.25/0.26 批次实现与边界 | [0.25 完成说明](ENGINE_COMPLETION_025.md)、[0.26 完成说明](ENGINE_COMPLETION_026.md) |
+| 查看版本批次实现与边界 | [0.25 完成说明](ENGINE_COMPLETION_025.md)、[0.26 完成说明](ENGINE_COMPLETION_026.md)、[0.27 渲染架构完成说明](ENGINE_COMPLETION_027.md) |
 | 查看历史实现记录和后续路线 | [实现日志](IMPLEMENTATION_LOG.md)、[后续工作](REMAINING_WORK.md) |
 
 ## 文档维护约定

@@ -2,7 +2,7 @@
 
 本文记录本轮开发对 TinyEngine 做过的主要更新，以及各功能采用的简要实现方式。内容按 Git 提交顺序整理，方便以后定位代码、回溯设计和继续开发。
 
-当前引擎版本：0.26.0
+当前引擎版本：0.27.0
 
 参考源码：Unreal Engine 5.3.2
 
@@ -421,5 +421,15 @@
 - 新增资产格式版本表、原生插件 ABI 规则和联网分层说明，明确兼容边界与生产级限制。
 - 校准 README、架构、技术设计和第三方通知，消除“尚无 NavMesh/UDP/Unicode/OGG”等旧版本结论。
 - 将历史完成记录与当前未完成项分离；后续工作只在 `docs/REMAINING_WORK.md` 维护，其他文档仅链接它。
+
+## 30. 0.27 Render Graph、Forward+ 与 GPU Driven 渲染架构
+
+- 新增后端无关 `RenderGraph`，支持逻辑 Texture/Buffer、外部资源、读写 Hazard、拓扑编译、未写先读/循环校验、执行顺序和瞬态资源生命周期别名统计。
+- 主帧改为九 Pass 图：三段 CSM、Forward+ HDR/Depth/Velocity MRT、GPU HZB、半分辨率 GTAO、五级 Bloom、Motion Vector TAA 和 Tone Map。
+- Light 扩展为 Directional/Point/Spot，场景升级到 `TINYSCENE 11`；每帧最多 64 灯，使用 16×9×24 Cluster Offset/Count/Index 表驱动 PBR Shader。
+- 当前/上一帧 ViewProjection 与逐实体 Model 生成 Motion Vector；TAA 使用速度重投影、Ping-Pong History、3×3 邻域 Clamp 和运动相关历史权重。
+- OpenGL 4.3 Compute Shader 使用上一帧 HZB 剔除实例，原子压缩可见 Model Matrix 并直接写 Indirect Command，再由 `glDrawElementsIndirect` 提交。
+- Runtime CVar 增加 `r.Bloom`、`r.GTAO`、`r.TAA`；编辑器统计显示图 Pass/物理资源、Cluster 引用、HZB 层数和 GPU Driven 支持状态。
+- 核心测试覆盖 Render Graph 校验/排序/别名、Cluster 分配和九 Pass 帧图；Demo 与 Editor 完成五帧 OpenGL 4.3 冒烟。
 
 继续开发时，应同时更新本文、`README.md`、`设计.md` 和 `docs/ARCHITECTURE.md`。

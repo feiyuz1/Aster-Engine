@@ -1,6 +1,6 @@
 # TinyEngine 构建指南
 
-本文对应 TinyEngine 0.26.0。
+本文对应 TinyEngine 0.27.0。
 
 ## 1. 前置条件
 
@@ -8,7 +8,7 @@ Windows 推荐环境：
 
 - Visual Studio 2022，安装“使用 C++ 的桌面开发”和 Windows SDK。
 - CMake 3.20 或更高版本。
-- 支持 OpenGL 3.3 Core 的显卡驱动。
+- 支持 OpenGL 4.3 Core、Compute Shader 和 Shader Storage Buffer 的显卡驱动。
 - Assimp 源码目录，默认 `D:/OpenSourceProject/assimp-master`。
 - Dear ImGui 源码目录，默认 `D:/OpenSourceProject/imgui-master`。
 
@@ -122,7 +122,7 @@ cpack --config build/CPackConfig.cmake -C Release
 
 - `Assimp source tree not found`：修正 `TINYENGINE_ASSIMP_DIR`，或关闭 `TINYENGINE_BUILD_IMPORTERS`。
 - `Dear ImGui source tree not found`：修正 `TINYENGINE_IMGUI_DIR`，或关闭 `TINYENGINE_BUILD_EDITOR`。
-- OpenGL 初始化失败：更新显卡驱动，并确认设备支持 OpenGL 3.3 Core。
+- OpenGL 初始化失败：更新显卡驱动，并确认设备支持 OpenGL 4.3 Core；不支持 Compute Shader 的旧设备不在 0.27 默认后端范围内。
 - Windows `.pdb/.ilk` 无法打开：停止重复的 MSBuild、测试或 Demo 进程后串行重建。
 - 非 Windows 找不到 FreeType：安装开发包并确保 CMake 可以发现 `Freetype::Freetype`。
 - 离线环境获取 SDL/stb 失败：改用系统 SDL2 Package，并设置本地 `TINYENGINE_STB_DIR`。

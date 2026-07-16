@@ -20,7 +20,7 @@ std::string SceneSerializer::Serialize(const World &world)
     for (std::size_t index = 0; index < entities.size(); ++index)
         ids[entities[index]] = index + 1;
     std::ostringstream out;
-    out << "TINYSCENE 10\n";
+    out << "TINYSCENE 11\n";
     for (const Entity entity : entities)
     {
         const auto *name = world.GetComponent<NameComponent>(entity);
@@ -44,8 +44,9 @@ std::string SceneSerializer::Serialize(const World &world)
         if (const auto *v = world.GetComponent<CameraComponent>(entity))
             out << "camera " << v->fov << ' ' << v->nearPlane << ' ' << v->farPlane << ' ' << v->primary << '\n';
         if (const auto *v = world.GetComponent<LightComponent>(entity))
-            out << "light " << v->color.x << ' ' << v->color.y << ' ' << v->color.z << ' ' << v->intensity << ' ' << v->direction.x << ' '
-                << v->direction.y << ' ' << v->direction.z << '\n';
+            out << "light " << static_cast<int>(v->type) << ' ' << v->color.x << ' ' << v->color.y << ' ' << v->color.z << ' '
+                << v->intensity << ' ' << v->direction.x << ' ' << v->direction.y << ' ' << v->direction.z << ' ' << v->range << ' '
+                << v->innerConeAngle << ' ' << v->outerConeAngle << '\n';
         if (const auto *v = world.GetComponent<RigidBodyComponent>(entity))
             out << "rigidbody " << static_cast<int>(v->type) << ' ' << v->mass << ' ' << v->velocity.x << ' ' << v->velocity.y << ' '
                 << v->velocity.z << ' ' << v->useGravity << ' ' << v->linearDamping << ' ' << v->restitution << ' ' << v->continuous << ' '
@@ -91,7 +92,7 @@ bool SceneSerializer::Deserialize(World &world, const std::string &text)
     std::istringstream in(text);
     std::string token;
     int version = 0;
-    if (!(in >> token >> version) || token != "TINYSCENE" || version < 1 || version > 10)
+    if (!(in >> token >> version) || token != "TINYSCENE" || version < 1 || version > 11)
         return false;
     world.Clear();
     std::unordered_map<std::size_t, Entity> ids;
@@ -158,7 +159,15 @@ bool SceneSerializer::Deserialize(World &world, const std::string &text)
         else if (token == "light")
         {
             LightComponent v;
-            in >> v.color.x >> v.color.y >> v.color.z >> v.intensity >> v.direction.x >> v.direction.y >> v.direction.z;
+            if (version >= 11)
+            {
+                int type = 0;
+                in >> type >> v.color.x >> v.color.y >> v.color.z >> v.intensity >> v.direction.x >> v.direction.y >> v.direction.z >>
+                    v.range >> v.innerConeAngle >> v.outerConeAngle;
+                v.type = static_cast<LightType>(std::clamp(type, 0, 2));
+            }
+            else
+                in >> v.color.x >> v.color.y >> v.color.z >> v.intensity >> v.direction.x >> v.direction.y >> v.direction.z;
             world.AddComponent(current, v);
         }
         else if (token == "rigidbody")

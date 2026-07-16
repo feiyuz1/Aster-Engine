@@ -1,6 +1,6 @@
 # TinyEngine 架构说明
 
-本文对应 TinyEngine 0.26.0，最后同步于 2026-07-16。
+本文对应 TinyEngine 0.27.0，最后同步于 2026-07-16。
 
 ## 依赖方向
 
@@ -31,7 +31,7 @@ Automation | Diagnostics | Serialization | Task | Memory | Core | Math | Platfor
 | Project/SceneManager/GameInstance | Projects、UGameInstance、UWorld | 小型配置和显式生命周期，无 UObject |
 | ECS/Scene/Prefab | Actor、Component、Level | generation Entity + 稀疏组件存储 |
 | AssimpImporter/Registry/Cooker/TPAK | Interchange、AssetRegistry、Cook、PakFile | Authoring 转换为轻量运行时格式 |
-| Renderer/RenderDevice | Renderer、RenderCore、RHI | 当前仅 OpenGL 3.3 后端 |
+| Renderer/RenderDevice | Renderer、RenderCore、RHI | Render Graph + OpenGL 4.3 单后端 |
 | PhysicsWorld | Chaos/PhysicsCore | 自研基础后端，公开 API 保持可替换 |
 | UISystem | UMG/Slate Runtime | Widget、字体 Atlas、布局、命中和焦点模型 |
 | Editor | UnrealEd/LevelEditor | Dear ImGui 独立工具，只覆盖高频工作流 |
@@ -67,10 +67,11 @@ FBX/glTF/OBJ/... -> AssimpImporter
 SDL events -> semantic input / ImGui
 -> GameInstance / Script / Systems
 -> fixed physics
--> render collection / culling / sort
--> directional shadow depth pass
--> OpenGL RGBA16F Scene FBO
--> ACES Tonemap to Viewport texture
+-> render collection / frustum / LOD / instance batching
+-> Render Graph compile (hazard dependencies + transient lifetimes)
+-> 3x CSM
+-> Forward+ HDR + Depth + Motion Vector MRT
+-> HZB -> GTAO + Bloom Pyramid -> Motion Vector TAA -> ACES Tone Map
 -> Scene View texture + editor overlay
 -> present
 ```
@@ -81,7 +82,13 @@ SDL events -> semantic input / ImGui
 
 Logger 可同时输出控制台和逐行 JSON；CrashReporter 在 Windows 注册 Structured Exception Filter 并写 MiniDump/文本上下文，在 `std::terminate` 路径至少写文本报告。CI 使用无 Editor/Assimp 的最小运行时配置验证公共核心，完整本地发布通过 `tools/ReleaseSmoke.ps1` 构建、CTest、打包并运行三帧。
 
-默认 PBR Shader 是独立 `.vert/.frag` 资产。RenderDevice 监测依赖修改并尝试原子替换 OpenGL Program；编译或链接失败时继续使用上一份有效 Program。每帧最多收集四盏方向光，第一盏灯使用三段 2048² CSM 和 3×3 PCF；透明阴影通过 Alpha 覆盖率抖动。离线 Cubemap 六面 Atlas 提供 Irradiance、六级 GGX Prefilter 和 BRDF LUT；HDR 合成执行 Bloom、SSAO、TAA、FXAA 与 ACES。
+默认 PBR Shader 是独立 `.vert/.frag` 资产。RenderDevice 监测依赖修改并尝试原子替换 OpenGL Program；编译或链接失败时继续使用上一份有效 Program。Render Graph 为逻辑 Texture/Buffer 建立 RAW/WAR/WAW 依赖，拓扑排序 Pass，拒绝未写先读和环，并按描述兼容性与不重叠生命周期计算瞬态资源别名槽。当前每帧图包含三段 Shadow Cascade、Forward+ Scene、GPU HZB、GTAO、Bloom Pyramid、Motion Vector TAA 和 Tone Map 共九个 Pass。
+
+Forward+ 每帧最多收集 64 盏 Directional/Point/Spot Light。CPU 根据 16×9 屏幕 Tile 和 24 个对数深度 Slice 构建 Cluster Offset/Count/Light Index，Light 与 Cluster 表通过 Texture Buffer 上传，Fragment Shader 只遍历当前 Cluster。第一盏方向光使用三段 2048² CSM 和 3×3 PCF；透明阴影通过 Alpha 覆盖率抖动。场景 MRT 同时输出 RGBA16F HDR 与 RG16F Motion Vector，Vertex Shader 使用当前/上一帧 ViewProjection 和 Model 计算速度。
+
+后处理是独立资源和独立 Pass：HZB 对深度执行保守最大值降采样直至 1×1；GTAO 在半分辨率按八方向四步搜索地平线；Bloom 使用五级亮部提取和降采样；TAA 以 Motion Vector 重投影 Ping-Pong History，并用 3×3 当前帧邻域约束历史颜色，运动越快历史权重越低；最后执行可选 FXAA、曝光、ACES 和 Gamma。
+
+相同 Mesh/Material 的不透明静态实体先形成实例批次。OpenGL 4.3 Compute Shader 使用上一帧 ViewProjection 与 HZB 判断包围球可见性，通过原子计数把可见 Model Matrix 压缩到实例 Buffer，并直接写 `DrawElementsIndirectCommand.instanceCount`；随后以 `glDrawElementsIndirect` 提交。Compute/Indirect 不可用时保留 CPU 可见集和直接实例绘制回退，但 0.27 默认上下文要求 OpenGL 4.3。离线 Cubemap 六面 Atlas 继续提供 Irradiance、六级 GGX Prefilter 和 BRDF LUT。
 
 Runtime UI 在提交前根据 Viewport 解析锚点和父子容器布局，生成裁剪后的矩形、图片与文本命令。TextLayout 负责 UTF-8、BiDi Run、连字、自动断行和富文本样式；OpenGL 后端按需把 Codepoint 栅格化进 1024² 动态 Atlas，Windows 使用 GDI，非 Windows 使用 FreeType。InputField、List、Dropdown、ProgressBar 与 Button 共用焦点和回调模型。
 
@@ -119,7 +126,7 @@ Sequencer 的 Transform Track 与事件 Player 是后端无关的时间采样层
 
 ## 数据格式与约束
 
-- `TINYSCENE 10`：RigidBody 增加角速度、摩擦、惯量和旋转锁，Joint 增加 Hinge/Spring、限制与 Break Force；继续读取 1–9 版。
+- `TINYSCENE 11`：Light 增加 Directional/Point/Spot、颜色、强度、范围和内外锥角；继续读取 1–10 版，其中 v10 增加刚体旋转属性与扩展 Joint。
 - `TINY_SKELETON 1` / `TINY_SKANIM 3`：骨骼层级与 Inverse Bind；Clip v3 支持 raw Pose、逐骨骼 P/R/S 压缩曲线、事件与 Root Motion，并兼容读取 v1/v2。
 - `TINY_BLENDTREE 1`：按单个浮点参数排列阈值样本，在相邻 SkeletalClip 间插值。
 - `TINY_ANIMGRAPH 1`：参数、状态、Motion 路径、比较条件、转换和交叉淡化时间。

@@ -61,12 +61,12 @@ tinyengine_package_tool <project.tinyproject> <output-directory> [game-executabl
 ```text
 tinyengine_demo [maximum-frames]
 tinyengine_game <project.tinyproject> [--frames=N]
-tinyengine_editor [project.tinyproject]
+tinyengine_editor [project.tinyproject] [--frames=N]
 ```
 
 - Demo 没有帧数参数时持续运行。
 - Game 必须能找到项目文件；`--frames=N` 用于冒烟测试。
-- Editor 省略项目时使用默认项目查找逻辑。
+- Editor 省略项目时使用默认项目查找逻辑；`--frames=N` 用于有界 OpenGL/ImGui 冒烟测试。
 
 ## CMake 辅助目标
 

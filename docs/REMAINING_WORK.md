@@ -1,9 +1,9 @@
 # TinyEngine 后续工作记录
 
 记录日期：2026-07-16
-当前版本：0.26.0
+当前版本：0.27.0
 
-0.25 的渲染/资产/物理/UI 与 0.26 的动画/VFX/音频/插件/导航 AI/联网能力均已进入可编译、可测试、可运行的代码路径。完成范围和实现边界见 `ENGINE_COMPLETION_025.md` 与 `ENGINE_COMPLETION_026.md`。
+0.25 的渲染/资产/物理/UI、0.26 的动画/VFX/音频/插件/导航 AI/联网，以及 0.27 的现代渲染架构均已进入可编译、可测试、可运行的代码路径。完成范围和实现边界见 `ENGINE_COMPLETION_025.md`、`ENGINE_COMPLETION_026.md` 与 `ENGINE_COMPLETION_027.md`。
 
 以下内容不是本轮遗漏，而是从“轻量可用引擎”继续向生产级大型引擎提升时的后续项。
 
@@ -15,7 +15,7 @@
 
 ## P1 质量与规模升级
 
-- 渲染：Render Graph、GPU HZB、Motion Vector、分离式多级 Bloom、GTAO、可调 TAA Resolve、Clustered/Forward+ Lighting、GPU Driven Indirect Draw。
+- 渲染：跨平台 RHI、异步 Compute/资源 Barrier、多线程命令录制、Bindless/Descriptor 抽象、PSO Cache、GPU Cluster Build、Multi Draw Indirect、Mesh Shader/Virtual Geometry，以及基于截图与 GPU Counter 的性能回归。
 - Shader：跨平台 HLSL/GLSL 编译链、SPIR-V、PSO Cache、异步编译、Graph Subgraph/Function、完整材质预览球场景。
 - 资产：接入目标平台 BC/ASTC 编码器、Basis Universal 超压缩、异步文件 I/O、远程 DDC、导入 Worker 进程隔离。
 - 物理：引入 Jolt 源码后的跨平台适配认证、复杂接触流形、车辆、布料、破坏和物理回放调试。

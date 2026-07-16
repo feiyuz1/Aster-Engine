@@ -118,12 +118,19 @@ ReflectionRegistry::ReflectionRegistry()
     camera.properties.push_back(MakeProperty("Primary", ReflectedPropertyType::Bool, &CameraComponent::primary));
     m_components.push_back(std::move(camera));
 
-    auto light = MakeComponent<LightComponent>("Directional Light");
+    auto light = MakeComponent<LightComponent>("Light");
+    light.properties.push_back(MakeEnumProperty("Type", &LightComponent::type, {"Directional", "Point", "Spot"}));
     light.properties.push_back(MakeProperty("Color", ReflectedPropertyType::Vec3, &LightComponent::color));
     light.properties.back().color = true;
     light.properties.push_back(MakeProperty("Intensity", ReflectedPropertyType::Float, &LightComponent::intensity));
     Range(light.properties.back(), 0.0f, 1000.0f, 0.05f);
     light.properties.push_back(MakeProperty("Direction", ReflectedPropertyType::Vec3, &LightComponent::direction));
+    light.properties.push_back(MakeProperty("Range", ReflectedPropertyType::Float, &LightComponent::range));
+    Range(light.properties.back(), 0.01f, 100000.0f, 0.1f);
+    light.properties.push_back(MakeProperty("Inner Cone", ReflectedPropertyType::Float, &LightComponent::innerConeAngle));
+    Range(light.properties.back(), 0.0f, 89.0f, 0.25f);
+    light.properties.push_back(MakeProperty("Outer Cone", ReflectedPropertyType::Float, &LightComponent::outerConeAngle));
+    Range(light.properties.back(), 0.0f, 89.0f, 0.25f);
     m_components.push_back(std::move(light));
 
     auto script = MakeComponent<ScriptComponent>("Script");

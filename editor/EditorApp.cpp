@@ -152,10 +152,10 @@ bool EditorApp::Initialize(const std::filesystem::path &projectFile)
     return true;
 }
 
-void EditorApp::Run()
+void EditorApp::Run(const std::uint32_t maximumFrames)
 {
     if (m_initialized)
-        m_engine.Run();
+        m_engine.Run(maximumFrames);
 }
 
 void EditorApp::Shutdown()
@@ -718,13 +718,13 @@ void EditorApp::DrawSceneView()
     ImGui::SameLine();
     if (ImGui::Checkbox("FXAA", &fxaa))
         m_device->SetFxaaEnabled(fxaa);
-    bool bloom = m_device->IsBloomEnabled(), ssao = m_device->IsSsaoEnabled(), taa = m_device->IsTaaEnabled();
+    bool bloom = m_device->IsBloomEnabled(), gtao = m_device->IsGtaoEnabled(), taa = m_device->IsTaaEnabled();
     ImGui::SameLine();
     if (ImGui::Checkbox("Bloom", &bloom))
         m_device->SetBloomEnabled(bloom);
     ImGui::SameLine();
-    if (ImGui::Checkbox("SSAO", &ssao))
-        m_device->SetSsaoEnabled(ssao);
+    if (ImGui::Checkbox("GTAO", &gtao))
+        m_device->SetGtaoEnabled(gtao);
     ImGui::SameLine();
     if (ImGui::Checkbox("TAA", &taa))
         m_device->SetTaaEnabled(taa);
@@ -1905,6 +1905,10 @@ void EditorApp::DrawConsole()
     const auto &profile = renderer->GetLastFrameProfile();
     ImGui::Text("CPU: %.2f ms (queue %.2f | shadow %.2f | scene/UI %.2f)", profile.totalMilliseconds, profile.queueMilliseconds,
                 profile.shadowMilliseconds, profile.sceneMilliseconds);
+    ImGui::Text("Render Graph: %zu passes / %zu physical resources | Cluster refs: %zu | HZB: %zu levels | GPU Driven: %s",
+                profile.graphPasses, profile.graphPhysicalResources, profile.clusteredLightReferences, m_device->GetHzbLevelCount(),
+                m_device->IsGpuDrivenCullingSupported() ? "Compute + Indirect"
+                                                        : (m_device->IsIndirectDrawSupported() ? "CPU cull + Indirect" : "fallback"));
     ImGui::SetNextItemWidth(-1.0f);
     if (ImGui::InputText("##ConsoleCommand", m_consoleInput.data(), m_consoleInput.size(), ImGuiInputTextFlags_EnterReturnsTrue))
     {

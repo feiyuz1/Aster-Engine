@@ -2,7 +2,7 @@
 
 TinyEngine 是参考 Unreal Engine 5.3.2 模块职责、以 C++17 实现的轻量 3D 引擎。目标不是复制 UE 的 UObject/UHT、完整 RHI 或大型编辑器，而是形成“项目—资产—场景—运行时—渲染—打包—编辑器”的最小可用闭环。
 
-当前版本：0.26.0（完成动画增强、Flipbook/GPU 粒子、OGG 流式音频、原生插件 ABI、多边形导航 AI 与联网基础批次）。
+当前版本：0.27.0（完成 Render Graph、GPU HZB、Motion Vector TAA、独立 Bloom/GTAO、Forward+ Clustered Lighting 与 GPU Driven Indirect Draw）。
 
 文档入口：[文档中心](docs/README.md) · [构建指南](docs/BUILDING.md) · [使用指南](docs/USER_GUIDE.md) · [技术设计](设计.md) · [架构说明](docs/ARCHITECTURE.md) · [工具参考](docs/TOOLS.md) · [后续工作](docs/REMAINING_WORK.md)
 
@@ -11,10 +11,10 @@ TinyEngine 是参考 Unreal Engine 5.3.2 模块职责、以 C++17 实现的轻�
 ## 已实现
 
 - 项目与运行时：`.tinyproject`、启动场景、`GameInstance`、`SceneManager`、Play/Stop 隔离、SaveGame、独立 Shipping Game 和 TPAK 启动挂载。
-- 世界：generation Entity、组件查询、父子层级、Active/Tag/Layer、生命周期、Prefab、`TINYSCENE 10`。
+- 世界：generation Entity、组件查询、父子层级、Active/Tag/Layer、生命周期、Prefab、`TINYSCENE 11`。
 - 资产：Assimp 6.0.5 后台模型导入/重导入、稳定 GUID/`.meta`、DDS/KTX2 BC1–BC7、三类缩略图、依赖诊断/修复、移动引用更新、大文件分块区间读取、增量 Cook、TPAK、VFS。
 - 图片：PPM，以及 Windows WIC 的 PNG/JPG/BMP/TIFF；Radiance HDR 保持线性浮点数据，GPU 使用 RGBA16F。
-- 渲染：SDL2 + OpenGL 3.3、离线 Cubemap 六面 IBL/BRDF LUT、三段 CSM、透明覆盖率阴影、正确法线矩阵、GPU 实例化、保守遮挡剔除、Bloom/SSAO/TAA/FXAA/ACES、各向异性过滤、LOD 和 GPU Profiler。
+- 渲染：SDL2 + OpenGL 4.3、资源依赖 Render Graph、三段 CSM、64 灯 Forward+（16×9×24 Cluster）、GPU HZB/Compute 可见实例压缩/Indirect Draw、Motion Vector TAA、独立五级 Bloom、半分辨率 GTAO、FXAA/ACES、离线 IBL/BRDF LUT、各向异性过滤、LOD 和 GPU Profiler。
 - 材质：显式实例 Override、六类独立贴图与 ORM/RMA、Shader 参数反射、可视化 Material Graph、Shader 源码编辑和实时错误行定位。
 - 物理：固定步长、SAP、Convex GJK、Triangle Mesh 三角形 Ray/Narrowphase、通用 Shape Sweep、摩擦/角速度/惯量/旋转锁、Fixed/Distance/Hinge/Spring Joint、Character Slide/Step/Slope，以及可选 Jolt 构建入口。
 - 动画与音频：Assimp 四骨骼权重、层级/Inverse Bind、误差压缩、事件、1D/2D Blend、Animation Graph、重定向、双骨骼 IK、Root Motion、分层混合、调试快照和 GPU Skinning；多 Voice、空间音频与 OGG 长音频分块流。
@@ -33,7 +33,7 @@ TinyEngine 是参考 Unreal Engine 5.3.2 模块职责、以 C++17 实现的轻�
 
 ## 快速开始
 
-需要 CMake 3.20+、C++17 编译器、OpenGL 3.3 驱动，以及本地 Assimp/ImGui 源码。SDL2 和 stb 在本机不可用时由 CMake 获取；完整依赖与离线构建方式见[构建指南](docs/BUILDING.md)。
+需要 CMake 3.20+、C++17 编译器、OpenGL 4.3 驱动，以及本地 Assimp/ImGui 源码。SDL2 和 stb 在本机不可用时由 CMake 获取；完整依赖与离线构建方式见[构建指南](docs/BUILDING.md)。
 
 ```powershell
 cmake -S . -B build `
@@ -69,4 +69,4 @@ Scene View 操作：按住鼠标右键并使用 WASD/QE 飞行，Shift 加速；
 
 ## 当前边界
 
-0.26 指定功能已进入可运行路径。继续向生产级升级的重点是 GPU HZB/Motion Vector TAA、完整 OpenType/HarfBuzz、正式 Recast/Detour 烘焙、联网加密/会话服务、GPU 粒子碰撞与目标平台认证。详见[0.26 完成说明](docs/ENGINE_COMPLETION_026.md)与[后续工作](docs/REMAINING_WORK.md)。
+0.27 指定渲染架构已进入可运行路径。继续向生产级升级的重点是跨平台 RHI/Shader 编译链、异步 Compute 与多线程命令录制、完整 OpenType/HarfBuzz、正式 Recast/Detour 烘焙、联网加密/会话服务和目标平台认证。详见[0.27 完成说明](docs/ENGINE_COMPLETION_027.md)与[后续工作](docs/REMAINING_WORK.md)。

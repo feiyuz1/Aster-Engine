@@ -64,11 +64,22 @@ struct CameraComponent
     bool primary = true;
 };
 
+enum class LightType
+{
+    Directional,
+    Point,
+    Spot
+};
+
 struct LightComponent
 {
+    LightType type = LightType::Directional;
     Vec3 color{1.0f, 1.0f, 1.0f};
     float intensity = 1.0f;
     Vec3 direction{-0.4f, -1.0f, -0.3f};
+    float range = 10.0f;
+    float innerConeAngle = 25.0f;
+    float outerConeAngle = 35.0f;
 };
 
 struct ScriptComponent

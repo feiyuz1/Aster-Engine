@@ -6,7 +6,7 @@ TinyEngine 将“可编辑源资产”和“运行时轻量资产”分离。FBX
 
 | 扩展名/用途 | Magic / 当前版本 | 说明 |
 |---|---|---|
-| `.scene` / `.prefab` | `TINYSCENE 10` | ECS 实体、组件和父子关系；读取 1–10 |
+| `.scene` / `.prefab` | `TINYSCENE 11` | ECS 实体、组件和父子关系；读取 1–11 |
 | `.mesh` | `TINY_MESH 2` | 文本网格，含 Tangent 与四骨骼索引/权重 |
 | Cooked Mesh | `TNYMSH2` | 小端运行时二进制；兼容 `TNYMSH1` |
 | Cooked Texture | `TNYTEX1` | 小端纹理 Header 与 Payload |
@@ -29,8 +29,8 @@ TinyEngine 将“可编辑源资产”和“运行时轻量资产”分离。FBX
 
 ## 2. 场景兼容规则
 
-- Writer 始终写 `TINYSCENE 10`。
-- Reader 继续接受 1–10，并为旧版本缺失字段填默认值。
+- Writer 始终写 `TINYSCENE 11`。
+- Reader 继续接受 1–11，并为旧版本缺失字段填默认值；v11 为 Light 增加 Directional/Point/Spot、颜色、强度、范围和内外锥角。
 - `MigrateScenes` 会先创建 `.bak` 再重写当前版本。
 - 新增持久化组件或字段时必须同时更新 SceneSerializer、迁移兼容和核心测试。
 - Entity 保存完整 generation 信息；加载阶段重新建立父子引用。

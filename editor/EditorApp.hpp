@@ -22,7 +22,7 @@ class EditorApp
 {
   public:
     bool Initialize(const std::filesystem::path &projectFile);
-    void Run();
+    void Run(std::uint32_t maximumFrames = 0);
     void Shutdown();
 
   private:

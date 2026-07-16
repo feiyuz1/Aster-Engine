@@ -29,6 +29,7 @@ class SdlGlRenderDevice final : public RenderDevice
     void DrawInstanced(const std::vector<RenderItem> &items) override;
     void DrawParticles(const std::vector<Particle> &particles) override;
     void DrawGpuParticles(const std::vector<GpuParticleEmitter> &emitters) override;
+    void ExecutePostProcess(PostProcessPass pass) override;
     void EndFrame() override;
     void DrawUi(const std::vector<UIDrawCommand> &commands) override;
     void Present() override;
@@ -55,9 +56,14 @@ class SdlGlRenderDevice final : public RenderDevice
     bool IsBloomEnabled() const;
     void SetSsaoEnabled(bool enabled);
     bool IsSsaoEnabled() const;
+    void SetGtaoEnabled(bool enabled);
+    bool IsGtaoEnabled() const;
     void SetTaaEnabled(bool enabled);
     bool IsTaaEnabled() const;
     float GetLastGpuFrameMilliseconds() const;
+    std::size_t GetHzbLevelCount() const;
+    bool IsIndirectDrawSupported() const;
+    bool IsGpuDrivenCullingSupported() const;
     bool RumbleController(float lowFrequency, float highFrequency, std::uint32_t durationMilliseconds);
     bool IsControllerConnected() const;
 

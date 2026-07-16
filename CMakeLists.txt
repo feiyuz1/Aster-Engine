@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(TinyEngine VERSION 0.26.0 LANGUAGES C CXX)
+project(TinyEngine VERSION 0.27.0 LANGUAGES C CXX)
 
 option(TINYENGINE_BUILD_TESTS "Build TinyEngine tests" ON)
 option(TINYENGINE_BUILD_DEMO "Build TinyEngine demo" ON)
@@ -116,6 +116,8 @@ add_library(tinyengine STATIC
     src/Build/AssetCompiler.cpp
     src/Automation/Automation.cpp
     src/Render/Renderer.cpp
+    src/Render/RenderGraph.cpp
+    src/Render/ClusteredLighting.cpp
     src/Render/EnvironmentBaker.cpp
     src/Render/MaterialGraph.cpp
     src/Render/ShaderPipeline.cpp

@@ -131,6 +131,35 @@ int main()
     const Mat4 orthographic = Orthographic(-2.0f, 2.0f, -1.0f, 1.0f, 0.1f, 10.0f);
     CHECK(std::abs(orthographic.At(0, 0) - 0.5f) < 0.0001f && std::abs(orthographic.At(1, 1) - 1.0f) < 0.0001f);
 
+    RenderGraph renderGraph;
+    const auto graphA = renderGraph.CreateResource({RenderGraphResourceType::Texture, "A", 64, 64, 1, 1});
+    const auto graphB = renderGraph.CreateResource({RenderGraphResourceType::Texture, "B", 64, 64, 1, 1});
+    const auto graphOutput = renderGraph.ImportResource({RenderGraphResourceType::Texture, "Output", 64, 64, 1, 1});
+    std::vector<int> graphExecution;
+    renderGraph.AddPass({"Write A", {}, {graphA}, [&] { graphExecution.push_back(1); }});
+    renderGraph.AddPass({"Read A", {graphA}, {}, [&] { graphExecution.push_back(2); }, true});
+    renderGraph.AddPass({"Write B", {}, {graphB}, [&] { graphExecution.push_back(3); }});
+    renderGraph.AddPass({"Composite", {graphB}, {graphOutput}, [&] { graphExecution.push_back(4); }, true});
+    std::string graphError;
+    CHECK(renderGraph.Compile(&graphError) && renderGraph.Execute(&graphError));
+    CHECK(graphExecution == std::vector<int>({1, 2, 3, 4}));
+    CHECK(renderGraph.GetLifetime(graphA)->aliasSlot == renderGraph.GetLifetime(graphB)->aliasSlot &&
+          renderGraph.GetPhysicalResourceCount() == 2);
+    RenderGraph invalidGraph;
+    const auto neverWritten = invalidGraph.CreateResource({RenderGraphResourceType::Texture, "NeverWritten", 1, 1, 1, 1});
+    invalidGraph.AddPass({"Invalid Read", {neverWritten}, {}, {}, true});
+    CHECK(!invalidGraph.Compile(&graphError) && graphError.find("before it is written") != std::string::npos);
+
+    std::vector<RenderLight> clusterLights(2);
+    clusterLights[0].type = RenderLightType::Directional;
+    clusterLights[1].type = RenderLightType::Point;
+    clusterLights[1].position = {0.0f, 0.0f, -5.0f};
+    clusterLights[1].range = 2.0f;
+    const auto clustered = ClusteredLightBuilder::Build(clusterLights, Mat4::Identity(), Perspective(60.0f, 16.0f / 9.0f, 0.1f, 100.0f),
+                                                        1280, 720, 0.1f, 100.0f);
+    CHECK(clustered.GetClusterCount() == 16 * 9 * 24 && clustered.offsets.size() == clustered.GetClusterCount());
+    CHECK(clustered.lightIndices.size() >= clustered.GetClusterCount());
+
     BinaryWriter binaryWriter;
     binaryWriter.WriteU32(0x12345678u);
     binaryWriter.WriteFloat(3.5f);
@@ -228,12 +257,16 @@ int main()
     CHECK(!Prefab::Instantiate(prefabTarget, "Saved/Test.prefab").empty());
     World lightingWorld;
     for (int index = 0; index < 6; ++index)
-        lightingWorld.AddComponent(lightingWorld.CreateEntity("Light"),
-                                   LightComponent{{1.0f, 0.8f, 0.6f}, static_cast<float>(index + 1), {-0.4f, -1.0f, -0.3f}});
+    {
+        LightComponent light;
+        light.color = {1.0f, 0.8f, 0.6f};
+        light.intensity = static_cast<float>(index + 1);
+        lightingWorld.AddComponent(lightingWorld.CreateEntity("Light"), light);
+    }
     Renderer lightingRenderer;
     CHECK(lightingRenderer.Initialize(std::make_unique<NullRenderDevice>()));
     lightingRenderer.BuildRenderQueue(lightingWorld);
-    CHECK(lightingRenderer.GetFrameView().lightCount == static_cast<int>(FrameView::MaxLights));
+    CHECK(lightingRenderer.GetFrameView().lightCount == 6);
     VfxSystem renderVfx;
     ParticleEmitterSettings renderParticleSettings;
     renderParticleSettings.emissionRate = 0.0f;
@@ -242,6 +275,7 @@ int main()
     lightingRenderer.SetVfxSystem(&renderVfx);
     lightingRenderer.RenderFrame(lightingWorld);
     CHECK(lightingRenderer.GetLastDrawCallCount() == 3);
+    CHECK(lightingRenderer.GetLastRenderGraph().GetPassCount() == 9);
     lightingRenderer.Shutdown();
 
     ProjectSettings project;

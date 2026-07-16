@@ -78,6 +78,19 @@ bool Engine::Initialize(const std::filesystem::path &projectFile, const bool sta
         if (auto *device = dynamic_cast<SdlGlRenderDevice *>(m_renderer.GetDevice()))
             device->SetFxaaEnabled(std::get<bool>(value));
     });
+    console.RegisterVariable("r.Bloom", true, "Enable multi-level bloom", false, [this](const ConsoleValue &value) {
+        if (auto *device = dynamic_cast<SdlGlRenderDevice *>(m_renderer.GetDevice()))
+            device->SetBloomEnabled(std::get<bool>(value));
+    });
+    console.RegisterVariable("r.GTAO", true, "Enable ground-truth ambient occlusion approximation", false,
+                             [this](const ConsoleValue &value) {
+                                 if (auto *device = dynamic_cast<SdlGlRenderDevice *>(m_renderer.GetDevice()))
+                                     device->SetGtaoEnabled(std::get<bool>(value));
+                             });
+    console.RegisterVariable("r.TAA", true, "Enable motion-vector temporal anti-aliasing", false, [this](const ConsoleValue &value) {
+        if (auto *device = dynamic_cast<SdlGlRenderDevice *>(m_renderer.GetDevice()))
+            device->SetTaaEnabled(std::get<bool>(value));
+    });
     console.RegisterVariable(
         "asset.StreamingBudgetMB", 256, "Runtime resource memory budget in MiB", false, [this](const ConsoleValue &value) {
             m_assetStreaming.SetMemoryBudget(static_cast<std::size_t>(std::max(1, std::get<int>(value))) * 1024u * 1024u);
@@ -127,7 +140,9 @@ bool Engine::Initialize(const std::filesystem::path &projectFile, const bool sta
         EnterPlayMode();
     else
         m_paused = true;
-    m_logger.Info("Engine initialize complete. OpenGL 3.3 core renderer active.");
+    const auto *glDevice = dynamic_cast<const SdlGlRenderDevice *>(m_renderer.GetDevice());
+    m_logger.Info(std::string{"Engine initialize complete. OpenGL 4.3 core renderer active; GPU Driven: "} +
+                  (glDevice && glDevice->IsGpuDrivenCullingSupported() ? "Compute + Indirect." : "fallback."));
     return true;
 }
 
@@ -318,6 +333,9 @@ void Engine::Tick(const float rawDeltaTime)
     stats.Set("frame.delta_ms", rawDeltaTime * 1000.0);
     stats.Set("render.total_ms", profile.totalMilliseconds);
     stats.Set("render.draw_calls", static_cast<double>(m_renderer.GetLastDrawCallCount()));
+    stats.Set("render.graph_passes", static_cast<double>(profile.graphPasses));
+    stats.Set("render.graph_physical_resources", static_cast<double>(profile.graphPhysicalResources));
+    stats.Set("render.cluster_light_references", static_cast<double>(profile.clusteredLightReferences));
     stats.Set("render.gpu_resident_bytes",
               m_renderer.GetDevice() ? static_cast<double>(m_renderer.GetDevice()->GetResidentGpuBytes()) : 0.0);
     stats.Set("asset.resident_bytes", static_cast<double>(m_assetStreaming.GetResidentBytes()));
