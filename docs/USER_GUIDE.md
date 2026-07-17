@@ -32,7 +32,9 @@ physics.fixedStep=0.016666667
 
 ## 2. 编辑器布局与操作
 
-下图为实际运行 TinyEngine 0.27 Release 编辑器并打开示例项目后的默认界面：
+TinyEngine 编辑器默认使用简体中文界面。Windows 优先加载微软雅黑，并依次回退到黑体和宋体；Linux 优先使用 Noto Sans CJK 或文泉驿微米黑。系统缺少中文字体时会回退到 ImGui 默认字体，并在控制台输出警告。
+
+下图为实际运行 TinyEngine 0.27 Release 编辑器并打开示例项目后的默认布局：
 
 ![TinyEngine 编辑器主界面](images/editor-overview.png)
 
@@ -40,60 +42,60 @@ physics.fixedStep=0.016666667
 
 | 区域 | 位置 | 用途 |
 |---|---|---|
-| Hierarchy | 左上 | 查看实体父子层级，选择实体，创建和批量删除实体 |
-| Scene View | 中上 | 编辑场景、控制编辑器相机、框选实体并操作 Gizmo |
-| Inspector | 右上 | 编辑所选实体的组件，或编辑 Assets 中选中的材质 |
-| Assets | 左下 | 浏览、导入、重导入、移动、预览和修复资产 |
-| Console / Stats | 右下 | 执行控制台命令，查看日志以及 CPU/GPU/Render Graph 统计 |
+| 场景层级 | 左上 | 查看实体父子层级，选择实体，创建和批量删除实体 |
+| 场景视图 | 中上 | 编辑场景、控制编辑器相机、框选实体并操作 Gizmo |
+| 属性检查器 | 右上 | 编辑所选实体的组件，或编辑资产面板中选中的材质 |
+| 资产 | 左下 | 浏览、导入、重导入、移动、预览和修复资产 |
+| 控制台 / 统计 | 右下 | 执行控制台命令，查看日志以及 CPU/GPU/Render Graph 统计 |
 
 ### 2.1 顶部菜单和运行状态
 
-- `File > Save Scene`：保存当前场景，等同于 `Ctrl+S`。
-- `File > New Scene`：创建新的场景标签。
-- `File > Restore Autosave`：恢复 `Saved/EditorAutosave.scene`；没有恢复文件或处于 Play 状态时不可用。
-- `File > Package Project`：保存场景并把项目打包到 `Dist/<项目名>`。
-- `Edit > Undo/Redo`：撤销或重做编辑操作。
-- `Play`：进入运行状态，按钮会变成 `Stop`，右侧状态由 `Editing` 变为 `Runtime`。
-- `Stop`：退出运行状态并恢复进入 Play 前的编辑场景快照。
+- `文件 > 保存场景`：保存当前场景，等同于 `Ctrl+S`。
+- `文件 > 新建场景`：创建新的场景标签。
+- `文件 > 恢复自动保存`：恢复 `Saved/EditorAutosave.scene`；没有恢复文件或处于运行状态时不可用。
+- `文件 > 打包项目`：保存场景并把项目打包到 `Dist/<项目名>`。
+- `编辑 > 撤销/重做`：撤销或重做编辑操作。
+- `运行`：进入运行状态，按钮会变成 `停止`，右侧状态由 `编辑中` 变为 `运行中`。
+- `停止`：退出运行状态并恢复进入运行前的编辑场景快照。
 
 编辑器进入 Play 前保存内存快照，退出 Play 时恢复，因此运行时产生的 Transform、物理或 Gameplay 修改不会污染编辑场景。未保存场景每 30 秒自动写入恢复文件。
 
-### 2.2 Hierarchy 实体层级
+### 2.2 场景层级
 
-- 点击 `+ Entity` 创建空实体。
+- 点击 `+ 实体` 创建空实体。
 - 单击实体进行单选；按住 `Ctrl` 单击可以追加选择或从选择集中移除。
 - 有子实体的节点可以展开或折叠，父子关系来自 `RelationshipComponent`。
 - 选中实体后按 `Delete` 批量删除当前选择集。
-- 主选中实体是最后选中的实体，Inspector 默认编辑该实体。
+- 主选中实体是最后选中的实体，属性检查器默认编辑该实体。
 
-### 2.3 Scene View 场景视图
+### 2.3 场景视图
 
-Scene View 顶部工具条从左到右包括：
+场景视图顶部工具条从左到右包括：
 
-- `W Translate`、`E Rotate`、`R Scale`：切换平移、旋转和缩放 Gizmo。
-- `Snap`：启用步长吸附；旁边的数值根据当前模式表示移动距离、旋转角度或缩放步长。
-- `World/Local`：切换世界坐标轴和实体局部坐标轴。
-- `Center/Active/Individual`：设置多选 Gizmo 中心。`Center` 使用选择集中心，`Active` 使用主实体，`Individual` 分别修改各实体。
-- `Exposure`：调整 HDR Tone Mapping 曝光。
-- `FXAA`、`Bloom`、`GTAO`、`TAA`：实时启用或关闭对应后处理。
-- `Reload Shaders`：重新编译默认 Shader；失败时继续使用上一份有效程序，并把错误写入 Console。
+- `W 移动`、`E 旋转`、`R 缩放`：切换平移、旋转和缩放 Gizmo。
+- `吸附`：启用步长吸附；旁边的数值根据当前模式表示移动距离、旋转角度或缩放步长。
+- `世界/局部`：切换世界坐标轴和实体局部坐标轴。
+- `中心/活动项/独立`：设置多选 Gizmo 中心。`中心` 使用选择集中心，`活动项` 使用主实体，`独立` 分别修改各实体。
+- `曝光`：调整 HDR Tone Mapping 曝光。
+- `FXAA`、`泛光`、`GTAO`、`TAA`：实时启用或关闭对应后处理。
+- `重新加载着色器`：重新编译默认 Shader；失败时继续使用上一份有效程序，并把错误写入控制台。
 
-Scene View 鼠标与键盘操作：
+场景视图鼠标与键盘操作：
 
 - 按住鼠标右键并使用 `W/A/S/D/Q/E` 飞行，`Shift` 加速。
 - 左键单选；拖动空白区域框选；`Ctrl` 追加或移除选择。
 - `W/E/R` 切换平移、旋转、缩放 Gizmo。
 - 拖动红、绿、蓝 Gizmo 轴修改 X、Y、Z；启用 Snap 后按设定步长变化。
-- 从 Assets 把 `.prefab`、`.mesh` 或 `.mat` 拖入 Scene View，可以实例化 Prefab、创建 Mesh 实体或给选中实体应用材质。
+- 从资产面板把 `.prefab`、`.mesh` 或 `.mat` 拖入场景视图，可以实例化 Prefab、创建 Mesh 实体或给选中实体应用材质。
 
-### 2.4 Inspector 属性面板
+### 2.4 属性检查器
 
-- 选中实体后，Inspector 通过反射系统列出该实体已有组件及可编辑字段。
-- `Add Component` 添加尚未存在的可移除组件；组件标题下的 `Remove Component` 删除组件。
+- 选中实体后，属性检查器通过反射系统列出该实体已有组件及可编辑字段。
+- `添加组件` 添加尚未存在的可移除组件；组件标题下的 `移除组件` 删除组件。
 - Transform、物理数值、枚举、布尔值、颜色和资产路径使用对应控件编辑。
 - 资产字段会先经过 Asset Registry 类型检查；类型不匹配时拒绝赋值并在 Console 输出原因。
-- 多选时 Inspector 提示选择数量，字段编辑以主实体为入口；批量 Gizmo 操作会作用于整个选择集。
-- Assets 中选中 `.mat` 时，如果当前没有实体选择，Inspector 会显示材质颜色、Metallic、Roughness、贴图、父材质和显式 Override。
+- 多选时属性检查器提示选择数量，字段编辑以主实体为入口；批量 Gizmo 操作会作用于整个选择集。
+- 资产面板中选中 `.mat` 时，如果当前没有实体选择，属性检查器会显示基础颜色、金属度、粗糙度、贴图、父材质和显式覆盖开关。
 
 ### 2.5 Assets 资产面板
 
@@ -106,20 +108,20 @@ Scene View 鼠标与键盘操作：
 
 常用资产操作：
 
-- `Import Model...`：选择 FBX、glTF、OBJ 等源模型，设置输出目录和资源前缀后提交后台 Assimp 导入。
+- `导入模型...`：选择 FBX、glTF、OBJ 等源模型，设置输出目录和资源前缀后提交后台 Assimp 导入。
 - `Reimport`：使用 `.meta` 中保存的源文件和导入设置重新生成当前资产。
 - 单击资产：选中并显示类型、路径、缩略图或专用编辑窗口。
 - 右键 `Move / Rename...`：移动资产，并同步更新 `.meta`、依赖和文本引用。
 - 右键 `Regenerate Thumbnail`：重新生成模型、材质或纹理缩略图。
 - 缺失依赖区域会列出候选资产；点击 `Repair -> <路径>` 交互式修复引用。
-- 把 Prefab 或 Scene 拖到 Scene View；Scene 资产也可以作为新的场景标签打开。
+- 把 Prefab 或 Scene 拖到场景视图；Scene 资产也可以作为新的场景标签打开。
 
 选择不同扩展名时会打开相应工具窗口：
 
 - `.skanim`、`.blendtree`、`.animgraph`：Animation Graph / Events。
-- `.vfx`：VFX Editor。
-- `.btgraph`：Behavior Tree Editor。
-- `.vert`、`.frag`：Shader Source Editor。
+- `.vfx`：打开特效编辑器。
+- `.btgraph`：打开行为树编辑器。
+- `.vert`、`.frag`：打开着色器源码编辑器。
 - `.matgraph`：Material Graph。
 
 ### 2.6 Console / Stats
@@ -174,7 +176,7 @@ Assets 面板可创建：
 - `.btgraph`：行为树节点图。
 - `.matgraph`：可视化材质节点图。
 
-Shader Editor 编辑 `.vert/.frag` 时会调用真实 OpenGL 编译器。失败时保留上一份有效 Program，并显示驱动错误与行号。
+着色器源码编辑器编辑 `.vert/.frag` 时会调用真实 OpenGL 编译器。失败时保留上一份有效 Program，并显示驱动错误与行号。
 
 ## 5. 资产维护
 

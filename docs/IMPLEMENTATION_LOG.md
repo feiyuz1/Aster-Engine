@@ -6,7 +6,7 @@
 
 参考源码：Unreal Engine 5.3.2
 
-最后同步：2026-07-16
+最后同步：2026-07-17
 
 > 本文是按提交顺序保留的历史快照。早期章节中的“当前未实现”只代表当时状态；当前能力以 [README](../README.md)、[完成说明](ENGINE_COMPLETION_026.md) 和 [后续工作](REMAINING_WORK.md) 为准。
 
@@ -431,5 +431,13 @@
 - OpenGL 4.3 Compute Shader 使用上一帧 HZB 剔除实例，原子压缩可见 Model Matrix 并直接写 Indirect Command，再由 `glDrawElementsIndirect` 提交。
 - Runtime CVar 增加 `r.Bloom`、`r.GTAO`、`r.TAA`；编辑器统计显示图 Pass/物理资源、Cluster 引用、HZB 层数和 GPU Driven 支持状态。
 - 核心测试覆盖 Render Graph 校验/排序/别名、Cluster 分配和九 Pass 帧图；Demo 与 Editor 完成五帧 OpenGL 4.3 冒烟。
+
+## 31. 编辑器简体中文界面
+
+- 编辑器主菜单、运行工具栏、场景层级、场景视图、属性检查器、资产、控制台和统计面板统一改为简体中文。
+- 模型导入、资产移动/重命名、缩略图与依赖修复弹窗，以及动画、Blend Tree、Animation Graph、VFX、行为树、材质图和 Shader 源码编辑器完成中文化。
+- 反射组件名、属性名、枚举值和资产类型通过显示层映射为中文；序列化键、文件格式、资产名、参数名和路径保持原值，避免破坏兼容性与引用关系。
+- Editor 启动时加载系统中文字体：Windows 使用微软雅黑/黑体/宋体回退，Linux 使用 Noto Sans CJK/文泉驿回退；缺失时保留默认字体并输出警告。
+- MSVC Editor 目标启用 `/utf-8`，确保 UTF-8 源码字符串在 Windows 构建中稳定显示；Release 构建、三帧无头启动和真实 OpenGL 编辑器截图验证通过。
 
 继续开发时，应同时更新本文、`README.md`、`设计.md` 和 `docs/ARCHITECTURE.md`。
