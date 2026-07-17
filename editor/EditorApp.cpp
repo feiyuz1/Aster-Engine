@@ -21,6 +21,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <fstream>
 #include <limits>
 #include <optional>
 #include <sstream>
@@ -129,8 +130,10 @@ bool LoadChineseEditorFont(ImGuiIO &io)
     return false;
 }
 
-std::string TranslateUi(const std::string_view text)
+std::string TranslateUi(const std::string_view text, const bool simplifiedChinese)
 {
+    if (!simplifiedChinese)
+        return std::string(text);
     static const std::unordered_map<std::string_view, std::string_view> translations = {
         {"Name", "名称"},
         {"Active", "启用"},
@@ -266,10 +269,54 @@ std::string TranslateUi(const std::string_view text)
 }
 } // namespace
 
+const char *EditorApp::Localize(const char *english, const char *simplifiedChinese) const
+{
+    return m_interfaceLanguage == InterfaceLanguage::SimplifiedChinese ? simplifiedChinese : english;
+}
+
+std::string EditorApp::LocalizeReflected(const std::string_view text) const
+{
+    return TranslateUi(text, m_interfaceLanguage == InterfaceLanguage::SimplifiedChinese);
+}
+
+std::filesystem::path EditorApp::GetEditorSettingsPath()
+{
+    return m_engine.GetProjectSettings().Resolve("Saved/EditorSettings.ini");
+}
+
+void EditorApp::LoadEditorSettings()
+{
+    std::ifstream input(GetEditorSettingsPath());
+    std::string line;
+    while (std::getline(input, line))
+    {
+        if (line == "language=en")
+            m_interfaceLanguage = InterfaceLanguage::English;
+        else if (line == "language=zh-CN")
+            m_interfaceLanguage = InterfaceLanguage::SimplifiedChinese;
+    }
+}
+
+bool EditorApp::SaveEditorSettings()
+{
+    const std::filesystem::path path = GetEditorSettingsPath();
+    std::error_code error;
+    std::filesystem::create_directories(path.parent_path(), error);
+    if (error)
+        return false;
+    std::ofstream output(path, std::ios::trunc);
+    if (!output)
+        return false;
+    output << "language="
+           << (m_interfaceLanguage == InterfaceLanguage::SimplifiedChinese ? "zh-CN" : "en") << '\n';
+    return output.good();
+}
+
 bool EditorApp::Initialize(const std::filesystem::path &projectFile)
 {
     if (!m_engine.Initialize(projectFile, false))
         return false;
+    LoadEditorSettings();
     m_device = dynamic_cast<SdlGlRenderDevice *>(m_engine.GetContext().renderer->GetDevice());
     if (!m_device)
     {
@@ -282,7 +329,8 @@ bool EditorApp::Initialize(const std::filesystem::path &projectFile)
         return false;
     }
     m_engine.GetContext().renderer->SetCameraOverride(true, m_editorCameraPosition, m_editorCameraRotation, m_editorCameraFov);
-    SDL_SetWindowTitle(static_cast<SDL_Window *>(m_device->GetNativeWindow()), "TinyEngine 编辑器");
+    SDL_SetWindowTitle(static_cast<SDL_Window *>(m_device->GetNativeWindow()),
+                       Localize("TinyEngine Editor", "TinyEngine 编辑器"));
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
     ImGuiIO &io = ImGui::GetIO();
@@ -298,15 +346,18 @@ bool EditorApp::Initialize(const std::filesystem::path &projectFile)
     }
     m_device->SetEventCallback([](const void *event) { ImGui_ImplSDL2_ProcessEvent(static_cast<const SDL_Event *>(event)); });
     m_engine.GetContext().renderer->SetOverlayCallback([this]() { Draw(); });
-    m_messages.emplace_back("编辑器初始化完成。编辑状态与运行模式相互隔离。");
+    m_messages.emplace_back(Localize("Editor initialized. Edit and play states are isolated.",
+                                     "编辑器初始化完成。编辑状态与运行模式相互隔离。"));
     if (!chineseFontLoaded)
-        m_messages.emplace_back("警告：未找到中文字体，中文界面可能无法正确显示。");
+        m_messages.emplace_back(Localize("Warning: no CJK font was found. Chinese text may not display correctly.",
+                                         "警告：未找到中文字体，中文界面可能无法正确显示。"));
     m_sceneDocuments.push_back({m_engine.GetSceneManager().GetCurrentScene(), m_engine.GetSceneManager().CreateSnapshot(), false});
 #ifdef TINYENGINE_HAS_ASSIMP
     m_importQueue.Initialize(m_engine.GetContext().jobSystem);
 #endif
     if (std::filesystem::is_regular_file(GetAutosavePath()))
-        m_messages.emplace_back("检测到自动恢复文件，可通过“文件 → 恢复自动保存”载入。");
+        m_messages.emplace_back(Localize("An autosave is available from File > Restore Autosave.",
+                                         "检测到自动恢复文件，可通过“文件 → 恢复自动保存”载入。"));
     UpdateWindowTitle();
     m_initialized = true;
     return true;
@@ -340,6 +391,7 @@ void EditorApp::Draw()
     ImGui_ImplSDL2_NewFrame();
     ImGui::NewFrame();
     DrawMenuBar();
+    DrawSettings();
     DrawHierarchy();
     DrawInspector();
     DrawSceneView();
@@ -380,20 +432,20 @@ void EditorApp::DrawMenuBar()
 {
     if (!ImGui::BeginMainMenuBar())
         return;
-    if (ImGui::BeginMenu("文件"))
+    if (ImGui::BeginMenu(Localize("File", "文件")))
     {
-        if (ImGui::MenuItem("保存场景", "Ctrl+S"))
+        if (ImGui::MenuItem(Localize("Save Scene", "保存场景"), "Ctrl+S"))
             SaveCurrentScene();
-        if (ImGui::MenuItem("新建场景"))
+        if (ImGui::MenuItem(Localize("New Scene", "新建场景")))
             NewSceneDocument();
         const auto autosavePath = GetAutosavePath();
         ImGui::BeginDisabled(!std::filesystem::is_regular_file(autosavePath) || m_engine.IsPlaying());
-        if (ImGui::MenuItem("恢复自动保存"))
+        if (ImGui::MenuItem(Localize("Restore Autosave", "恢复自动保存")))
             RestoreAutosave();
         ImGui::EndDisabled();
         const bool canPackage = !m_engine.IsPlaying() && !m_engine.GetProjectSettings().projectFile.empty();
         ImGui::BeginDisabled(!canPackage);
-        if (ImGui::MenuItem("打包项目"))
+        if (ImGui::MenuItem(Localize("Package Project", "打包项目")))
         {
             SaveCurrentScene();
             char *basePath = SDL_GetBasePath();
@@ -408,43 +460,75 @@ void EditorApp::DrawMenuBar()
             const auto output = m_engine.GetProjectSettings().Resolve(std::filesystem::path("Dist") / m_engine.GetProjectSettings().name);
             const auto result = ProjectPackager::Package({m_engine.GetProjectSettings().projectFile, output, gameExecutable});
             if (result.success)
-                m_messages.emplace_back("项目打包完成：" + result.outputDirectory.generic_string());
+                m_messages.emplace_back(std::string(Localize("Project packaged: ", "项目打包完成：")) +
+                                        result.outputDirectory.generic_string());
             else
                 for (const auto &error : result.errors)
-                    m_messages.emplace_back("打包错误：" + error);
+                    m_messages.emplace_back(std::string(Localize("Package error: ", "打包错误：")) + error);
         }
         ImGui::EndDisabled();
         ImGui::EndMenu();
     }
-    if (ImGui::BeginMenu("编辑"))
+    if (ImGui::BeginMenu(Localize("Edit", "编辑")))
     {
-        if (ImGui::MenuItem("撤销", "Ctrl+Z", false, !m_undo.empty()))
+        if (ImGui::MenuItem(Localize("Undo", "撤销"), "Ctrl+Z", false, !m_undo.empty()))
             Undo();
-        if (ImGui::MenuItem("重做", "Ctrl+Y", false, !m_redo.empty()))
+        if (ImGui::MenuItem(Localize("Redo", "重做"), "Ctrl+Y", false, !m_redo.empty()))
             Redo();
+        ImGui::Separator();
+        if (ImGui::MenuItem(Localize("Settings...", "设置...")))
+            m_showSettings = true;
         ImGui::EndMenu();
     }
     ImGui::Separator();
     if (!m_engine.IsPlaying())
     {
-        if (ImGui::Button("运行"))
+        if (ImGui::Button(Localize("Play", "运行")))
         {
             m_engine.EnterPlayMode();
-            m_messages.emplace_back("已进入运行模式");
+            m_messages.emplace_back(Localize("Entered play mode", "已进入运行模式"));
         }
     }
     else
     {
-        if (ImGui::Button("停止"))
+        if (ImGui::Button(Localize("Stop", "停止")))
         {
             m_engine.ExitPlayMode();
             m_selected = InvalidEntity;
-            m_messages.emplace_back("运行模式已停止，编辑场景已恢复");
+            m_messages.emplace_back(Localize("Play mode stopped; edit scene restored", "运行模式已停止，编辑场景已恢复"));
         }
     }
     ImGui::SameLine();
-    ImGui::TextUnformatted(m_engine.IsPlaying() ? "运行中" : "编辑中");
+    ImGui::TextUnformatted(m_engine.IsPlaying() ? Localize("Playing", "运行中") : Localize("Editing", "编辑中"));
     ImGui::EndMainMenuBar();
+}
+
+void EditorApp::DrawSettings()
+{
+    if (!m_showSettings)
+        return;
+    ImGui::SetNextWindowSize({520.0f, 0.0f}, ImGuiCond_FirstUseEver);
+    if (!ImGui::Begin(Localize("Settings###EditorSettingsWindow", "设置###EditorSettingsWindow"), &m_showSettings,
+                      ImGuiWindowFlags_AlwaysAutoResize))
+    {
+        ImGui::End();
+        return;
+    }
+
+    int language = m_interfaceLanguage == InterfaceLanguage::English ? 0 : 1;
+    if (ImGui::Combo(Localize("Interface Language", "界面语言"), &language, "English\0简体中文\0"))
+    {
+        m_interfaceLanguage = language == 0 ? InterfaceLanguage::English : InterfaceLanguage::SimplifiedChinese;
+        m_titleInitialized = false;
+        const bool saved = SaveEditorSettings();
+        m_messages.emplace_back(saved ? Localize("Interface language saved.", "界面语言已保存。")
+                                      : Localize("Failed to save interface language.", "界面语言保存失败。"));
+    }
+    ImGui::TextDisabled("%s", Localize("The setting is applied immediately and restored at the next launch.",
+                                        "设置立即生效，并会在下次启动时自动恢复。"));
+    if (ImGui::Button(Localize("Close", "关闭")))
+        m_showSettings = false;
+    ImGui::End();
 }
 
 void EditorApp::DrawHierarchy()
@@ -454,9 +538,9 @@ void EditorApp::DrawHierarchy()
     const float upperHeight = viewport->WorkSize.y * 0.67f;
     ImGui::SetNextWindowPos({viewport->WorkPos.x, top}, ImGuiCond_Always);
     ImGui::SetNextWindowSize({260.0f, upperHeight}, ImGuiCond_Always);
-    ImGui::Begin("场景层级");
+    ImGui::Begin(Localize("Hierarchy", "场景层级"));
     World &world = *m_engine.GetContext().world;
-    if (!m_engine.IsPlaying() && ImGui::Button("+ 实体"))
+    if (!m_engine.IsPlaying() && ImGui::Button(Localize("+ Entity", "+ 实体")))
     {
         RecordUndo();
         m_selected = world.CreateEntity();
@@ -476,7 +560,7 @@ void EditorApp::DrawHierarchy()
         if (std::find(m_selection.begin(), m_selection.end(), entity) != m_selection.end() || m_selected == entity)
             flags |= ImGuiTreeNodeFlags_Selected;
         const bool open = ImGui::TreeNodeEx(reinterpret_cast<void *>(static_cast<std::uintptr_t>(entity)), flags, "%s",
-                                            name ? name->name.c_str() : "实体");
+                                            name ? name->name.c_str() : Localize("Entity", "实体"));
         if (ImGui::IsItemClicked())
         {
             if (ImGui::GetIO().KeyCtrl)
@@ -528,9 +612,11 @@ void EditorApp::DrawInspector()
     const float upperHeight = viewport->WorkSize.y * 0.67f;
     ImGui::SetNextWindowPos({viewport->WorkPos.x + viewport->WorkSize.x - width, viewport->WorkPos.y}, ImGuiCond_Always);
     ImGui::SetNextWindowSize({width, upperHeight}, ImGuiCond_Always);
-    ImGui::Begin("属性检查器");
+    ImGui::Begin(Localize("Inspector", "属性检查器"));
     if (m_selection.size() > 1)
-        ImGui::TextDisabled("已选择 %zu 个实体；正在编辑主实体", m_selection.size());
+        ImGui::TextDisabled(Localize("%zu entities selected; editing the active entity",
+                                     "已选择 %zu 个实体；正在编辑主实体"),
+                            m_selection.size());
     World &world = *m_engine.GetContext().world;
     if (!world.IsAlive(m_selected))
     {
@@ -540,7 +626,7 @@ void EditorApp::DrawInspector()
         {
             if (auto material = m_engine.GetContext().resourceManager->Load<MaterialResource>(asset->path))
             {
-                ImGui::SeparatorText("材质资产");
+                ImGui::SeparatorText(Localize("Material Asset", "材质资产"));
                 ImGui::TextWrapped("%s", asset->path.c_str());
                 Vec4 color = material->GetBaseColor();
                 float metallic = material->GetMetallic(), roughness = material->GetRoughness();
@@ -569,19 +655,19 @@ void EditorApp::DrawInspector()
                     return enabled || !hasParent;
                 };
                 ImGui::BeginDisabled(!overrideControl("color"));
-                changed = ImGui::ColorEdit4("基础颜色", &color.x) || changed;
+                changed = ImGui::ColorEdit4(Localize("Base Color", "基础颜色"), &color.x) || changed;
                 ImGui::EndDisabled();
                 ImGui::BeginDisabled(!overrideControl("metallic"));
-                changed = ImGui::SliderFloat("金属度", &metallic, 0.0f, 1.0f) || changed;
+                changed = ImGui::SliderFloat(Localize("Metallic", "金属度"), &metallic, 0.0f, 1.0f) || changed;
                 ImGui::EndDisabled();
                 ImGui::BeginDisabled(!overrideControl("roughness"));
-                changed = ImGui::SliderFloat("粗糙度", &roughness, 0.04f, 1.0f) || changed;
+                changed = ImGui::SliderFloat(Localize("Roughness", "粗糙度"), &roughness, 0.04f, 1.0f) || changed;
                 ImGui::EndDisabled();
                 ImGui::BeginDisabled(!overrideControl("emissive"));
-                changed = ImGui::ColorEdit3("自发光", &emissive.x) || changed;
+                changed = ImGui::ColorEdit3(Localize("Emissive", "自发光"), &emissive.x) || changed;
                 ImGui::EndDisabled();
                 ImGui::BeginDisabled(!overrideControl("blend"));
-                changed = ImGui::Checkbox("透明", &transparent) || changed;
+                changed = ImGui::Checkbox(Localize("Transparent", "透明"), &transparent) || changed;
                 ImGui::EndDisabled();
                 auto editPath = [&](const char *label, const char *property, std::string &path) {
                     const bool enabled = std::string(property) == "parent" || overrideControl(property);
@@ -595,19 +681,19 @@ void EditorApp::DrawInspector()
                     }
                     ImGui::EndDisabled();
                 };
-                editPath("父材质", "parent", parent);
-                editPath("着色器", "shader", shader);
-                editPath("基础色贴图", "texture", albedo);
-                editPath("法线贴图", "normalTexture", normal);
-                editPath("金属度贴图", "metallicTexture", metallicMap);
-                editPath("粗糙度贴图", "roughnessTexture", roughnessMap);
-                editPath("环境光遮蔽贴图", "aoTexture", ao);
-                editPath("自发光贴图", "emissiveTexture", emissiveMap);
-                editPath("打包 ORM/RMA 贴图", "packedTexture", packed);
+                editPath(Localize("Parent Material", "父材质"), "parent", parent);
+                editPath(Localize("Shader", "着色器"), "shader", shader);
+                editPath(Localize("Base Color Texture", "基础色贴图"), "texture", albedo);
+                editPath(Localize("Normal Texture", "法线贴图"), "normalTexture", normal);
+                editPath(Localize("Metallic Texture", "金属度贴图"), "metallicTexture", metallicMap);
+                editPath(Localize("Roughness Texture", "粗糙度贴图"), "roughnessTexture", roughnessMap);
+                editPath(Localize("Ambient Occlusion Texture", "环境光遮蔽贴图"), "aoTexture", ao);
+                editPath(Localize("Emissive Texture", "自发光贴图"), "emissiveTexture", emissiveMap);
+                editPath(Localize("Packed ORM/RMA Texture", "打包 ORM/RMA 贴图"), "packedTexture", packed);
                 if (overrideControl("packedLayout"))
                 {
                     int layout = packedLayout == "RMA" ? 1 : 0;
-                    if (ImGui::Combo("打包通道布局", &layout, "ORM\0RMA\0"))
+                    if (ImGui::Combo(Localize("Packed Channel Layout", "打包通道布局"), &layout, "ORM\0RMA\0"))
                     {
                         packedLayout = layout ? "RMA" : "ORM";
                         changed = true;
@@ -668,14 +754,14 @@ void EditorApp::DrawInspector()
                                << parameter.second.z << ' ' << parameter.second.w << '\n';
                     output << "blend " << (transparent ? "alpha" : "opaque") << '\n';
                     if (PlatformFile::WriteAllText(asset->path, output.str()) && m_engine.GetContext().resourceManager->Reload(asset->path))
-                        m_messages.emplace_back("材质已保存：" + asset->path);
+                        m_messages.emplace_back(std::string(Localize("Material saved: ", "材质已保存：")) + asset->path);
                     else
-                        m_messages.emplace_back("材质保存失败：" + asset->path);
+                        m_messages.emplace_back(std::string(Localize("Failed to save material: ", "材质保存失败：")) + asset->path);
                 }
             }
         }
         else
-            ImGui::TextDisabled("请选择实体或材质资产");
+            ImGui::TextDisabled("%s", Localize("Select an entity or material asset", "请选择实体或材质资产"));
         ImGui::End();
         return;
     }
@@ -687,12 +773,12 @@ void EditorApp::DrawInspector()
         if (!component.has(world, m_selected))
             continue;
         ImGui::PushID(component.name.c_str());
-        const std::string componentLabel = TranslateUi(component.name);
+        const std::string componentLabel = LocalizeReflected(component.name);
         ImGui::SeparatorText(componentLabel.c_str());
         for (const auto &property : component.properties)
         {
             ImGui::PushID(property.name.c_str());
-            const std::string propertyLabel = TranslateUi(property.name);
+            const std::string propertyLabel = LocalizeReflected(property.name);
             void *value = property.access ? property.access(world, m_selected) : nullptr;
             bool changed = false;
             switch (property.type)
@@ -780,7 +866,8 @@ void EditorApp::DrawInspector()
                             changed = true;
                         }
                         else
-                            m_messages.emplace_back("属性检查器拒绝资产 " + path + "；期望类型：" + TranslateUi(property.assetType));
+                            m_messages.emplace_back(std::string(Localize("Inspector rejected asset ", "属性检查器拒绝资产 ")) + path +
+                                                    Localize("; expected type: ", "；期望类型：") + LocalizeReflected(property.assetType));
                     }
                     ImGui::EndDragDropTarget();
                 }
@@ -789,13 +876,13 @@ void EditorApp::DrawInspector()
             case ReflectedPropertyType::Enum: {
                 int edited = property.getEnum ? property.getEnum(world, m_selected) : 0;
                 const std::string preview = edited >= 0 && static_cast<std::size_t>(edited) < property.enumNames.size()
-                                                ? TranslateUi(property.enumNames[edited])
-                                                : "未知";
+                                                ? LocalizeReflected(property.enumNames[edited])
+                                                : Localize("Unknown", "未知");
                 if (ImGui::BeginCombo(propertyLabel.c_str(), preview.c_str()))
                 {
                     for (std::size_t index = 0; index < property.enumNames.size(); ++index)
                     {
-                        const std::string enumLabel = TranslateUi(property.enumNames[index]);
+                        const std::string enumLabel = LocalizeReflected(property.enumNames[index]);
                         if (ImGui::Selectable(enumLabel.c_str(), edited == static_cast<int>(index)))
                         {
                             RecordUndo();
@@ -814,7 +901,7 @@ void EditorApp::DrawInspector()
         if (component.removable)
         {
             ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.45f, 0.4f, 1.0f));
-            if (ImGui::SmallButton("移除组件"))
+            if (ImGui::SmallButton(Localize("Remove Component", "移除组件")))
             {
                 RecordUndo();
                 component.remove(world, m_selected);
@@ -823,13 +910,13 @@ void EditorApp::DrawInspector()
         }
         ImGui::PopID();
     }
-    if (ImGui::Button("添加组件"))
+    if (ImGui::Button(Localize("Add Component", "添加组件")))
         ImGui::OpenPopup("AddComponentPopup");
     if (ImGui::BeginPopup("AddComponentPopup"))
     {
         for (const auto &component : registry.GetComponents())
         {
-            const std::string componentLabel = TranslateUi(component.name);
+            const std::string componentLabel = LocalizeReflected(component.name);
             if (component.removable && !component.has(world, m_selected) && ImGui::MenuItem(componentLabel.c_str()))
             {
                 RecordUndo();
@@ -849,24 +936,25 @@ void EditorApp::DrawSceneView()
     const float width = std::max(160.0f, viewport->WorkSize.x - 610.0f), height = viewport->WorkSize.y * 0.67f;
     ImGui::SetNextWindowPos({left, top}, ImGuiCond_Always);
     ImGui::SetNextWindowSize({width, height}, ImGuiCond_Always);
-    ImGui::Begin("场景视图", nullptr, ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse);
+    ImGui::Begin(Localize("Scene View", "场景视图"), nullptr,
+                 ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse);
     DrawSceneTabs();
-    if (ImGui::Button("W 移动"))
+    if (ImGui::Button(Localize("W Translate", "W 移动")))
         m_gizmoMode = GizmoMode::Translate;
     ImGui::SameLine();
-    if (ImGui::Button("E 旋转"))
+    if (ImGui::Button(Localize("E Rotate", "E 旋转")))
         m_gizmoMode = GizmoMode::Rotate;
     ImGui::SameLine();
-    if (ImGui::Button("R 缩放"))
+    if (ImGui::Button(Localize("R Scale", "R 缩放")))
         m_gizmoMode = GizmoMode::Scale;
     ImGui::SameLine();
-    ImGui::Checkbox("吸附", &m_gizmoSnap);
+    ImGui::Checkbox(Localize("Snap", "吸附"), &m_gizmoSnap);
     ImGui::SameLine();
-    const char *spaceLabel = m_gizmoSpace == GizmoSpace::World ? "世界" : "局部";
+    const char *spaceLabel = m_gizmoSpace == GizmoSpace::World ? Localize("World", "世界") : Localize("Local", "局部");
     if (ImGui::Button(spaceLabel))
         m_gizmoSpace = m_gizmoSpace == GizmoSpace::World ? GizmoSpace::Local : GizmoSpace::World;
     ImGui::SameLine();
-    const char *pivotNames[] = {"中心", "活动项", "各自"};
+    const char *pivotNames[] = {Localize("Center", "中心"), Localize("Active", "活动项"), Localize("Individual", "各自")};
     int pivot = static_cast<int>(m_pivotMode);
     ImGui::SetNextItemWidth(82.0f);
     if (ImGui::Combo("##Pivot", &pivot, pivotNames, 3))
@@ -880,7 +968,7 @@ void EditorApp::DrawSceneView()
     float exposure = m_device->GetExposure();
     ImGui::SameLine();
     ImGui::SetNextItemWidth(70.0f);
-    if (ImGui::DragFloat("曝光", &exposure, 0.02f, 0.05f, 16.0f, "%.2f"))
+    if (ImGui::DragFloat(Localize("Exposure", "曝光"), &exposure, 0.02f, 0.05f, 16.0f, "%.2f"))
         m_device->SetExposure(exposure);
     bool fxaa = m_device->IsFxaaEnabled();
     ImGui::SameLine();
@@ -888,7 +976,7 @@ void EditorApp::DrawSceneView()
         m_device->SetFxaaEnabled(fxaa);
     bool bloom = m_device->IsBloomEnabled(), gtao = m_device->IsGtaoEnabled(), taa = m_device->IsTaaEnabled();
     ImGui::SameLine();
-    if (ImGui::Checkbox("泛光", &bloom))
+    if (ImGui::Checkbox(Localize("Bloom", "泛光"), &bloom))
         m_device->SetBloomEnabled(bloom);
     ImGui::SameLine();
     if (ImGui::Checkbox("GTAO", &gtao))
@@ -897,12 +985,14 @@ void EditorApp::DrawSceneView()
     if (ImGui::Checkbox("TAA", &taa))
         m_device->SetTaaEnabled(taa);
     ImGui::SameLine();
-    if (ImGui::SmallButton("重载着色器"))
+    if (ImGui::SmallButton(Localize("Reload Shaders", "重载着色器")))
     {
         if (m_device->ReloadShaders())
-            m_messages.emplace_back("着色器已重载");
+            m_messages.emplace_back(Localize("Shaders reloaded", "着色器已重载"));
         else
-            m_messages.emplace_back("着色器重载失败，已保留上一版本：" + m_device->GetLastShaderError());
+            m_messages.emplace_back(std::string(Localize("Shader reload failed; kept previous version: ",
+                                                          "着色器重载失败，已保留上一版本：")) +
+                                    m_device->GetLastShaderError());
     }
     const ImVec2 available = ImGui::GetContentRegionAvail();
     const int targetWidth = std::max(1, static_cast<int>(available.x)), targetHeight = std::max(1, static_cast<int>(available.y));
@@ -1037,7 +1127,7 @@ void EditorApp::DrawSceneView()
                     if (auto *mesh = world.GetComponent<MeshComponent>(m_selected))
                         mesh->materialPath = path;
                 }
-                m_messages.emplace_back("已放置资产：" + path);
+                m_messages.emplace_back(std::string(Localize("Placed asset: ", "已放置资产：")) + path);
             }
         }
         ImGui::EndDragDropTarget();
@@ -1220,7 +1310,7 @@ void EditorApp::DrawAssets()
     const float halfWidth = viewport->WorkSize.x * 0.58f;
     ImGui::SetNextWindowPos({viewport->WorkPos.x, top}, ImGuiCond_Always);
     ImGui::SetNextWindowSize({halfWidth, viewport->WorkPos.y + viewport->WorkSize.y - top}, ImGuiCond_Always);
-    ImGui::Begin("资产");
+    ImGui::Begin(Localize("Assets", "资产"));
     if (!m_engine.IsPlaying())
     {
         const auto createUniquePath = [this](const std::string &stem, const std::string &extension) {
@@ -1233,7 +1323,7 @@ void EditorApp::DrawAssets()
                     return path;
             }
         };
-        if (ImGui::Button("+ 混合树"))
+        if (ImGui::Button(Localize("+ Blend Tree", "+ 混合树")))
         {
             BlendTree1D tree;
             tree.samples = {{0.0f, "assets/player.skanim"}};
@@ -1245,7 +1335,7 @@ void EditorApp::DrawAssets()
             }
         }
         ImGui::SameLine();
-        if (ImGui::Button("+ 动画图"))
+        if (ImGui::Button(Localize("+ Animation Graph", "+ 动画图")))
         {
             AnimationGraph graph;
             graph.entryState = "Idle";
@@ -1259,7 +1349,7 @@ void EditorApp::DrawAssets()
             }
         }
         ImGui::SameLine();
-        if (ImGui::Button("+ 特效"))
+        if (ImGui::Button(Localize("+ VFX", "+ 特效")))
         {
             const auto path = createUniquePath("NewEffect", ".vfx");
             if (SaveParticleEffectAsset({}, path))
@@ -1269,7 +1359,7 @@ void EditorApp::DrawAssets()
             }
         }
         ImGui::SameLine();
-        if (ImGui::Button("+ 行为树"))
+        if (ImGui::Button(Localize("+ Behavior Tree", "+ 行为树")))
         {
             BehaviorTreeGraph graph;
             graph.root = 1;
@@ -1288,10 +1378,11 @@ void EditorApp::DrawAssets()
     {
         const auto task = m_importQueue.Get(m_activeImportTask);
         ImGui::ProgressBar(task.progress, ImVec2(220.0f, 0.0f),
-                           task.status == AssetImportStatus::Queued    ? "等待中"
-                           : task.status == AssetImportStatus::Running ? "正在导入"
-                                                                       : "正在完成");
-        if ((task.status == AssetImportStatus::Queued || task.status == AssetImportStatus::Running) && ImGui::Button("取消导入"))
+                           task.status == AssetImportStatus::Queued    ? Localize("Queued", "等待中")
+                           : task.status == AssetImportStatus::Running ? Localize("Importing", "正在导入")
+                                                                       : Localize("Finishing", "正在完成"));
+        if ((task.status == AssetImportStatus::Queued || task.status == AssetImportStatus::Running) &&
+            ImGui::Button(Localize("Cancel Import", "取消导入")))
             m_importQueue.Cancel(m_activeImportTask);
         if (task.status == AssetImportStatus::Completed || task.status == AssetImportStatus::Failed ||
             task.status == AssetImportStatus::Cancelled)
@@ -1300,28 +1391,29 @@ void EditorApp::DrawAssets()
             {
                 m_engine.GetContext().resourceManager->GetAssetRegistry().Scan(
                     m_engine.GetProjectSettings().Resolve(m_engine.GetProjectSettings().assetDirectory));
-                m_messages.emplace_back("后台模型导入完成");
+                m_messages.emplace_back(Localize("Background model import completed", "后台模型导入完成"));
             }
             else if (task.status == AssetImportStatus::Cancelled)
-                m_messages.emplace_back("后台模型导入已取消");
+                m_messages.emplace_back(Localize("Background model import cancelled", "后台模型导入已取消"));
             else
-                m_messages.emplace_back("后台模型导入失败：" + task.result.error);
+                m_messages.emplace_back(std::string(Localize("Background model import failed: ", "后台模型导入失败：")) +
+                                        task.result.error);
             for (const auto &warning : task.result.warnings)
-                m_messages.emplace_back("导入警告：" + warning);
+                m_messages.emplace_back(std::string(Localize("Import warning: ", "导入警告：")) + warning);
             m_importQueue.ClearFinished();
             m_activeImportTask = 0;
         }
         ImGui::Separator();
     }
     ImGui::BeginDisabled(m_activeImportTask != 0);
-    if (ImGui::Button("导入模型..."))
-        ImGui::OpenPopup("导入模型");
+    if (ImGui::Button(Localize("Import Model...", "导入模型...")))
+        ImGui::OpenPopup(Localize("Import Model###ImportModelPopup", "导入模型###ImportModelPopup"));
     ImGui::SameLine();
     const auto selectedInfo = m_selectedAsset.empty() ? std::optional<AssetInfo>{}
                                                       : m_engine.GetContext().resourceManager->GetAssetRegistry().Find(m_selectedAsset);
     ImGui::BeginDisabled(!selectedInfo || selectedInfo->type != "Prefab" || selectedInfo->importSettings.count("source") == 0 ||
                          m_activeImportTask != 0);
-    if (ImGui::Button("重新导入"))
+    if (ImGui::Button(Localize("Reimport", "重新导入")))
     {
         const std::filesystem::path source = selectedInfo->importSettings.at("source");
         ModelImportOptions options;
@@ -1358,27 +1450,30 @@ void EditorApp::DrawAssets()
                                      : m_engine.GetProjectSettings().projectFile.parent_path();
         options.resourcePrefix = std::filesystem::relative(output, projectRoot);
         m_activeImportTask = m_importQueue.Submit(source, output, options);
-        m_messages.emplace_back("模型重新导入已加入队列：" + source.generic_string());
+        m_messages.emplace_back(std::string(Localize("Model reimport queued: ", "模型重新导入已加入队列：")) +
+                                source.generic_string());
     }
     ImGui::EndDisabled();
     ImGui::EndDisabled();
-    if (ImGui::BeginPopupModal("导入模型", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
+    if (ImGui::BeginPopupModal(Localize("Import Model###ImportModelPopup", "导入模型###ImportModelPopup"), nullptr,
+                               ImGuiWindowFlags_AlwaysAutoResize))
     {
         static char sourcePath[1024]{};
         static float scale = 1.0f;
         static bool flipUvs = false;
         static bool compressAnimations = true;
         static float positionTolerance = 0.001f, rotationTolerance = 0.1f, scaleTolerance = 0.001f;
-        ImGui::InputText("源文件", sourcePath, sizeof(sourcePath));
-        ImGui::DragFloat("缩放", &scale, 0.01f, 0.0001f, 1000.0f);
-        ImGui::Checkbox("翻转 UV", &flipUvs);
-        ImGui::Checkbox("压缩动画", &compressAnimations);
+        ImGui::InputText(Localize("Source File", "源文件"), sourcePath, sizeof(sourcePath));
+        ImGui::DragFloat(Localize("Scale", "缩放"), &scale, 0.01f, 0.0001f, 1000.0f);
+        ImGui::Checkbox(Localize("Flip UVs", "翻转 UV"), &flipUvs);
+        ImGui::Checkbox(Localize("Compress Animations", "压缩动画"), &compressAnimations);
         ImGui::BeginDisabled(!compressAnimations);
-        ImGui::DragFloat("位置误差", &positionTolerance, 0.0001f, 0.0f, 1.0f, "%.5f");
-        ImGui::DragFloat("旋转误差（度）", &rotationTolerance, 0.01f, 0.0f, 45.0f, "%.3f");
-        ImGui::DragFloat("缩放误差", &scaleTolerance, 0.0001f, 0.0f, 1.0f, "%.5f");
+        ImGui::DragFloat(Localize("Position Error", "位置误差"), &positionTolerance, 0.0001f, 0.0f, 1.0f, "%.5f");
+        ImGui::DragFloat(Localize("Rotation Error (Degrees)", "旋转误差（度）"), &rotationTolerance, 0.01f, 0.0f, 45.0f,
+                         "%.3f");
+        ImGui::DragFloat(Localize("Scale Error", "缩放误差"), &scaleTolerance, 0.0001f, 0.0f, 1.0f, "%.5f");
         ImGui::EndDisabled();
-        if (ImGui::Button("导入") && sourcePath[0] != '\0')
+        if (ImGui::Button(Localize("Import", "导入")) && sourcePath[0] != '\0')
         {
             const std::filesystem::path source(sourcePath);
             const std::string folderName = source.stem().empty() ? "Model" : source.stem().string();
@@ -1393,11 +1488,12 @@ void EditorApp::DrawAssets()
             options.animationScaleTolerance = scaleTolerance;
             options.resourcePrefix = relativeOutput;
             m_activeImportTask = m_importQueue.Submit(source, output, options);
-            m_messages.emplace_back("模型导入已加入队列：" + source.generic_string());
+            m_messages.emplace_back(std::string(Localize("Model import queued: ", "模型导入已加入队列：")) +
+                                    source.generic_string());
             ImGui::CloseCurrentPopup();
         }
         ImGui::SameLine();
-        if (ImGui::Button("取消"))
+        if (ImGui::Button(Localize("Cancel", "取消")))
             ImGui::CloseCurrentPopup();
         ImGui::EndPopup();
     }
@@ -1410,7 +1506,7 @@ void EditorApp::DrawAssets()
     for (const auto &asset : assets)
     {
         ImGui::PushID(asset.id.c_str());
-        const std::string assetTypeLabel = TranslateUi(asset.type);
+        const std::string assetTypeLabel = LocalizeReflected(asset.type);
         ImGui::TextDisabled("%s", assetTypeLabel.c_str());
         ImGui::SameLine(110.0f);
         if (ImGui::Selectable(asset.path.c_str(), m_selectedAsset == asset.path))
@@ -1423,14 +1519,14 @@ void EditorApp::DrawAssets()
         }
         if (ImGui::BeginPopupContextItem("AssetContext"))
         {
-            if (ImGui::MenuItem("移动 / 重命名..."))
+            if (ImGui::MenuItem(Localize("Move / Rename...", "移动 / 重命名...")))
             {
                 moveSource = asset.path;
                 std::fill(moveDestination.begin(), moveDestination.end(), '\0');
                 std::strncpy(moveDestination.data(), asset.path.c_str(), moveDestination.size() - 1);
-                ImGui::OpenPopup("移动或重命名资产");
+                ImGui::OpenPopup(Localize("Move or Rename Asset###MoveAssetPopup", "移动或重命名资产###MoveAssetPopup"));
             }
-            if (ImGui::MenuItem("重新生成缩略图"))
+            if (ImGui::MenuItem(Localize("Regenerate Thumbnail", "重新生成缩略图")))
                 m_thumbnailAsset.clear();
             ImGui::EndPopup();
         }
@@ -1442,7 +1538,7 @@ void EditorApp::DrawAssets()
             if (!roots.empty())
             {
                 m_selected = roots.front();
-                m_messages.emplace_back("已实例化预制体：" + asset.path);
+                m_messages.emplace_back(std::string(Localize("Instantiated prefab: ", "已实例化预制体：")) + asset.path);
             }
         }
         if (!m_engine.IsPlaying() && asset.extension == ".scene" && ImGui::IsItemHovered() &&
@@ -1450,25 +1546,26 @@ void EditorApp::DrawAssets()
             OpenSceneDocument(asset.path);
         ImGui::PopID();
     }
-    if (ImGui::BeginPopupModal("移动或重命名资产", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
+    if (ImGui::BeginPopupModal(Localize("Move or Rename Asset###MoveAssetPopup", "移动或重命名资产###MoveAssetPopup"), nullptr,
+                               ImGuiWindowFlags_AlwaysAutoResize))
     {
-        ImGui::TextWrapped("移动：%s", moveSource.c_str());
-        ImGui::InputText("目标路径", moveDestination.data(), moveDestination.size());
-        if (ImGui::Button("移动"))
+        ImGui::TextWrapped(Localize("Move: %s", "移动：%s"), moveSource.c_str());
+        ImGui::InputText(Localize("Destination Path", "目标路径"), moveDestination.data(), moveDestination.size());
+        if (ImGui::Button(Localize("Move", "移动")))
         {
             std::string error;
             auto &registry = m_engine.GetContext().resourceManager->GetAssetRegistry();
             if (AssetMaintenance::MoveAsset(registry, moveSource, moveDestination.data(), &error))
             {
                 m_selectedAsset = moveDestination.data();
-                m_messages.emplace_back("资产已移动，引用已更新");
+                m_messages.emplace_back(Localize("Asset moved and references updated", "资产已移动，引用已更新"));
                 ImGui::CloseCurrentPopup();
             }
             else
-                m_messages.emplace_back("移动失败：" + error);
+                m_messages.emplace_back(std::string(Localize("Move failed: ", "移动失败：")) + error);
         }
         ImGui::SameLine();
-        if (ImGui::Button("取消"))
+        if (ImGui::Button(Localize("Cancel", "取消")))
             ImGui::CloseCurrentPopup();
         ImGui::EndPopup();
     }
@@ -1476,7 +1573,7 @@ void EditorApp::DrawAssets()
                                                  : m_engine.GetContext().resourceManager->GetAssetRegistry().Find(m_selectedAsset);
     if (preview)
     {
-        ImGui::SeparatorText("预览与依赖");
+        ImGui::SeparatorText(Localize("Preview and Dependencies", "预览与依赖"));
         if (m_thumbnailAsset != preview->path)
         {
             const std::filesystem::path directory = "Saved/Thumbnails";
@@ -1486,7 +1583,7 @@ void EditorApp::DrawAssets()
             if (AssetMaintenance::GenerateThumbnail(*preview, m_thumbnailPath, 128, &error))
                 m_thumbnailAsset = preview->path;
             else
-                m_messages.emplace_back("缩略图生成失败：" + error);
+                m_messages.emplace_back(std::string(Localize("Thumbnail generation failed: ", "缩略图生成失败：")) + error);
         }
         if (!m_thumbnailPath.empty())
         {
@@ -1496,24 +1593,24 @@ void EditorApp::DrawAssets()
         }
         ImGui::SameLine();
         ImGui::BeginGroup();
-        const std::string previewTypeLabel = TranslateUi(preview->type);
-        ImGui::Text("类型：%s", previewTypeLabel.c_str());
-        ImGui::Text("大小：%llu 字节", static_cast<unsigned long long>(preview->byteSize));
-        ImGui::Text("依赖：%zu", preview->dependencies.size());
+        const std::string previewTypeLabel = LocalizeReflected(preview->type);
+        ImGui::Text(Localize("Type: %s", "类型：%s"), previewTypeLabel.c_str());
+        ImGui::Text(Localize("Size: %llu bytes", "大小：%llu 字节"), static_cast<unsigned long long>(preview->byteSize));
+        ImGui::Text(Localize("Dependencies: %zu", "依赖：%zu"), preview->dependencies.size());
         ImGui::EndGroup();
         auto &registry = m_engine.GetContext().resourceManager->GetAssetRegistry();
         for (const auto &issue : AssetMaintenance::FindMissingDependencies(registry))
             if (issue.owner == preview->path)
             {
-                ImGui::TextColored({1.0f, 0.45f, 0.3f, 1.0f}, "缺失：%s", issue.missingPath.c_str());
+                ImGui::TextColored({1.0f, 0.45f, 0.3f, 1.0f}, Localize("Missing: %s", "缺失：%s"), issue.missingPath.c_str());
                 for (const auto &candidate : issue.candidates)
                 {
                     ImGui::SameLine();
-                    if (ImGui::SmallButton(("修复为 → " + candidate).c_str()))
+                    if (ImGui::SmallButton((std::string(Localize("Repair as -> ", "修复为 → ")) + candidate).c_str()))
                     {
                         std::string error;
                         if (!AssetMaintenance::RepairDependency(registry, issue.owner, issue.missingPath, candidate, &error))
-                            m_messages.emplace_back("依赖修复失败：" + error);
+                            m_messages.emplace_back(std::string(Localize("Dependency repair failed: ", "依赖修复失败：")) + error);
                     }
                 }
             }
@@ -1540,14 +1637,14 @@ void EditorApp::DrawAnimationEditor()
             loaded = LoadAnimationGraphAsset(m_selectedAsset, m_editAnimationGraph);
         if (!loaded)
         {
-            m_messages.emplace_back("无法打开动画资产：" + m_selectedAsset);
+            m_messages.emplace_back(std::string(Localize("Unable to open animation asset: ", "无法打开动画资产：")) + m_selectedAsset);
             return;
         }
         m_openAnimationAsset = m_selectedAsset;
     }
 
     ImGui::SetNextWindowSize({720.0f, 520.0f}, ImGuiCond_FirstUseEver);
-    if (!ImGui::Begin("动画图 / 动画事件"))
+    if (!ImGui::Begin(Localize("Animation Graph / Events", "动画图 / 动画事件")))
     {
         ImGui::End();
         return;
@@ -1556,47 +1653,54 @@ void EditorApp::DrawAnimationEditor()
     ImGui::Separator();
     if (extension == ".skanim")
     {
-        ImGui::Text("片段：%s | %.3f 秒 | %zu 根骨骼", m_editSkeletalClip.name.c_str(), m_editSkeletalClip.duration,
+        ImGui::Text(Localize("Clip: %s | %.3f seconds | %zu bones", "片段：%s | %.3f 秒 | %zu 根骨骼"),
+                    m_editSkeletalClip.name.c_str(), m_editSkeletalClip.duration,
                     m_editSkeletalClip.IsCompressed()      ? m_editSkeletalClip.tracks.size()
                     : m_editSkeletalClip.keyframes.empty() ? 0
                                                            : m_editSkeletalClip.keyframes.front().localPose.size());
-        ImGui::Text("存储：%s", m_editSkeletalClip.IsCompressed() ? "压缩曲线" : "原始采样姿势");
+        ImGui::Text(Localize("Storage: %s", "存储：%s"),
+                    m_editSkeletalClip.IsCompressed() ? Localize("Compressed Curves", "压缩曲线")
+                                                      : Localize("Raw Sampled Poses", "原始采样姿势"));
         static float debugTime = 0.0f;
-        ImGui::SliderFloat("调试时间", &debugTime, 0.0f, m_editSkeletalClip.duration);
+        ImGui::SliderFloat(Localize("Debug Time", "调试时间"), &debugTime, 0.0f, m_editSkeletalClip.duration);
         const auto skeletonPath = std::filesystem::path(m_openAnimationAsset).replace_extension(".skeleton");
         Skeleton debugSkeleton;
         if (LoadSkeletonAsset(skeletonPath, debugSkeleton))
         {
             const auto snapshot =
                 BuildAnimationDebugSnapshot(debugSkeleton, m_editSkeletalClip.Sample(debugTime, debugSkeleton.bones.size(), false));
-            ImGui::Text("调试姿势：%zu 个关节 / %zu 条连接 | 根运动 %.2f, %.2f, %.2f", snapshot.jointPositions.size(),
+            ImGui::Text(Localize("Debug Pose: %zu joints / %zu links | Root Motion %.2f, %.2f, %.2f",
+                                 "调试姿势：%zu 个关节 / %zu 条连接 | 根运动 %.2f, %.2f, %.2f"),
+                        snapshot.jointPositions.size(),
                         snapshot.bones.size(), m_editSkeletalClip.SampleRootMotion(debugTime, false).x,
                         m_editSkeletalClip.SampleRootMotion(debugTime, false).y, m_editSkeletalClip.SampleRootMotion(debugTime, false).z);
         }
         else
-            ImGui::TextDisabled("请在片段旁放置同名 .skeleton 文件以预览关节调试信息");
+            ImGui::TextDisabled("%s", Localize("Place a matching .skeleton file beside the clip to preview joint debug data.",
+                                                "请在片段旁放置同名 .skeleton 文件以预览关节调试信息"));
         ImGui::BeginDisabled(m_editSkeletalClip.IsCompressed());
-        if (ImGui::Button("压缩曲线"))
+        if (ImGui::Button(Localize("Compress Curves", "压缩曲线")))
         {
             const auto stats = m_editSkeletalClip.Compress();
-            m_messages.emplace_back("动画曲线关键帧：" + std::to_string(stats.originalCurveKeys) + " → " +
+            m_messages.emplace_back(std::string(Localize("Animation curve keys: ", "动画曲线关键帧：")) +
+                                    std::to_string(stats.originalCurveKeys) + " -> " +
                                     std::to_string(stats.compressedCurveKeys));
         }
         ImGui::EndDisabled();
-        ImGui::SeparatorText("事件");
+        ImGui::SeparatorText(Localize("Events", "事件"));
         int remove = -1;
         for (std::size_t index = 0; index < m_editSkeletalClip.events.size(); ++index)
         {
             auto &event = m_editSkeletalClip.events[index];
             ImGui::PushID(static_cast<int>(index));
             ImGui::SetNextItemWidth(90.0f);
-            ImGui::DragFloat("时间", &event.time, 0.01f, 0.0f, m_editSkeletalClip.duration);
+            ImGui::DragFloat(Localize("Time", "时间"), &event.time, 0.01f, 0.0f, m_editSkeletalClip.duration);
             ImGui::SameLine();
             ImGui::SetNextItemWidth(150.0f);
-            InputString("名称", event.name, 128);
+            InputString(Localize("Name", "名称"), event.name, 128);
             ImGui::SameLine();
             ImGui::SetNextItemWidth(220.0f);
-            InputString("载荷", event.payload, 256);
+            InputString(Localize("Payload", "载荷"), event.payload, 256);
             ImGui::SameLine();
             if (ImGui::SmallButton("X"))
                 remove = static_cast<int>(index);
@@ -1604,31 +1708,31 @@ void EditorApp::DrawAnimationEditor()
         }
         if (remove >= 0)
             m_editSkeletalClip.events.erase(m_editSkeletalClip.events.begin() + remove);
-        if (ImGui::Button("+ 事件"))
+        if (ImGui::Button(Localize("+ Event", "+ 事件")))
             m_editSkeletalClip.events.push_back({0.0f, "Event", {}});
         ImGui::SameLine();
-        if (ImGui::Button("保存片段"))
+        if (ImGui::Button(Localize("Save Clip", "保存片段")))
         {
             std::sort(m_editSkeletalClip.events.begin(), m_editSkeletalClip.events.end(),
                       [](const AnimationEvent &left, const AnimationEvent &right) { return left.time < right.time; });
             if (SaveSkeletalClipAsset(m_editSkeletalClip, m_openAnimationAsset))
-                m_messages.emplace_back("动画事件已保存：" + m_openAnimationAsset);
+                m_messages.emplace_back(std::string(Localize("Animation events saved: ", "动画事件已保存：")) + m_openAnimationAsset);
         }
     }
     else if (extension == ".blendtree")
     {
-        InputString("参数", m_editBlendTree.parameter, 128);
-        ImGui::SeparatorText("一维采样点");
+        InputString(Localize("Parameter", "参数"), m_editBlendTree.parameter, 128);
+        ImGui::SeparatorText(Localize("1D Samples", "一维采样点"));
         int remove = -1;
         for (std::size_t index = 0; index < m_editBlendTree.samples.size(); ++index)
         {
             auto &sample = m_editBlendTree.samples[index];
             ImGui::PushID(static_cast<int>(index));
             ImGui::SetNextItemWidth(120.0f);
-            ImGui::DragFloat("阈值", &sample.threshold, 0.05f);
+            ImGui::DragFloat(Localize("Threshold", "阈值"), &sample.threshold, 0.05f);
             ImGui::SameLine();
             ImGui::SetNextItemWidth(390.0f);
-            InputString("片段", sample.clipPath);
+            InputString(Localize("Clip", "片段"), sample.clipPath);
             ImGui::SameLine();
             if (ImGui::SmallButton("X"))
                 remove = static_cast<int>(index);
@@ -1636,24 +1740,25 @@ void EditorApp::DrawAnimationEditor()
         }
         if (remove >= 0)
             m_editBlendTree.samples.erase(m_editBlendTree.samples.begin() + remove);
-        if (ImGui::Button("+ 采样点"))
+        if (ImGui::Button(Localize("+ Sample", "+ 采样点")))
             m_editBlendTree.samples.push_back(
                 {m_editBlendTree.samples.empty() ? 0.0f : m_editBlendTree.samples.back().threshold + 1.0f, "assets/player.skanim"});
         ImGui::SameLine();
-        if (ImGui::Button("保存混合树"))
+        if (ImGui::Button(Localize("Save Blend Tree", "保存混合树")))
         {
             std::sort(m_editBlendTree.samples.begin(), m_editBlendTree.samples.end(),
                       [](const BlendTreeSample &left, const BlendTreeSample &right) { return left.threshold < right.threshold; });
             if (SaveBlendTreeAsset(m_editBlendTree, m_openAnimationAsset))
-                m_messages.emplace_back("混合树已保存：" + m_openAnimationAsset);
+                m_messages.emplace_back(std::string(Localize("Blend tree saved: ", "混合树已保存：")) + m_openAnimationAsset);
             else
-                m_messages.emplace_back("混合树需要互不重复的阈值和有效的动画片段路径");
+                m_messages.emplace_back(Localize("Blend tree requires unique thresholds and valid animation clip paths.",
+                                                  "混合树需要互不重复的阈值和有效的动画片段路径"));
         }
     }
     else
     {
-        InputString("入口状态", m_editAnimationGraph.entryState, 128);
-        ImGui::SeparatorText("图预览");
+        InputString(Localize("Entry State", "入口状态"), m_editAnimationGraph.entryState, 128);
+        ImGui::SeparatorText(Localize("Graph Preview", "图预览"));
         const ImVec2 origin = ImGui::GetCursorScreenPos();
         const float nodeWidth = 120.0f, spacing = 160.0f, nodeHeight = 52.0f;
         ImDrawList *drawList = ImGui::GetWindowDrawList();
@@ -1686,17 +1791,17 @@ void EditorApp::DrawAnimationEditor()
         }
         ImGui::Dummy({std::max(1.0f, static_cast<float>(m_editAnimationGraph.states.size()) * spacing), nodeHeight + 10.0f});
 
-        ImGui::SeparatorText("参数");
+        ImGui::SeparatorText(Localize("Parameters", "参数"));
         int removeParameter = -1;
         for (std::size_t index = 0; index < m_editAnimationGraph.parameters.size(); ++index)
         {
             auto &parameter = m_editAnimationGraph.parameters[index];
             ImGui::PushID(static_cast<int>(index));
             ImGui::SetNextItemWidth(220.0f);
-            InputString("名称", parameter.name, 128);
+            InputString(Localize("Name", "名称"), parameter.name, 128);
             ImGui::SameLine();
             ImGui::SetNextItemWidth(120.0f);
-            ImGui::DragFloat("默认值", &parameter.defaultValue, 0.05f);
+            ImGui::DragFloat(Localize("Default Value", "默认值"), &parameter.defaultValue, 0.05f);
             ImGui::SameLine();
             if (ImGui::SmallButton("X"))
                 removeParameter = static_cast<int>(index);
@@ -1704,20 +1809,20 @@ void EditorApp::DrawAnimationEditor()
         }
         if (removeParameter >= 0)
             m_editAnimationGraph.parameters.erase(m_editAnimationGraph.parameters.begin() + removeParameter);
-        if (ImGui::Button("+ 参数"))
+        if (ImGui::Button(Localize("+ Parameter", "+ 参数")))
             m_editAnimationGraph.parameters.push_back({"Parameter" + std::to_string(m_editAnimationGraph.parameters.size()), 0.0f});
 
-        ImGui::SeparatorText("状态");
+        ImGui::SeparatorText(Localize("States", "状态"));
         int removeState = -1;
         for (std::size_t index = 0; index < m_editAnimationGraph.states.size(); ++index)
         {
             auto &state = m_editAnimationGraph.states[index];
             ImGui::PushID(static_cast<int>(index));
             ImGui::SetNextItemWidth(180.0f);
-            InputString("状态", state.name, 128);
+            InputString(Localize("State", "状态"), state.name, 128);
             ImGui::SameLine();
             ImGui::SetNextItemWidth(360.0f);
-            InputString("动作", state.motionPath);
+            InputString(Localize("Motion", "动作"), state.motionPath);
             ImGui::SameLine();
             if (ImGui::SmallButton("X"))
                 removeState = static_cast<int>(index);
@@ -1725,10 +1830,10 @@ void EditorApp::DrawAnimationEditor()
         }
         if (removeState >= 0)
             m_editAnimationGraph.states.erase(m_editAnimationGraph.states.begin() + removeState);
-        if (ImGui::Button("+ 状态"))
+        if (ImGui::Button(Localize("+ State", "+ 状态")))
             m_editAnimationGraph.states.push_back({"State" + std::to_string(m_editAnimationGraph.states.size()), "assets/player.skanim"});
 
-        ImGui::SeparatorText("过渡");
+        ImGui::SeparatorText(Localize("Transitions", "过渡"));
         static const char *comparisonNames[] = {"<", "<=", ">", ">=", "==", "!="};
         int removeTransition = -1;
         for (std::size_t index = 0; index < m_editAnimationGraph.transitions.size(); ++index)
@@ -1736,24 +1841,24 @@ void EditorApp::DrawAnimationEditor()
             auto &transition = m_editAnimationGraph.transitions[index];
             ImGui::PushID(static_cast<int>(index));
             ImGui::SetNextItemWidth(100.0f);
-            InputString("来源", transition.from, 128);
+            InputString(Localize("From", "来源"), transition.from, 128);
             ImGui::SameLine();
             ImGui::SetNextItemWidth(100.0f);
-            InputString("目标", transition.to, 128);
+            InputString(Localize("To", "目标"), transition.to, 128);
             ImGui::SameLine();
             ImGui::SetNextItemWidth(110.0f);
-            InputString("参数", transition.parameter, 128);
+            InputString(Localize("Parameter", "参数"), transition.parameter, 128);
             ImGui::SameLine();
             int comparison = static_cast<int>(transition.comparison);
             ImGui::SetNextItemWidth(55.0f);
-            if (ImGui::Combo("运算符", &comparison, comparisonNames, 6))
+            if (ImGui::Combo(Localize("Operator", "运算符"), &comparison, comparisonNames, 6))
                 transition.comparison = static_cast<AnimationGraphComparison>(comparison);
             ImGui::SameLine();
             ImGui::SetNextItemWidth(75.0f);
-            ImGui::DragFloat("数值", &transition.threshold, 0.05f);
+            ImGui::DragFloat(Localize("Value", "数值"), &transition.threshold, 0.05f);
             ImGui::SameLine();
             ImGui::SetNextItemWidth(75.0f);
-            ImGui::DragFloat("混合", &transition.blendSeconds, 0.01f, 0.0f, 10.0f);
+            ImGui::DragFloat(Localize("Blend", "混合"), &transition.blendSeconds, 0.01f, 0.0f, 10.0f);
             ImGui::SameLine();
             if (ImGui::SmallButton("X"))
                 removeTransition = static_cast<int>(index);
@@ -1761,17 +1866,19 @@ void EditorApp::DrawAnimationEditor()
         }
         if (removeTransition >= 0)
             m_editAnimationGraph.transitions.erase(m_editAnimationGraph.transitions.begin() + removeTransition);
-        if (ImGui::Button("+ 过渡") && !m_editAnimationGraph.states.empty() && !m_editAnimationGraph.parameters.empty())
+        if (ImGui::Button(Localize("+ Transition", "+ 过渡")) && !m_editAnimationGraph.states.empty() &&
+            !m_editAnimationGraph.parameters.empty())
             m_editAnimationGraph.transitions.push_back({m_editAnimationGraph.states.front().name, m_editAnimationGraph.states.back().name,
                                                         m_editAnimationGraph.parameters.front().name, AnimationGraphComparison::Greater,
                                                         0.5f, 0.15f});
         ImGui::SameLine();
-        if (ImGui::Button("保存动画图"))
+        if (ImGui::Button(Localize("Save Animation Graph", "保存动画图")))
         {
             if (SaveAnimationGraphAsset(m_editAnimationGraph, m_openAnimationAsset))
-                m_messages.emplace_back("动画图已保存：" + m_openAnimationAsset);
+                m_messages.emplace_back(std::string(Localize("Animation graph saved: ", "动画图已保存：")) + m_openAnimationAsset);
             else
-                m_messages.emplace_back("动画图包含无效状态、参数、入口或过渡");
+                m_messages.emplace_back(Localize("Animation graph contains an invalid state, parameter, entry, or transition.",
+                                                  "动画图包含无效状态、参数、入口或过渡"));
         }
     }
     ImGui::End();
@@ -1785,46 +1892,47 @@ void EditorApp::DrawEffectEditor()
     {
         if (!LoadParticleEffectAsset(m_selectedAsset, m_editEffect))
         {
-            m_messages.emplace_back("无法打开特效资产：" + m_selectedAsset);
+            m_messages.emplace_back(std::string(Localize("Unable to open VFX asset: ", "无法打开特效资产：")) + m_selectedAsset);
             return;
         }
         m_openEffectAsset = m_selectedAsset;
     }
     ImGui::SetNextWindowSize({520.0f, 580.0f}, ImGuiCond_FirstUseEver);
-    if (!ImGui::Begin("特效编辑器"))
+    if (!ImGui::Begin(Localize("VFX Editor", "特效编辑器")))
     {
         ImGui::End();
         return;
     }
     ImGui::TextWrapped("%s", m_openEffectAsset.c_str());
     int capacity = static_cast<int>(std::min<std::size_t>(m_editEffect.maximumParticles, 1'000'000));
-    if (ImGui::DragInt("容量", &capacity, 16.0f, 1, 1'000'000))
+    if (ImGui::DragInt(Localize("Capacity", "容量"), &capacity, 16.0f, 1, 1'000'000))
         m_editEffect.maximumParticles = static_cast<std::size_t>(capacity);
-    ImGui::DragFloat("发射速率", &m_editEffect.emissionRate, 0.25f, 0.0f, 100000.0f);
-    ImGui::DragFloat("生命周期", &m_editEffect.lifetime, 0.01f, 0.01f, 600.0f);
-    ImGui::DragFloat("速度", &m_editEffect.speed, 0.05f, 0.0f, 1000.0f);
-    ImGui::DragFloat("扩散", &m_editEffect.spread, 0.01f, 0.0f, 10.0f);
-    ImGui::DragFloat3("重力", &m_editEffect.gravity.x, 0.05f);
-    ImGui::DragFloat2("起始 / 结束尺寸", &m_editEffect.startSize, 0.01f, 0.0f, 100.0f);
-    ImGui::ColorEdit4("起始颜色", &m_editEffect.startColor.x);
-    ImGui::ColorEdit4("结束颜色", &m_editEffect.endColor.x);
-    InputString("纹理", m_editEffect.texturePath);
+    ImGui::DragFloat(Localize("Emission Rate", "发射速率"), &m_editEffect.emissionRate, 0.25f, 0.0f, 100000.0f);
+    ImGui::DragFloat(Localize("Lifetime", "生命周期"), &m_editEffect.lifetime, 0.01f, 0.01f, 600.0f);
+    ImGui::DragFloat(Localize("Speed", "速度"), &m_editEffect.speed, 0.05f, 0.0f, 1000.0f);
+    ImGui::DragFloat(Localize("Spread", "扩散"), &m_editEffect.spread, 0.01f, 0.0f, 10.0f);
+    ImGui::DragFloat3(Localize("Gravity", "重力"), &m_editEffect.gravity.x, 0.05f);
+    ImGui::DragFloat2(Localize("Start / End Size", "起始 / 结束尺寸"), &m_editEffect.startSize, 0.01f, 0.0f, 100.0f);
+    ImGui::ColorEdit4(Localize("Start Color", "起始颜色"), &m_editEffect.startColor.x);
+    ImGui::ColorEdit4(Localize("End Color", "结束颜色"), &m_editEffect.endColor.x);
+    InputString(Localize("Texture", "纹理"), m_editEffect.texturePath);
     int columns = m_editEffect.flipbookColumns, rows = m_editEffect.flipbookRows;
-    if (ImGui::DragInt("序列帧列数", &columns, 1.0f, 1, 256))
+    if (ImGui::DragInt(Localize("Flipbook Columns", "序列帧列数"), &columns, 1.0f, 1, 256))
         m_editEffect.flipbookColumns = static_cast<std::uint16_t>(columns);
-    if (ImGui::DragInt("序列帧行数", &rows, 1.0f, 1, 256))
+    if (ImGui::DragInt(Localize("Flipbook Rows", "序列帧行数"), &rows, 1.0f, 1, 256))
         m_editEffect.flipbookRows = static_cast<std::uint16_t>(rows);
-    ImGui::DragFloat("每秒帧数", &m_editEffect.flipbookFramesPerSecond, 0.1f, 0.0f, 1000.0f);
-    ImGui::Checkbox("循环序列帧", &m_editEffect.flipbookLooping);
+    ImGui::DragFloat(Localize("Frames Per Second", "每秒帧数"), &m_editEffect.flipbookFramesPerSecond, 0.1f, 0.0f, 1000.0f);
+    ImGui::Checkbox(Localize("Loop Flipbook", "循环序列帧"), &m_editEffect.flipbookLooping);
     int mode = static_cast<int>(m_editEffect.simulationMode);
-    if (ImGui::Combo("模拟方式", &mode, "CPU\0GPU\0"))
+    if (ImGui::Combo(Localize("Simulation Mode", "模拟方式"), &mode, "CPU\0GPU\0"))
         m_editEffect.simulationMode = static_cast<ParticleSimulationMode>(mode);
-    if (ImGui::Button("保存特效"))
+    if (ImGui::Button(Localize("Save VFX", "保存特效")))
     {
         if (SaveParticleEffectAsset(m_editEffect, m_openEffectAsset))
-            m_messages.emplace_back("特效已保存：" + m_openEffectAsset);
+            m_messages.emplace_back(std::string(Localize("VFX saved: ", "特效已保存：")) + m_openEffectAsset);
         else
-            m_messages.emplace_back("特效包含无效的容量、生命周期或序列帧尺寸");
+            m_messages.emplace_back(Localize("VFX contains an invalid capacity, lifetime, or flipbook size.",
+                                              "特效包含无效的容量、生命周期或序列帧尺寸"));
     }
     ImGui::End();
 }
@@ -1837,13 +1945,13 @@ void EditorApp::DrawBehaviorTreeEditor()
     {
         if (!LoadBehaviorTreeGraph(m_selectedAsset, m_editBehaviorGraph))
         {
-            m_messages.emplace_back("无法打开行为树：" + m_selectedAsset);
+            m_messages.emplace_back(std::string(Localize("Unable to open behavior tree: ", "无法打开行为树：")) + m_selectedAsset);
             return;
         }
         m_openBehaviorAsset = m_selectedAsset;
     }
     ImGui::SetNextWindowSize({760.0f, 560.0f}, ImGuiCond_FirstUseEver);
-    if (!ImGui::Begin("行为树编辑器"))
+    if (!ImGui::Begin(Localize("Behavior Tree Editor", "行为树编辑器")))
     {
         ImGui::End();
         return;
@@ -1860,7 +1968,7 @@ void EditorApp::DrawBehaviorTreeEditor()
     {
         ImGui::SetCursorScreenPos({origin.x + node.editorPosition.x, origin.y + node.editorPosition.y});
         ImGui::PushID(static_cast<int>(node.id));
-        ImGui::Button((TranslateUi(node.label) + "\n" + TranslateUi(node.type)).c_str(), {130.0f, 50.0f});
+        ImGui::Button((LocalizeReflected(node.label) + "\n" + LocalizeReflected(node.type)).c_str(), {130.0f, 50.0f});
         if (ImGui::IsItemActive() && ImGui::IsMouseDragging(ImGuiMouseButton_Left))
         {
             node.editorPosition.x += ImGui::GetIO().MouseDelta.x;
@@ -1870,7 +1978,7 @@ void EditorApp::DrawBehaviorTreeEditor()
     }
     ImGui::SetCursorScreenPos({origin.x, origin.y + 340.0f});
     ImGui::Dummy({700.0f, 1.0f});
-    ImGui::SeparatorText("节点");
+    ImGui::SeparatorText(Localize("Nodes", "节点"));
     int remove = -1;
     for (std::size_t index = 0; index < m_editBehaviorGraph.nodes.size(); ++index)
     {
@@ -1879,10 +1987,10 @@ void EditorApp::DrawBehaviorTreeEditor()
         ImGui::Text("#%u", node.id);
         ImGui::SameLine();
         ImGui::SetNextItemWidth(130.0f);
-        InputString("类型", node.type, 64);
+        InputString(Localize("Type", "类型"), node.type, 64);
         ImGui::SameLine();
         ImGui::SetNextItemWidth(180.0f);
-        InputString("标签", node.label, 128);
+        InputString(Localize("Label", "标签"), node.label, 128);
         ImGui::SameLine();
         if (node.id != m_editBehaviorGraph.root && ImGui::SmallButton("X"))
             remove = static_cast<int>(index);
@@ -1895,7 +2003,7 @@ void EditorApp::DrawBehaviorTreeEditor()
         for (auto &node : m_editBehaviorGraph.nodes)
             node.children.erase(std::remove(node.children.begin(), node.children.end(), removedId), node.children.end());
     }
-    if (ImGui::Button("+ 动作节点"))
+    if (ImGui::Button(Localize("+ Action Node", "+ 动作节点")))
     {
         std::uint32_t id = 1;
         for (const auto &node : m_editBehaviorGraph.nodes)
@@ -1907,12 +2015,13 @@ void EditorApp::DrawBehaviorTreeEditor()
             root->children.push_back(id);
     }
     ImGui::SameLine();
-    if (ImGui::Button("保存行为树"))
+    if (ImGui::Button(Localize("Save Behavior Tree", "保存行为树")))
     {
         if (SaveBehaviorTreeGraph(m_editBehaviorGraph, m_openBehaviorAsset))
-            m_messages.emplace_back("行为树已保存：" + m_openBehaviorAsset);
+            m_messages.emplace_back(std::string(Localize("Behavior tree saved: ", "行为树已保存：")) + m_openBehaviorAsset);
         else
-            m_messages.emplace_back("行为树存在循环、无效根节点或缺失子节点");
+            m_messages.emplace_back(Localize("Behavior tree contains a cycle, invalid root, or missing child node.",
+                                              "行为树存在循环、无效根节点或缺失子节点"));
     }
     ImGui::End();
 }
@@ -1931,7 +2040,7 @@ void EditorApp::DrawShaderEditor()
         m_openShaderAsset = asset->path;
     }
     ImGui::SetNextWindowSize({760.0f, 520.0f}, ImGuiCond_FirstUseEver);
-    if (!ImGui::Begin("着色器源码编辑器"))
+    if (!ImGui::Begin(Localize("Shader Source Editor", "着色器源码编辑器")))
     {
         ImGui::End();
         return;
@@ -1944,17 +2053,17 @@ void EditorApp::DrawShaderEditor()
         PlatformFile::WriteAllText(asset->path, m_shaderSource.data());
         m_device->ValidateShader(asset->path);
     }
-    if (ImGui::Button("保存并重载"))
+    if (ImGui::Button(Localize("Save and Reload", "保存并重载")))
     {
         PlatformFile::WriteAllText(asset->path, m_shaderSource.data());
         if (m_device->ValidateShader(asset->path) && m_device->ReloadShaders())
-            m_messages.emplace_back("着色器已保存并重载：" + asset->path);
+            m_messages.emplace_back(std::string(Localize("Shader saved and reloaded: ", "着色器已保存并重载：")) + asset->path);
         else
-            m_messages.emplace_back("着色器错误：" + m_device->GetLastShaderError());
+            m_messages.emplace_back(std::string(Localize("Shader error: ", "着色器错误：")) + m_device->GetLastShaderError());
     }
     ImGui::SameLine();
     if (m_device->GetLastShaderError().empty())
-        ImGui::TextColored({0.35f, 0.9f, 0.45f, 1.0f}, "没有编译错误");
+        ImGui::TextColored({0.35f, 0.9f, 0.45f, 1.0f}, "%s", Localize("No compilation errors", "没有编译错误"));
     else
     {
         int line = 0;
@@ -1969,7 +2078,7 @@ void EditorApp::DrawShaderEditor()
             {
             }
         if (line > 0)
-            ImGui::TextColored({1.0f, 0.35f, 0.3f, 1.0f}, "第 %d 行：%s", line, error.c_str());
+            ImGui::TextColored({1.0f, 0.35f, 0.3f, 1.0f}, Localize("Line %d: %s", "第 %d 行：%s"), line, error.c_str());
         else
             ImGui::TextColored({1.0f, 0.35f, 0.3f, 1.0f}, "%s", error.c_str());
     }
@@ -1988,28 +2097,28 @@ void EditorApp::DrawMaterialGraphEditor()
         m_openMaterialGraphAsset = asset->path;
     }
     ImGui::SetNextWindowSize({820.0f, 560.0f}, ImGuiCond_FirstUseEver);
-    ImGui::Begin("材质图");
-    if (ImGui::Button("+ 常量"))
+    ImGui::Begin(Localize("Material Graph", "材质图"));
+    if (ImGui::Button(Localize("+ Constant", "+ 常量")))
         m_materialGraph.AddNode(MaterialNodeType::Constant, "Constant", {30.0f, 60.0f});
     ImGui::SameLine();
-    if (ImGui::Button("+ 纹理"))
+    if (ImGui::Button(Localize("+ Texture", "+ 纹理")))
         m_materialGraph.AddNode(MaterialNodeType::Texture, "Texture", {30.0f, 190.0f});
     ImGui::SameLine();
-    if (ImGui::Button("+ 乘法"))
+    if (ImGui::Button(Localize("+ Multiply", "+ 乘法")))
         m_materialGraph.AddNode(MaterialNodeType::Multiply, "Multiply", {280.0f, 100.0f});
     ImGui::SameLine();
-    if (ImGui::Button("+ 输出"))
+    if (ImGui::Button(Localize("+ Output", "+ 输出")))
         m_materialGraph.AddNode(MaterialNodeType::PbrOutput, "PBR Output", {540.0f, 100.0f});
     ImGui::SameLine();
-    if (ImGui::Button("保存并编译"))
+    if (ImGui::Button(Localize("Save and Compile", "保存并编译")))
     {
         std::vector<std::string> errors;
         const std::string shader = m_materialGraph.Compile(&errors);
         const std::filesystem::path output = std::filesystem::path(asset->path).replace_extension(".frag");
         if (m_materialGraph.Save(asset->path) && !shader.empty() && PlatformFile::WriteAllText(output, shader))
-            m_messages.emplace_back("材质图已编译：" + output.generic_string());
+            m_messages.emplace_back(std::string(Localize("Material graph compiled: ", "材质图已编译：")) + output.generic_string());
         for (const auto &error : errors)
-            m_messages.emplace_back("材质图：" + error);
+            m_messages.emplace_back(std::string(Localize("Material graph: ", "材质图：")) + error);
     }
     ImGui::Separator();
     const ImVec2 canvas = ImGui::GetCursorScreenPos();
@@ -2052,9 +2161,10 @@ void EditorApp::DrawMaterialGraphEditor()
         const ImVec2 minimum = ImGui::GetItemRectMin(), maximum = ImGui::GetItemRectMax();
         drawList->AddRectFilled(minimum, maximum, hovered ? IM_COL32(58, 78, 112, 255) : IM_COL32(42, 52, 72, 255), 6.0f);
         drawList->AddRect(minimum, maximum, linkFrom == node.id ? IM_COL32(255, 205, 70, 255) : IM_COL32(90, 125, 170, 255), 6.0f);
-        const std::string nodeLabel = TranslateUi(node.name);
+        const std::string nodeLabel = LocalizeReflected(node.name);
         drawList->AddText({minimum.x + 8.0f, minimum.y + 8.0f}, IM_COL32_WHITE, nodeLabel.c_str());
-        drawList->AddText({minimum.x + 8.0f, minimum.y + 34.0f}, IM_COL32(175, 190, 210, 255), "Shift + 单击：连接");
+        drawList->AddText({minimum.x + 8.0f, minimum.y + 34.0f}, IM_COL32(175, 190, 210, 255),
+                          Localize("Shift + Click: Connect", "Shift + 单击：连接"));
         ImGui::PopID();
     }
     ImGui::Dummy({760.0f, 430.0f});
@@ -2069,17 +2179,23 @@ void EditorApp::DrawConsole()
     ImGui::SetNextWindowPos({left, top}, ImGuiCond_Always);
     ImGui::SetNextWindowSize({viewport->WorkPos.x + viewport->WorkSize.x - left, viewport->WorkPos.y + viewport->WorkSize.y - top},
                              ImGuiCond_Always);
-    ImGui::Begin("控制台 / 统计");
+    ImGui::Begin(Localize("Console / Stats", "控制台 / 统计"));
     const Renderer *renderer = m_engine.GetContext().renderer;
-    ImGui::Text("绘制调用：%zu | 已剔除：%zu | LOD：%zu | GPU：%.2f ms", renderer->GetLastDrawCallCount(), renderer->GetLastCulledCount(),
-                renderer->GetLastLodSwitchCount(), m_device->GetLastGpuFrameMilliseconds());
+    ImGui::Text(Localize("Draw Calls: %zu | Culled: %zu | LOD: %zu | GPU: %.2f ms",
+                         "绘制调用：%zu | 已剔除：%zu | LOD：%zu | GPU：%.2f ms"),
+                renderer->GetLastDrawCallCount(), renderer->GetLastCulledCount(), renderer->GetLastLodSwitchCount(),
+                m_device->GetLastGpuFrameMilliseconds());
     const auto &profile = renderer->GetLastFrameProfile();
-    ImGui::Text("CPU：%.2f ms（队列 %.2f | 阴影 %.2f | 场景/UI %.2f）", profile.totalMilliseconds, profile.queueMilliseconds,
-                profile.shadowMilliseconds, profile.sceneMilliseconds);
-    ImGui::Text("渲染图：%zu 个 Pass / %zu 个物理资源 | 光簇引用：%zu | HZB：%zu 级 | GPU 驱动：%s",
+    ImGui::Text(Localize("CPU: %.2f ms (Queue %.2f | Shadow %.2f | Scene/UI %.2f)",
+                         "CPU：%.2f ms（队列 %.2f | 阴影 %.2f | 场景/UI %.2f）"),
+                profile.totalMilliseconds, profile.queueMilliseconds, profile.shadowMilliseconds, profile.sceneMilliseconds);
+    ImGui::Text(Localize("Render Graph: %zu Passes / %zu Physical Resources | Cluster Refs: %zu | HZB: %zu Levels | GPU Driven: %s",
+                         "渲染图：%zu 个 Pass / %zu 个物理资源 | 光簇引用：%zu | HZB：%zu 级 | GPU 驱动：%s"),
                 profile.graphPasses, profile.graphPhysicalResources, profile.clusteredLightReferences, m_device->GetHzbLevelCount(),
                 m_device->IsGpuDrivenCullingSupported() ? "Compute + Indirect"
-                                                        : (m_device->IsIndirectDrawSupported() ? "CPU 剔除 + 间接绘制" : "回退路径"));
+                                                        : (m_device->IsIndirectDrawSupported()
+                                                               ? Localize("CPU Culling + Indirect Draw", "CPU 剔除 + 间接绘制")
+                                                               : Localize("Fallback Path", "回退路径")));
     ImGui::SetNextItemWidth(-1.0f);
     if (ImGui::InputText("##ConsoleCommand", m_consoleInput.data(), m_consoleInput.size(), ImGuiInputTextFlags_EnterReturnsTrue))
     {
@@ -2107,7 +2223,8 @@ void EditorApp::DrawSceneTabs()
     {
         const auto &document = m_sceneDocuments[index];
         const std::string label =
-            (document.path.empty() ? "未命名" : document.path.filename().string()) + "##Scene" + std::to_string(index);
+            (document.path.empty() ? Localize("Untitled", "未命名") : document.path.filename().string()) + "##Scene" +
+            std::to_string(index);
         ImGuiTabItemFlags flags =
             (index == m_activeSceneDocument ? m_sceneDirty : document.dirty) ? ImGuiTabItemFlags_UnsavedDocument : ImGuiTabItemFlags_None;
         if (ImGui::BeginTabItem(label.c_str(), nullptr, flags))
@@ -2149,7 +2266,7 @@ bool EditorApp::OpenSceneDocument(const std::filesystem::path &path)
     if (!SceneSerializer::Load(*m_engine.GetContext().world, normalized))
     {
         m_engine.GetSceneManager().RestoreSnapshot(current.snapshot);
-        m_messages.emplace_back("场景打开失败：" + normalized.generic_string());
+        m_messages.emplace_back(std::string(Localize("Failed to open scene: ", "场景打开失败：")) + normalized.generic_string());
         return false;
     }
     m_sceneDocuments.push_back({normalized, m_engine.GetSceneManager().CreateSnapshot(), false});
@@ -2158,7 +2275,7 @@ bool EditorApp::OpenSceneDocument(const std::filesystem::path &path)
     m_selected = InvalidEntity;
     m_undo.clear();
     m_redo.clear();
-    m_messages.emplace_back("已打开场景标签：" + normalized.generic_string());
+    m_messages.emplace_back(std::string(Localize("Opened scene tab: ", "已打开场景标签：")) + normalized.generic_string());
     return true;
 }
 
@@ -2229,7 +2346,8 @@ bool EditorApp::SaveCurrentScene()
         std::error_code error;
         std::filesystem::remove(GetAutosavePath(), error);
     }
-    m_messages.emplace_back(saved ? "场景已保存：" + path.generic_string() : "场景保存失败");
+    m_messages.emplace_back(saved ? std::string(Localize("Scene saved: ", "场景已保存：")) + path.generic_string()
+                                  : Localize("Failed to save scene", "场景保存失败"));
     return saved;
 }
 
@@ -2244,9 +2362,9 @@ bool EditorApp::Autosave()
     const auto path = GetAutosavePath();
     const bool saved = SceneSerializer::Save(*m_engine.GetContext().world, path);
     if (saved)
-        m_messages.emplace_back("恢复场景已自动保存：" + path.generic_string());
+        m_messages.emplace_back(std::string(Localize("Recovery scene autosaved: ", "恢复场景已自动保存：")) + path.generic_string());
     else
-        m_messages.emplace_back("自动保存失败：" + path.generic_string());
+        m_messages.emplace_back(std::string(Localize("Autosave failed: ", "自动保存失败：")) + path.generic_string());
     return saved;
 }
 
@@ -2261,7 +2379,8 @@ bool EditorApp::RestoreAutosave()
         m_selected = InvalidEntity;
         m_sceneDirty = true;
     }
-    m_messages.emplace_back(loaded ? "编辑器自动保存已恢复" : "编辑器自动保存恢复失败");
+    m_messages.emplace_back(loaded ? Localize("Editor autosave restored", "编辑器自动保存已恢复")
+                                   : Localize("Failed to restore editor autosave", "编辑器自动保存恢复失败"));
     return loaded;
 }
 
@@ -2269,7 +2388,8 @@ void EditorApp::UpdateWindowTitle()
 {
     if (!m_device || (m_titleInitialized && m_lastTitleDirty == m_sceneDirty))
         return;
-    const std::string title = "TinyEngine 编辑器 - " + m_engine.GetProjectSettings().name + (m_sceneDirty ? " *" : "");
+    const std::string title = std::string(Localize("TinyEngine Editor - ", "TinyEngine 编辑器 - ")) +
+                              m_engine.GetProjectSettings().name + (m_sceneDirty ? " *" : "");
     SDL_SetWindowTitle(static_cast<SDL_Window *>(m_device->GetNativeWindow()), title.c_str());
     m_lastTitleDirty = m_sceneDirty;
     m_titleInitialized = true;

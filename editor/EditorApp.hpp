@@ -12,6 +12,7 @@
 #include <array>
 #include <filesystem>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace MiniEngine
@@ -28,6 +29,7 @@ class EditorApp
   private:
     void Draw();
     void DrawMenuBar();
+    void DrawSettings();
     void DrawHierarchy();
     void DrawInspector();
     void DrawSceneView();
@@ -46,7 +48,12 @@ class EditorApp
     bool Autosave();
     bool RestoreAutosave();
     std::filesystem::path GetAutosavePath();
+    std::filesystem::path GetEditorSettingsPath();
+    void LoadEditorSettings();
+    bool SaveEditorSettings();
     void UpdateWindowTitle();
+    const char *Localize(const char *english, const char *simplifiedChinese) const;
+    std::string LocalizeReflected(std::string_view text) const;
     bool OpenSceneDocument(const std::filesystem::path &path);
     void NewSceneDocument();
     bool SwitchSceneDocument(std::size_t index);
@@ -70,6 +77,11 @@ class EditorApp
         Active,
         Individual
     };
+    enum class InterfaceLanguage
+    {
+        English,
+        SimplifiedChinese
+    };
 
     Engine m_engine;
     SdlGlRenderDevice *m_device = nullptr;
@@ -80,6 +92,8 @@ class EditorApp
     std::vector<std::string> m_messages;
     std::array<char, 256> m_consoleInput{};
     bool m_initialized = false;
+    InterfaceLanguage m_interfaceLanguage = InterfaceLanguage::SimplifiedChinese;
+    bool m_showSettings = false;
     Vec3 m_editorCameraPosition{0.0f, 2.5f, 7.0f};
     Vec3 m_editorCameraRotation{-10.0f, 0.0f, 0.0f};
     float m_editorCameraFov = 60.0f;
