@@ -2,6 +2,8 @@
 
 本文对应 TinyEngine 0.27.0，最后同步于 2026-07-16。
 
+项目总览、构建目标关系、Runtime/ECS/资源/渲染/Editor 类图和每帧时序图见 [架构图与核心类图](ARCHITECTURE_DIAGRAMS.md)。
+
 ## 依赖方向
 
 ```text
