@@ -8,6 +8,8 @@
 
 ## 结论
 
+> 扩展复测更新：新增的 `tinyengine_extended_tests` 共 68 项，结果为 53 PASS、0 非预期 FAIL、9 XFAIL、6 BLOCKED；CTest 现为 3/3 通过。新增 TE-QA-013～016 后，当前开放故障为 15 项：P0 1、P1 8、P2 5、P3 1。详细证据见 [扩展专项回归报告](EXTENDED_REGRESSION_REPORT_2026-07-18.md)。下文保留首次全程序回归的历史统计。
+
 本轮重新构建并测试了仓库当前提供的全部 9 个 Release 可执行程序，覆盖核心自动化、真实 FBX/glTF 导入、Demo、Editor、Game、Commandlet、资产工具、场景工具和项目打包工具。构建成功，CTest 2/2 通过，资产/场景/Commandlet 的全部公开命令均成功执行，打包产物可运行。
 
 编辑器主要交互路径完成截图回归。中英文切换及持久化、Play/Stop、渲染开关、Shader Reload、多选、Inspector、Undo/Redo、四类专项编辑器打开和 Assimp 后台导入均可用。
@@ -26,6 +28,7 @@
 | CTest | `ctest --test-dir build -C Release --output-on-failure` | 2/2 通过 |
 | 核心测试 | `tinyengine_tests.exe` | `All TinyEngine tests passed` |
 | 真实导入矩阵 | `tinyengine_import_compatibility_tests.exe` | 4/4 通过 |
+| 扩展专项测试 | `tinyengine_extended_tests.exe` | 53 PASS / 9 XFAIL / 6 BLOCKED，无非预期失败 |
 
 真实导入矩阵实际覆盖：FBX 骨骼动画、FBX 复杂多 Mesh、glTF 2.0 Skin、glTF 2.0 复杂 PBR。核心测试覆盖数学/序列化/ECS、场景与 Prefab、资源编译/加载/TPAK、Render Graph、Clustered Lighting、现代渲染帧图、材质与 Shader、物理、动画、VFX、音频、输入、Runtime UI、插件、导航 AI 和网络编解码等已有断言。
 

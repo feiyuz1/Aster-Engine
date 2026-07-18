@@ -15,7 +15,7 @@
 
 ## P1 质量与规模升级
 
-- 编辑器正确性：先修复 [编辑器 UI 故障清单](EDITOR_QA_REPORT_2026-07-17.md) 中的新建场景状态、无路径保存覆盖、动画模板缺失依赖和打包二进制版本不一致问题；P0/P1 清零后再扩展编辑器功能。
+- 正确性：先修复 [编辑器 UI 故障清单](EDITOR_QA_REPORT_2026-07-17.md) 中的新建场景状态、无路径保存覆盖、动画模板缺失依赖、资源 CWD、设置层级、框选作用域、连续碰撞和斜坡响应问题；Material Graph 环路诊断见 TE-QA-013。P0/P1 清零后再扩展功能。
 
 - 渲染：跨平台 RHI、异步 Compute/资源 Barrier、多线程命令录制、Bindless/Descriptor 抽象、PSO Cache、GPU Cluster Build、Multi Draw Indirect、Mesh Shader/Virtual Geometry，以及基于截图与 GPU Counter 的性能回归。
 - Shader：跨平台 HLSL/GLSL 编译链、SPIR-V、PSO Cache、异步编译、Graph Subgraph/Function、完整材质预览球场景。

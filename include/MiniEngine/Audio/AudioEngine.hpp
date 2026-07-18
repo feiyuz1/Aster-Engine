@@ -30,6 +30,12 @@ class AudioEngine
     void ClearWorldState();
     bool IsInitialized() const;
 
+#ifdef TINYENGINE_TEST_HOOKS
+    // TEST HOOK: exposes deterministic mixer state only to automated test builds.
+    std::size_t TestGetVoiceCount() const;
+    std::vector<std::int16_t> TestMixFrames(std::size_t frameCount);
+#endif
+
   private:
     struct Voice
     {

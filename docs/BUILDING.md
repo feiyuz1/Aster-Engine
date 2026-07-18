@@ -82,6 +82,7 @@ cmake --build build-runtime --config Release -j 8
 | `tinyengine_commandlet` | 资产/场景校验、迁移和平台 Cook |
 | `tinyengine_tests` | 核心自动化测试 |
 | `tinyengine_import_compatibility_tests` | 真实 FBX/glTF 导入矩阵 |
+| `tinyengine_extended_tests` | 渲染、资产、物理、音频、输入、UI、导航、联网、插件、打包与压力专项回归 |
 
 ## 5. 测试与冒烟
 
@@ -100,6 +101,21 @@ ctest --test-dir build -C Debug -R tinyengine_core --output-on-failure
 ```powershell
 ctest --test-dir build -C Debug -R tinyengine_import_compatibility --output-on-failure
 ```
+
+只运行扩展专项回归：
+
+```powershell
+ctest --test-dir build -C Debug -R tinyengine_extended --output-on-failure
+```
+
+Windows 编辑器鼠标回归：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File tests/EditorUiAdvancedRegression.ps1 -Scenario GizmoMarquee
+powershell -NoProfile -ExecutionPolicy Bypass -File tests/EditorUiAdvancedRegression.ps1 -Scenario ShaderMaterial
+```
+
+扩展测试会生成 `Saved/ExtendedRegression/REPORT.md`。测试构建通过 `TINYENGINE_TEST_HOOKS` 暴露少量确定性观测接口；这些接口均有 `TEST HOOK` 标注，关闭 `TINYENGINE_BUILD_TESTS` 后不会编译。
 
 运行三帧 OpenGL 冒烟：
 

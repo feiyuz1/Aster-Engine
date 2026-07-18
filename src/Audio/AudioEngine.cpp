@@ -332,4 +332,24 @@ bool AudioEngine::IsInitialized() const
 {
     return m_device != 0;
 }
+
+#ifdef TINYENGINE_TEST_HOOKS
+// TEST HOOK: the public audio device is locked so the SDL callback cannot race deterministic mixer assertions.
+std::size_t AudioEngine::TestGetVoiceCount() const
+{
+    std::lock_guard<std::mutex> lock(m_mutex);
+    return m_voices.size();
+}
+
+std::vector<std::int16_t> AudioEngine::TestMixFrames(const std::size_t frameCount)
+{
+    std::vector<std::int16_t> samples(frameCount * 2);
+    if (m_device)
+        SDL_LockAudioDevice(m_device);
+    MixCallback(this, reinterpret_cast<std::uint8_t *>(samples.data()), static_cast<int>(samples.size() * sizeof(std::int16_t)));
+    if (m_device)
+        SDL_UnlockAudioDevice(m_device);
+    return samples;
+}
+#endif
 } // namespace MiniEngine

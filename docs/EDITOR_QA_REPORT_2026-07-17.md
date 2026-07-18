@@ -5,13 +5,13 @@
 - 测试环境：Windows，2560×1440 桌面，150% DPI；最大化窗口与默认 1280×720 逻辑窗口
 - 隔离工程：`Saved/EditorQA/EditorQA.tinyproject`
 
-> 2026-07-18 复测：使用提交 `2192a7a` 重新构建并回归。新增 TE-QA-011、012；TE-QA-006 已修复；其余状态和全程序/工具结果见 [全功能回归测试报告](FULL_REGRESSION_REPORT_2026-07-18.md)。
+> 2026-07-18 复测：先使用提交 `2192a7a` 重建全部程序，随后增加扩展自动化和鼠标专项回归。新增 TE-QA-011～016；TE-QA-006 已修复；详细矩阵见 [全功能回归报告](FULL_REGRESSION_REPORT_2026-07-18.md) 和 [扩展专项回归报告](EXTENDED_REGRESSION_REPORT_2026-07-18.md)。
 
 ## 结论
 
 编辑器的 Play/Stop、基础渲染开关、Shader Reload、多实体选择、四类专项资产编辑器、Assimp 后台模型导入和项目打包主路径均可运行；核心自动测试与真实 FBX/glTF 兼容测试也全部通过。
 
-两轮累计确认 12 项问题，其中 TE-QA-006 已修复；当前开放 11 项：P0 1 项、P1 5 项、P2 4 项、P3 1 项。最先应修复的是“新建场景 → 保存”的潜在启动场景覆盖、源码工程 Game 不渲染和新场景未真正切换。P0/P1 修复前，不建议将当前编辑器用于不可恢复的正式场景制作或对外发布打包。
+累计确认 16 项问题，其中 TE-QA-006 已修复；当前开放 15 项：P0 1 项、P1 8 项、P2 5 项、P3 1 项。最先应修复的是“新建场景 → 保存”的潜在启动场景覆盖、源码工程 Game 不渲染、连续碰撞穿透、斜坡响应和无 Ctrl 框选失效。P0/P1 修复前，不建议将当前编辑器用于不可恢复的正式场景制作或对外发布打包。
 
 严重级别约定：P0 表示数据丢失或发布阻断；P1 表示核心工作流错误；P2 表示有绕行方式但明显影响使用或维护；P3 表示低风险易用性问题。
 
@@ -121,10 +121,40 @@
 - 建议：最后绘制设置窗口，或改成 Modal/Dockable Window；增加多帧截图回归。
 - 证据：`Saved/EditorQA/qa-32-language-dialog.png`、`qa-34-language-chinese.png`。
 
+### TE-QA-013 · P2 · Material Graph 环路没有错误诊断
+
+- 复现：创建能从下游节点回连上游节点的环路并执行编译。
+- 实际：编译接口返回洋红色 fallback Shader，但错误列表为空，用户无法定位环路。
+- 预期：拒绝环路并返回涉及节点或连接的错误。
+- 证据：`tinyengine_extended_tests` 的 `Material Graph / cycle is diagnosed...` 用例稳定 XFAIL。
+
+### TE-QA-014 · P1 · 连续动态刚体穿过薄墙
+
+- 复现：让启用连续检测的动态刚体以高速度朝薄静态墙运动一个固定步长。
+- 实际：刚体最终位置越过墙体。
+- 根因方向：当前 substep 逐段积分，但碰撞查询仍在最终位置统一执行，没有沿每段路径 Sweep。
+- 证据：扩展测试 `continuous dynamic body does not tunnel through a thin wall` 稳定 XFAIL。
+
+### TE-QA-015 · P1 · 低摩擦刚体不会沿三角网格斜坡滑动
+
+- 复现：将低摩擦动态刚体放到 Triangle Mesh 斜坡上运行多个固定步长。
+- 实际：接触后没有形成稳定的沿坡切向速度和位移。
+- 预期：法向约束消除穿透，重力切向分量驱动物体沿坡滑动。
+- 证据：斜坡 Raycast 法线测试通过，但动态滑动用例稳定 XFAIL。
+
+### TE-QA-016 · P1 · Scene View 无 Ctrl 框选不能替换当前选择
+
+- 复现：先选中实体，再在 Scene View 空白处拖出包含其他实体的框选矩形，不按 Ctrl。
+- 实际：选择集合不替换；按 Ctrl 时只有部分合并路径执行。
+- 根因：`if (KeyCtrl)` 后缺少作用域，`else` 绑定到内层“是否已包含实体”的判断；无 Ctrl 时没有执行 `m_selection = marquee`，见 `editor/EditorApp.cpp:1089`–`:1094`。
+- 证据：鼠标截图 `Saved/EditorAdvancedQA/qa-41-marquee-without-ctrl.png`，扩展源码回归稳定 XFAIL。
+
 ## 已通过项目
 
 - Play / Stop：运行态进入成功，Stop 后编辑场景恢复。
 - Scene View：Translate / Rotate / Scale、Snap、Local / World、Pivot 模式和 FXAA / Bloom / GTAO / TAA 开关可点击，Shader Reload 有成功消息且无编译错误。
+- Gizmo：125% DPI 物理像素鼠标拖动 X 轴后，Inspector 的 X 从 0 变为 5.699，窗口进入脏状态；脚本退出后恢复原场景。
+- Material Graph / Shader：鼠标选中资产可打开节点图；无效 GLSL 显示编译器行号和错误，有效 GLSL 再输入后恢复“没有编译错误”。
 - Hierarchy / Inspector：实体创建、实体属性展示、Ctrl 多选可用，多选时显示“editing primary”。
 - Autosave：Restore Autosave 成功并显示确认消息。
 - 资产编辑器：Blend Tree、Animation Graph、VFX、Behavior Tree 创建文件并打开对应编辑器。
@@ -135,7 +165,7 @@
 
 ## 尚需人工复核
 
-Win32 合成按键对 SDL/ImGui 的特殊键传递不稳定，本轮不能把以下现象判定为产品故障：Delete 删除、Ctrl+Z/Ctrl+Y、Console 输入后按 Enter。鼠标菜单路径与物理键盘应再做一轮人工复核。资产 Move/Rename、依赖交互修复、Shader 源码错误定位和各专项编辑器内部每一个增删/保存按钮也需要后续专项用例，不属于本轮高频冒烟覆盖。
+Win32 合成按键对 SDL/ImGui 的特殊键传递仍不稳定，本轮不能把 Delete 删除、Ctrl+Z/Ctrl+Y、Ctrl+S 和 Console 输入后按 Enter 的自动化现象判定为产品故障。Gizmo、Material Graph 和 Shader 错误/恢复已改用物理像素鼠标与逐键回退完成验证。资产 Move/Rename、依赖交互修复和各专项编辑器内部每一个增删/保存按钮仍建议用物理键盘人工复核。
 
 ## 修复顺序建议
 
