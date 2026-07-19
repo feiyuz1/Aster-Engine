@@ -4,3 +4,6 @@
 *.md text eol=lf
 *.txt text eol=lf
 *.cmake text eol=lf
+
+# Large imported model data
+assets/Imported/**/*.mesh filter=lfs diff=lfs merge=lfs -text

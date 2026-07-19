@@ -1,0 +1,567 @@
+TINYSCENE 11
+entity 1 0 "bugatti_obj"
+active 1
+tag "Untagged"
+layer 0
+transform 0 0 0 0 -0 0 1 1 1
+end
+entity 2 1 "alights_014_Plane_051"
+active 1
+tag "Untagged"
+layer 0
+transform 0 0 0 0 -0 0 1 1 1
+mesh "assets/Imported/bugatti/bugatti_Mesh0_alights_014_Plane_051.mesh" "assets/Imported/bugatti/bugatti_Mat9_Studio_Lights_005.mat"
+end
+entity 3 1 "alights_000_Plane_049"
+active 1
+tag "Untagged"
+layer 0
+transform 0 0 0 0 -0 0 1 1 1
+mesh "assets/Imported/bugatti/bugatti_Mesh1_alights_000_Plane_049.mesh" "assets/Imported/bugatti/bugatti_Mat9_Studio_Lights_005.mat"
+end
+entity 4 1 "alights_015_Plane_050"
+active 1
+tag "Untagged"
+layer 0
+transform 0 0 0 0 -0 0 1 1 1
+mesh "assets/Imported/bugatti/bugatti_Mesh2_alights_015_Plane_050.mesh" "assets/Imported/bugatti/bugatti_Mat9_Studio_Lights_005.mat"
+end
+entity 5 1 "Plane_047_Plane_042"
+active 1
+tag "Untagged"
+layer 0
+transform 0 0 0 0 -0 0 1 1 1
+mesh "assets/Imported/bugatti/bugatti_Mesh3_Plane_047_Plane_042.mesh" "assets/Imported/bugatti/bugatti_Mat37_sun.mat"
+end
+entity 6 1 "Plane_036_Plane_040"
+active 1
+tag "Untagged"
+layer 0
+transform 0 0 0 0 -0 0 1 1 1
+mesh "assets/Imported/bugatti/bugatti_Mesh4_Plane_036_Plane_040.mesh" "assets/Imported/bugatti/bugatti_Mat37_sun.mat"
+end
+entity 7 1 "Cube_028_Cube_030"
+active 1
+tag "Untagged"
+layer 0
+transform 0 0 0 0 -0 0 1 1 1
+mesh "assets/Imported/bugatti/bugatti_Mesh5_Cube_028_Cube_030.mesh" "assets/Imported/bugatti/bugatti_Mat35_silver_door_strip_004.mat"
+end
+entity 8 1 "NurbsPath_006"
+active 1
+tag "Untagged"
+layer 0
+transform 0 0 0 0 -0 0 1 1 1
+mesh "assets/Imported/bugatti/bugatti_Mesh6_NurbsPath_006.mesh" "assets/Imported/bugatti/bugatti_Mat35_silver_door_strip_004.mat"
+end
+entity 9 1 "Cube_029_Cube_031"
+active 1
+tag "Untagged"
+layer 0
+transform 0 0 0 0 -0 0 1 1 1
+mesh "assets/Imported/bugatti/bugatti_Mesh7_Cube_029_Cube_031.mesh" "assets/Imported/bugatti/bugatti_Mat22_breaks.mat"
+end
+entity 10 1 "Icosphere_001"
+active 1
+tag "Untagged"
+layer 0
+transform 0 0 0 0 -0 0 1 1 1
+mesh "assets/Imported/bugatti/bugatti_Mesh8_Icosphere_001.mesh" "assets/Imported/bugatti/bugatti_Mat31_red_glass.mat"
+end
+entity 11 1 "Cube_027_Cube_025"
+active 1
+tag "Untagged"
+layer 0
+transform 0 0 0 0 -0 0 1 1 1
+mesh "assets/Imported/bugatti/bugatti_Mesh9_Cube_027_Cube_025.mesh" "assets/Imported/bugatti/bugatti_Mat35_silver_door_strip_004.mat"
+end
+entity 12 1 "Plane_013_Plane_014"
+active 1
+tag "Untagged"
+layer 0
+transform 0 0 0 0 -0 0 1 1 1
+mesh "assets/Imported/bugatti/bugatti_Mesh10_Plane_013_Plane_014.mesh" "assets/Imported/bugatti/bugatti_Mat6_None.mat"
+end
+entity 13 1 "NurbsPath_011_NurbsPath_012"
+active 1
+tag "Untagged"
+layer 0
+transform 0 0 0 0 -0 0 1 1 1
+mesh "assets/Imported/bugatti/bugatti_Mesh11_NurbsPath_011_NurbsPath_012.mesh" "assets/Imported/bugatti/bugatti_Mat6_None.mat"
+end
+entity 14 1 "Icosphere"
+active 1
+tag "Untagged"
+layer 0
+transform 0 0 0 0 -0 0 1 1 1
+mesh "assets/Imported/bugatti/bugatti_Mesh12_Icosphere.mesh" "assets/Imported/bugatti/bugatti_Mat22_breaks.mat"
+end
+entity 15 1 "NurbsPath_010_NurbsPath_011"
+active 1
+tag "Untagged"
+layer 0
+transform 0 0 0 0 -0 0 1 1 1
+mesh "assets/Imported/bugatti/bugatti_Mesh13_NurbsPath_010_NurbsPath_011.mesh" "assets/Imported/bugatti/bugatti_Mat22_breaks.mat"
+end
+entity 16 1 "BezierCircle_BezierCircle_002"
+active 1
+tag "Untagged"
+layer 0
+transform 0 0 0 0 -0 0 1 1 1
+mesh "assets/Imported/bugatti/bugatti_Mesh14_BezierCircle_BezierCircle_002.mesh" "assets/Imported/bugatti/bugatti_Mat22_breaks.mat"
+end
+entity 17 1 "Cube_048_Cube_080"
+active 1
+tag "Untagged"
+layer 0
+transform 0 0 0 0 -0 0 1 1 1
+mesh "assets/Imported/bugatti/bugatti_Mesh15_Cube_048_Cube_080.mesh" "assets/Imported/bugatti/bugatti_Mat38_tyre_004.mat"
+end
+entity 18 17 "rim_silver_004"
+active 1
+tag "Untagged"
+layer 0
+transform 0 0 0 0 0 0 1 1 1
+mesh "assets/Imported/bugatti/bugatti_Mesh16_rim_silver_004.mesh" "assets/Imported/bugatti/bugatti_Mat34_rim_silver_004.mat"
+end
+entity 19 17 "rim_blue_004"
+active 1
+tag "Untagged"
+layer 0
+transform 0 0 0 0 0 0 1 1 1
+mesh "assets/Imported/bugatti/bugatti_Mesh17_rim_blue_004.mesh" "assets/Imported/bugatti/bugatti_Mat33_rim_blue_004.mat"
+end
+entity 20 17 "Nut_004"
+active 1
+tag "Untagged"
+layer 0
+transform 0 0 0 0 0 0 1 1 1
+mesh "assets/Imported/bugatti/bugatti_Mesh18_Nut_004.mesh" "assets/Imported/bugatti/bugatti_Mat7_Nut_004.mat"
+end
+entity 21 17 "brake_disk_004"
+active 1
+tag "Untagged"
+layer 0
+transform 0 0 0 0 0 0 1 1 1
+mesh "assets/Imported/bugatti/bugatti_Mesh19_brake_disk_004.mesh" "assets/Imported/bugatti/bugatti_Mat21_brake_disk_004.mat"
+end
+entity 22 17 "wheel_joint_004"
+active 1
+tag "Untagged"
+layer 0
+transform 0 0 0 0 0 0 1 1 1
+mesh "assets/Imported/bugatti/bugatti_Mesh20_wheel_joint_004.mesh" "assets/Imported/bugatti/bugatti_Mat39_wheel_joint_004.mat"
+end
+entity 23 17 "cALLIPERS_004"
+active 1
+tag "Untagged"
+layer 0
+transform 0 0 0 0 0 0 1 1 1
+mesh "assets/Imported/bugatti/bugatti_Mesh21_cALLIPERS_004.mesh" "assets/Imported/bugatti/bugatti_Mat23_cALLIPERS_004.mat"
+end
+entity 24 17 "silver_door_strip_004"
+active 1
+tag "Untagged"
+layer 0
+transform 0 0 0 0 0 0 1 1 1
+mesh "assets/Imported/bugatti/bugatti_Mesh22_silver_door_strip_004.mesh" "assets/Imported/bugatti/bugatti_Mat35_silver_door_strip_004.mat"
+end
+entity 25 1 "Cube_046_Cube_063"
+active 1
+tag "Untagged"
+layer 0
+transform 0 0 0 0 -0 0 1 1 1
+mesh "assets/Imported/bugatti/bugatti_Mesh23_Cube_046_Cube_063.mesh" "assets/Imported/bugatti/bugatti_Mat38_tyre_004.mat"
+end
+entity 26 25 "rim_silver_004"
+active 1
+tag "Untagged"
+layer 0
+transform 0 0 0 0 0 0 1 1 1
+mesh "assets/Imported/bugatti/bugatti_Mesh24_rim_silver_004.mesh" "assets/Imported/bugatti/bugatti_Mat34_rim_silver_004.mat"
+end
+entity 27 25 "rim_blue_004"
+active 1
+tag "Untagged"
+layer 0
+transform 0 0 0 0 0 0 1 1 1
+mesh "assets/Imported/bugatti/bugatti_Mesh25_rim_blue_004.mesh" "assets/Imported/bugatti/bugatti_Mat33_rim_blue_004.mat"
+end
+entity 28 25 "Nut_004"
+active 1
+tag "Untagged"
+layer 0
+transform 0 0 0 0 0 0 1 1 1
+mesh "assets/Imported/bugatti/bugatti_Mesh26_Nut_004.mesh" "assets/Imported/bugatti/bugatti_Mat7_Nut_004.mat"
+end
+entity 29 25 "brake_disk_004"
+active 1
+tag "Untagged"
+layer 0
+transform 0 0 0 0 0 0 1 1 1
+mesh "assets/Imported/bugatti/bugatti_Mesh27_brake_disk_004.mesh" "assets/Imported/bugatti/bugatti_Mat21_brake_disk_004.mat"
+end
+entity 30 25 "wheel_joint_004"
+active 1
+tag "Untagged"
+layer 0
+transform 0 0 0 0 0 0 1 1 1
+mesh "assets/Imported/bugatti/bugatti_Mesh28_wheel_joint_004.mesh" "assets/Imported/bugatti/bugatti_Mat39_wheel_joint_004.mat"
+end
+entity 31 25 "cALLIPERS_004"
+active 1
+tag "Untagged"
+layer 0
+transform 0 0 0 0 0 0 1 1 1
+mesh "assets/Imported/bugatti/bugatti_Mesh29_cALLIPERS_004.mesh" "assets/Imported/bugatti/bugatti_Mat23_cALLIPERS_004.mat"
+end
+entity 32 25 "silver_door_strip_004"
+active 1
+tag "Untagged"
+layer 0
+transform 0 0 0 0 0 0 1 1 1
+mesh "assets/Imported/bugatti/bugatti_Mesh30_silver_door_strip_004.mesh" "assets/Imported/bugatti/bugatti_Mat35_silver_door_strip_004.mat"
+end
+entity 33 1 "Text_001_Text_002"
+active 1
+tag "Untagged"
+layer 0
+transform 0 0 0 0 -0 0 1 1 1
+mesh "assets/Imported/bugatti/bugatti_Mesh31_Text_001_Text_002.mesh" "assets/Imported/bugatti/bugatti_Mat12_WHITE_002.mat"
+end
+entity 34 1 "Cylinder_026_Cylinder_025"
+active 1
+tag "Untagged"
+layer 0
+transform 0 0 0 0 -0 0 1 1 1
+mesh "assets/Imported/bugatti/bugatti_Mesh32_Cylinder_026_Cylinder_025.mesh" "assets/Imported/bugatti/bugatti_Mat30_red_002.mat"
+end
+entity 35 34 "silver_door_strip_004"
+active 1
+tag "Untagged"
+layer 0
+transform 0 0 0 0 0 0 1 1 1
+mesh "assets/Imported/bugatti/bugatti_Mesh33_silver_door_strip_004.mesh" "assets/Imported/bugatti/bugatti_Mat35_silver_door_strip_004.mat"
+end
+entity 36 1 "Plane_024"
+active 1
+tag "Untagged"
+layer 0
+transform 0 0 0 0 -0 0 1 1 1
+mesh "assets/Imported/bugatti/bugatti_Mesh34_Plane_024.mesh" "assets/Imported/bugatti/bugatti_Mat8_Studio_Lights_004.mat"
+end
+entity 37 1 "NurbsPath_008"
+active 1
+tag "Untagged"
+layer 0
+transform 0 0 0 0 -0 0 1 1 1
+mesh "assets/Imported/bugatti/bugatti_Mesh35_NurbsPath_008.mesh" "assets/Imported/bugatti/bugatti_Mat8_Studio_Lights_004.mat"
+end
+entity 38 1 "NurbsPath_009"
+active 1
+tag "Untagged"
+layer 0
+transform 0 0 0 0 -0 0 1 1 1
+mesh "assets/Imported/bugatti/bugatti_Mesh36_NurbsPath_009.mesh" "assets/Imported/bugatti/bugatti_Mat8_Studio_Lights_004.mat"
+end
+entity 39 1 "Cube_036"
+active 1
+tag "Untagged"
+layer 0
+transform 0 0 0 0 -0 0 1 1 1
+mesh "assets/Imported/bugatti/bugatti_Mesh37_Cube_036.mesh" "assets/Imported/bugatti/bugatti_Mat3_GRILL_004.mat"
+end
+entity 40 39 "Cube_036"
+active 1
+tag "Untagged"
+layer 0
+transform 0 0 0 0 0 0 1 1 1
+mesh "assets/Imported/bugatti/bugatti_Mesh38_Cube_036.mesh" "assets/Imported/bugatti/bugatti_Mat3_GRILL_004.mat"
+end
+entity 41 1 "Cylinder_027_Cylinder_026"
+active 1
+tag "Untagged"
+layer 0
+transform 0 0 0 0 -0 0 1 1 1
+mesh "assets/Imported/bugatti/bugatti_Mesh39_Cylinder_027_Cylinder_026.mesh" "assets/Imported/bugatti/bugatti_Mat14_back_drop_004.mat"
+end
+entity 42 1 "Cube_038"
+active 1
+tag "Untagged"
+layer 0
+transform 0 0 0 0 -0 0 1 1 1
+mesh "assets/Imported/bugatti/bugatti_Mesh40_Cube_038.mesh" "assets/Imported/bugatti/bugatti_Mat6_None.mat"
+end
+entity 43 1 "Plane_014_Plane_020"
+active 1
+tag "Untagged"
+layer 0
+transform 0 0 0 0 -0 0 1 1 1
+mesh "assets/Imported/bugatti/bugatti_Mesh41_Plane_014_Plane_020.mesh" "assets/Imported/bugatti/bugatti_Mat31_red_glass.mat"
+end
+entity 44 43 "silver_trim"
+active 1
+tag "Untagged"
+layer 0
+transform 0 0 0 0 0 0 1 1 1
+mesh "assets/Imported/bugatti/bugatti_Mesh42_silver_trim.mesh" "assets/Imported/bugatti/bugatti_Mat36_silver_trim.mat"
+end
+entity 45 1 "BezierCurve"
+active 1
+tag "Untagged"
+layer 0
+transform 0 0 0 0 -0 0 1 1 1
+mesh "assets/Imported/bugatti/bugatti_Mesh43_BezierCurve.mesh" "assets/Imported/bugatti/bugatti_Mat16_black_cable.mat"
+end
+entity 46 1 "Cube_026_Cube_020"
+active 1
+tag "Untagged"
+layer 0
+transform 0 0 0 0 -0 0 1 1 1
+mesh "assets/Imported/bugatti/bugatti_Mesh44_Cube_026_Cube_020.mesh" "assets/Imported/bugatti/bugatti_Mat2_ENGINE.mat"
+end
+entity 47 1 "Text_002_Text_001"
+active 1
+tag "Untagged"
+layer 0
+transform 0 0 0 0 -0 0 1 1 1
+mesh "assets/Imported/bugatti/bugatti_Mesh45_Text_002_Text_001.mesh" "assets/Imported/bugatti/bugatti_Mat12_WHITE_002.mat"
+end
+entity 48 1 "Cube_043_Cube_081"
+active 1
+tag "Untagged"
+layer 0
+transform 0 0 0 0 -0 0 1 1 1
+mesh "assets/Imported/bugatti/bugatti_Mesh46_Cube_043_Cube_081.mesh" "assets/Imported/bugatti/bugatti_Mat3_GRILL_004.mat"
+end
+entity 49 48 "Cube_043_Cube_081"
+active 1
+tag "Untagged"
+layer 0
+transform 0 0 0 0 0 0 1 1 1
+mesh "assets/Imported/bugatti/bugatti_Mesh47_Cube_043_Cube_081.mesh" "assets/Imported/bugatti/bugatti_Mat3_GRILL_004.mat"
+end
+entity 50 1 "Cylinder_034_Cylinder_131"
+active 1
+tag "Untagged"
+layer 0
+transform 0 0 0 0 -0 0 1 1 1
+mesh "assets/Imported/bugatti/bugatti_Mesh48_Cylinder_034_Cylinder_131.mesh" "assets/Imported/bugatti/bugatti_Mat5_NAVY.mat"
+end
+entity 51 1 "Cylinder_033_Cylinder_126"
+active 1
+tag "Untagged"
+layer 0
+transform 0 0 0 0 -0 0 1 1 1
+mesh "assets/Imported/bugatti/bugatti_Mesh49_Cylinder_033_Cylinder_126.mesh" "assets/Imported/bugatti/bugatti_Mat13_aluminiumm.mat"
+end
+entity 52 51 "glossy"
+active 1
+tag "Untagged"
+layer 0
+transform 0 0 0 0 0 0 1 1 1
+mesh "assets/Imported/bugatti/bugatti_Mesh50_glossy.mesh" "assets/Imported/bugatti/bugatti_Mat27_glossy.mat"
+end
+entity 53 51 "white_holders"
+active 1
+tag "Untagged"
+layer 0
+transform 0 0 0 0 0 0 1 1 1
+mesh "assets/Imported/bugatti/bugatti_Mesh51_white_holders.mesh" "assets/Imported/bugatti/bugatti_Mat40_white_holders.mat"
+end
+entity 54 1 "Cube_039"
+active 1
+tag "Untagged"
+layer 0
+transform 0 0 0 0 -0 0 1 1 1
+mesh "assets/Imported/bugatti/bugatti_Mesh52_Cube_039.mesh" "assets/Imported/bugatti/bugatti_Mat38_tyre_004.mat"
+end
+entity 55 54 "rim_silver_004"
+active 1
+tag "Untagged"
+layer 0
+transform 0 0 0 0 0 0 1 1 1
+mesh "assets/Imported/bugatti/bugatti_Mesh53_rim_silver_004.mesh" "assets/Imported/bugatti/bugatti_Mat34_rim_silver_004.mat"
+end
+entity 56 54 "rim_blue_004"
+active 1
+tag "Untagged"
+layer 0
+transform 0 0 0 0 0 0 1 1 1
+mesh "assets/Imported/bugatti/bugatti_Mesh54_rim_blue_004.mesh" "assets/Imported/bugatti/bugatti_Mat33_rim_blue_004.mat"
+end
+entity 57 54 "Nut_004"
+active 1
+tag "Untagged"
+layer 0
+transform 0 0 0 0 0 0 1 1 1
+mesh "assets/Imported/bugatti/bugatti_Mesh55_Nut_004.mesh" "assets/Imported/bugatti/bugatti_Mat7_Nut_004.mat"
+end
+entity 58 54 "brake_disk_004"
+active 1
+tag "Untagged"
+layer 0
+transform 0 0 0 0 0 0 1 1 1
+mesh "assets/Imported/bugatti/bugatti_Mesh56_brake_disk_004.mesh" "assets/Imported/bugatti/bugatti_Mat21_brake_disk_004.mat"
+end
+entity 59 54 "wheel_joint_004"
+active 1
+tag "Untagged"
+layer 0
+transform 0 0 0 0 0 0 1 1 1
+mesh "assets/Imported/bugatti/bugatti_Mesh57_wheel_joint_004.mesh" "assets/Imported/bugatti/bugatti_Mat39_wheel_joint_004.mat"
+end
+entity 60 54 "cALLIPERS_004"
+active 1
+tag "Untagged"
+layer 0
+transform 0 0 0 0 0 0 1 1 1
+mesh "assets/Imported/bugatti/bugatti_Mesh58_cALLIPERS_004.mesh" "assets/Imported/bugatti/bugatti_Mat23_cALLIPERS_004.mat"
+end
+entity 61 54 "silver_door_strip_004"
+active 1
+tag "Untagged"
+layer 0
+transform 0 0 0 0 0 0 1 1 1
+mesh "assets/Imported/bugatti/bugatti_Mesh59_silver_door_strip_004.mesh" "assets/Imported/bugatti/bugatti_Mat35_silver_door_strip_004.mat"
+end
+entity 62 1 "Plane_026"
+active 1
+tag "Untagged"
+layer 0
+transform 0 0 0 0 -0 0 1 1 1
+mesh "assets/Imported/bugatti/bugatti_Mesh60_Plane_026.mesh" "assets/Imported/bugatti/bugatti_Mat35_silver_door_strip_004.mat"
+end
+entity 63 1 "Cube_042"
+active 1
+tag "Untagged"
+layer 0
+transform 0 0 0 0 -0 0 1 1 1
+mesh "assets/Imported/bugatti/bugatti_Mesh61_Cube_042.mesh" "assets/Imported/bugatti/bugatti_Mat28_headlight_glass_004.mat"
+end
+entity 64 63 "headlight_square_004"
+active 1
+tag "Untagged"
+layer 0
+transform 0 0 0 0 0 0 1 1 1
+mesh "assets/Imported/bugatti/bugatti_Mesh62_headlight_square_004.mesh" "assets/Imported/bugatti/bugatti_Mat29_headlight_square_004.mat"
+end
+entity 65 1 "Cube_044"
+active 1
+tag "Untagged"
+layer 0
+transform 0 0 0 0 -0 0 1 1 1
+mesh "assets/Imported/bugatti/bugatti_Mesh63_Cube_044.mesh" "assets/Imported/bugatti/bugatti_Mat3_GRILL_004.mat"
+end
+entity 66 1 "Plane_027"
+active 1
+tag "Untagged"
+layer 0
+transform 0 0 0 0 -0 0 1 1 1
+mesh "assets/Imported/bugatti/bugatti_Mesh64_Plane_027.mesh" "assets/Imported/bugatti/bugatti_Mat32_reflective_coat_004.mat"
+end
+entity 67 66 "glass_front_004"
+active 1
+tag "Untagged"
+layer 0
+transform 0 0 0 0 0 0 1 1 1
+mesh "assets/Imported/bugatti/bugatti_Mesh65_glass_front_004.mesh" "assets/Imported/bugatti/bugatti_Mat26_glass_front_004.mat"
+end
+entity 68 66 "Trim_004"
+active 1
+tag "Untagged"
+layer 0
+transform 0 0 0 0 0 0 1 1 1
+mesh "assets/Imported/bugatti/bugatti_Mesh66_Trim_004.mesh" "assets/Imported/bugatti/bugatti_Mat10_Trim_004.mat"
+end
+entity 69 1 "Plane_028"
+active 1
+tag "Untagged"
+layer 0
+transform 0 0 0 0 -0 0 1 1 1
+mesh "assets/Imported/bugatti/bugatti_Mesh67_Plane_028.mesh" "assets/Imported/bugatti/bugatti_Mat1_BLUE_002.mat"
+end
+entity 70 69 "silver_door_strip_004"
+active 1
+tag "Untagged"
+layer 0
+transform 0 0 0 0 0 0 1 1 1
+mesh "assets/Imported/bugatti/bugatti_Mesh68_silver_door_strip_004.mesh" "assets/Imported/bugatti/bugatti_Mat35_silver_door_strip_004.mat"
+end
+entity 71 69 "NAVY"
+active 1
+tag "Untagged"
+layer 0
+transform 0 0 0 0 0 0 1 1 1
+mesh "assets/Imported/bugatti/bugatti_Mesh69_NAVY.mesh" "assets/Imported/bugatti/bugatti_Mat5_NAVY.mat"
+end
+entity 72 69 "front_window_004"
+active 1
+tag "Untagged"
+layer 0
+transform 0 0 0 0 0 0 1 1 1
+mesh "assets/Imported/bugatti/bugatti_Mesh70_front_window_004.mesh" "assets/Imported/bugatti/bugatti_Mat25_front_window_004.mat"
+end
+entity 73 69 "black_fuel_tank_004"
+active 1
+tag "Untagged"
+layer 0
+transform 0 0 0 0 0 0 1 1 1
+mesh "assets/Imported/bugatti/bugatti_Mesh71_black_fuel_tank_004.mesh" "assets/Imported/bugatti/bugatti_Mat17_black_fuel_tank_004.mat"
+end
+entity 74 69 "black_strip_004"
+active 1
+tag "Untagged"
+layer 0
+transform 0 0 0 0 0 0 1 1 1
+mesh "assets/Imported/bugatti/bugatti_Mesh72_black_strip_004.mesh" "assets/Imported/bugatti/bugatti_Mat19_black_strip_004.mat"
+end
+entity 75 69 "WHEEL_CURB_004"
+active 1
+tag "Untagged"
+layer 0
+transform 0 0 0 0 0 0 1 1 1
+mesh "assets/Imported/bugatti/bugatti_Mesh73_WHEEL_CURB_004.mesh" "assets/Imported/bugatti/bugatti_Mat11_WHEEL_CURB_004.mat"
+end
+entity 76 69 "black_vent_004"
+active 1
+tag "Untagged"
+layer 0
+transform 0 0 0 0 0 0 1 1 1
+mesh "assets/Imported/bugatti/bugatti_Mesh74_black_vent_004.mesh" "assets/Imported/bugatti/bugatti_Mat20_black_vent_004.mat"
+end
+entity 77 69 "black_side_vent"
+active 1
+tag "Untagged"
+layer 0
+transform 0 0 0 0 0 0 1 1 1
+mesh "assets/Imported/bugatti/bugatti_Mesh75_black_side_vent.mesh" "assets/Imported/bugatti/bugatti_Mat18_black_side_vent.mat"
+end
+entity 78 69 "Mirrors"
+active 1
+tag "Untagged"
+layer 0
+transform 0 0 0 0 0 0 1 1 1
+mesh "assets/Imported/bugatti/bugatti_Mesh76_Mirrors.mesh" "assets/Imported/bugatti/bugatti_Mat4_Mirrors.mat"
+end
+entity 79 69 "exhaust"
+active 1
+tag "Untagged"
+layer 0
+transform 0 0 0 0 0 0 1 1 1
+mesh "assets/Imported/bugatti/bugatti_Mesh77_exhaust.mesh" "assets/Imported/bugatti/bugatti_Mat24_exhaust.mat"
+end
+entity 80 69 "black"
+active 1
+tag "Untagged"
+layer 0
+transform 0 0 0 0 0 0 1 1 1
+mesh "assets/Imported/bugatti/bugatti_Mesh78_black.mesh" "assets/Imported/bugatti/bugatti_Mat15_black.mat"
+end
+entity 81 69 "black"
+active 1
+tag "Untagged"
+layer 0
+transform 0 0 0 0 0 0 1 1 1
+mesh "assets/Imported/bugatti/bugatti_Mesh79_black.mesh" "assets/Imported/bugatti/bugatti_Mat15_black.mat"
+end
