@@ -4,7 +4,7 @@ TinyEngine 是参考 Unreal Engine 5.3.2 模块职责、以 C++17 实现的轻�
 
 当前版本：0.27.0（完成 Render Graph、GPU HZB、Motion Vector TAA、独立 Bloom/GTAO、Forward+ Clustered Lighting 与 GPU Driven Indirect Draw）。
 
-文档入口：[文档中心](docs/文档中心.md) · [构建指南](docs/构建指南.md) · [使用指南](docs/使用指南.md) · [技术设计](设计.md) · [架构说明](docs/架构说明.md) · [工具参考](docs/工具参考.md) · [后续工作](docs/后续工作.md)
+文档入口：[文档中心](docs/文档中心.md) · [构建指南](docs/构建指南.md) · [使用指南](docs/使用指南.md) · [技术设计](设计.md) · [项目架构](docs/项目架构.md) · [工具参考](docs/工具参考.md) · [后续工作](docs/后续工作.md)
 
 本文中的“已实现”表示功能进入可编译、可测试、可运行的代码路径，不等同于 UE 同名系统的商业级规模。具体算法和质量边界记录在对应专题文档中。
 
@@ -69,4 +69,4 @@ Scene View 操作：按住鼠标右键并使用 WASD/QE 飞行，Shift 加速；
 
 ## 当前边界
 
-0.27 指定渲染架构已进入可运行路径。继续向生产级升级的重点是跨平台 RHI/Shader 编译链、异步 Compute 与多线程命令录制、完整 OpenType/HarfBuzz、正式 Recast/Detour 烘焙、联网加密/会话服务和目标平台认证。详见[0.27 完成说明](docs/渲染架构完成说明_0.27.md)与[后续工作](docs/后续工作.md)。
+0.27 指定渲染架构已进入可运行路径。继续向生产级升级的重点是跨平台 RHI/Shader 编译链、异步 Compute 与多线程命令录制、完整 OpenType/HarfBuzz、正式 Recast/Detour 烘焙、联网加密/会话服务和目标平台认证。详见[版本完成记录](docs/版本完成记录.md)与[后续工作](docs/后续工作.md)。
