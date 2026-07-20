@@ -324,7 +324,8 @@ int main()
 
     TimerManager timers;
     int timerExecutions = 0;
-    const auto timer = timers.SetTimer(0.1f, [&timerExecutions]() { ++timerExecutions; }, true);
+    const auto timer = timers.SetTimer(
+        0.1f, [&timerExecutions]() { ++timerExecutions; }, true);
     timers.Update(0.25f);
     CHECK(timerExecutions == 1 && timers.IsActive(timer));
     CHECK(timers.ClearTimer(timer));
@@ -369,6 +370,9 @@ int main()
     MeshResource compiledMesh;
     CHECK(compiledMesh.Load("Saved/CompiledPlayer.mesh") && compiledMesh.GetVertices().size() == mesh.GetVertices().size());
 #ifdef TINYENGINE_HAS_ASSIMP
+    const auto supportedModelExtensions = AssimpImporter::GetSupportedExtensions();
+    CHECK(std::find(supportedModelExtensions.begin(), supportedModelExtensions.end(), ".fbx") != supportedModelExtensions.end());
+    CHECK(std::find(supportedModelExtensions.begin(), supportedModelExtensions.end(), ".obj") != supportedModelExtensions.end());
     CHECK(PlatformFile::WriteAllText("Saved/ImportTriangle.obj",
                                      "o Triangle\nv 0 0 0\nv 2 0 0\nv 0 2 0\nvt 0 0\nvt 1 0\nvt 0 1\nf 1/1 2/2 3/3\n"));
     ModelImportOptions importOptions;
@@ -385,6 +389,10 @@ int main()
     importedRegistry.Scan("Saved/ImportedTest", false);
     const auto importedPrefab = importedRegistry.Find(imported.prefabPath.generic_string());
     CHECK(importedPrefab.has_value() && importedPrefab->dependencies.size() >= 2 && importedPrefab->importSettings.count("source") == 1);
+    std::string importedThumbnailError;
+    CHECK(importedPrefab &&
+          AssetMaintenance::GenerateThumbnail(*importedPrefab, "Saved/ImportedPrefabThumbnail.ppm", 96, &importedThumbnailError));
+    CHECK(std::filesystem::file_size("Saved/ImportedPrefabThumbnail.ppm") > 1024);
     AssetImportQueue importQueue;
     importQueue.Initialize(nullptr);
     const auto queuedImport = importQueue.Submit("Saved/ImportTriangle.obj", "Saved/QueuedImport", importOptions);

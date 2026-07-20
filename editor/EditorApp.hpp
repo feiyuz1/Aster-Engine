@@ -13,6 +13,7 @@
 #include <filesystem>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 #include <vector>
 
 namespace MiniEngine
@@ -57,6 +58,10 @@ class EditorApp
     bool OpenSceneDocument(const std::filesystem::path &path);
     void NewSceneDocument();
     bool SwitchSceneDocument(std::size_t index);
+    bool PlaceAssetInScene(const AssetInfo &asset);
+    std::filesystem::path GetThumbnailPath(const AssetInfo &asset) const;
+    bool IsThumbnailReady(const AssetInfo &asset, const std::filesystem::path &path) const;
+    void RequestThumbnail(const AssetInfo &asset, bool force = false);
     Entity PickEntity(float normalizedX, float normalizedY) const;
     bool DrawGizmo(float minimumX, float minimumY, float width, float height);
 
@@ -81,6 +86,11 @@ class EditorApp
     {
         English,
         SimplifiedChinese
+    };
+    enum class AssetViewMode
+    {
+        List,
+        Grid
     };
 
     Engine m_engine;
@@ -110,12 +120,17 @@ class EditorApp
     bool m_marqueeActive = false;
     Vec2 m_marqueeStart{};
     std::string m_selectedAsset;
+    std::vector<std::string> m_selectedAssets;
+    AssetViewMode m_assetViewMode = AssetViewMode::Grid;
+    float m_assetThumbnailSize = 96.0f;
+    std::array<char, 256> m_assetSearch{};
+    std::string m_assetTypeFilter;
+    std::filesystem::path m_assetFolder;
+    std::unordered_map<std::string, JobHandle> m_thumbnailJobs;
     std::string m_openShaderAsset;
     std::vector<char> m_shaderSource;
     std::string m_openMaterialGraphAsset;
     MaterialGraph m_materialGraph;
-    std::string m_thumbnailAsset;
-    std::filesystem::path m_thumbnailPath;
     std::string m_openAnimationAsset;
     SkeletalClip m_editSkeletalClip;
     BlendTree1D m_editBlendTree;
@@ -139,6 +154,16 @@ class EditorApp
 #ifdef TINYENGINE_HAS_ASSIMP
     AssetImportQueue m_importQueue;
     std::uint64_t m_activeImportTask = 0;
+    std::array<char, 1024> m_importSourcePath{};
+    std::filesystem::path m_importSource;
+    std::filesystem::path m_lastImportDirectory;
+    std::string m_importValidationError;
+    float m_importScale = 1.0f;
+    bool m_importFlipUvs = false;
+    bool m_importCompressAnimations = true;
+    float m_importPositionTolerance = 0.001f;
+    float m_importRotationTolerance = 0.1f;
+    float m_importScaleTolerance = 0.001f;
 #endif
 };
 } // namespace MiniEngine

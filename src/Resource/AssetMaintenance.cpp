@@ -1,6 +1,9 @@
 #include "MiniEngine/Resource/AssetMaintenance.hpp"
 
+#include "MiniEngine/ECS/Components.hpp"
+#include "MiniEngine/ECS/ECS.hpp"
 #include "MiniEngine/Platform/Platform.hpp"
+#include "MiniEngine/Project/Project.hpp"
 #include "MiniEngine/Resource/Resource.hpp"
 
 #include <algorithm>
@@ -14,7 +17,7 @@ namespace MiniEngine
 {
 namespace
 {
-std::string Normalize(const std::filesystem::path &path)
+std::string NormalizePath(const std::filesystem::path &path)
 {
     return path.lexically_normal().generic_string();
 }
@@ -43,7 +46,7 @@ bool SavePpm(const std::filesystem::path &path, const int size, const std::vecto
 }
 
 void PutPixel(std::vector<std::uint8_t> &pixels, const int size, const int x, const int y, const float depth,
-              std::vector<float> &depthBuffer, const Vec3 &normal)
+              std::vector<float> &depthBuffer, const Vec3 &normal, const Vec4 &color = {0.28f, 0.59f, 0.9f, 1.0f})
 {
     if (x < 0 || y < 0 || x >= size || y >= size)
         return;
@@ -52,10 +55,69 @@ void PutPixel(std::vector<std::uint8_t> &pixels, const int size, const int x, co
         return;
     depthBuffer[index] = depth;
     const float light = std::clamp(0.25f + 0.75f * std::abs(Dot(Normalize(normal), Normalize(Vec3{-0.4f, 0.8f, 0.5f}))), 0.0f, 1.0f);
-    pixels[index * 4] = static_cast<std::uint8_t>(70.0f * light);
-    pixels[index * 4 + 1] = static_cast<std::uint8_t>(150.0f * light);
-    pixels[index * 4 + 2] = static_cast<std::uint8_t>(230.0f * light);
+    pixels[index * 4] = static_cast<std::uint8_t>(std::clamp(color.x * light, 0.0f, 1.0f) * 255.0f);
+    pixels[index * 4 + 1] = static_cast<std::uint8_t>(std::clamp(color.y * light, 0.0f, 1.0f) * 255.0f);
+    pixels[index * 4 + 2] = static_cast<std::uint8_t>(std::clamp(color.z * light, 0.0f, 1.0f) * 255.0f);
     pixels[index * 4 + 3] = 255;
+}
+
+struct ThumbnailVertex
+{
+    Vec3 position;
+    Vec3 normal;
+    Vec4 color;
+};
+
+Vec3 TransformThumbnailPoint(const Mat4 &matrix, const Vec3 &point)
+{
+    return {matrix.At(0, 0) * point.x + matrix.At(0, 1) * point.y + matrix.At(0, 2) * point.z + matrix.At(0, 3),
+            matrix.At(1, 0) * point.x + matrix.At(1, 1) * point.y + matrix.At(1, 2) * point.z + matrix.At(1, 3),
+            matrix.At(2, 0) * point.x + matrix.At(2, 1) * point.y + matrix.At(2, 2) * point.z + matrix.At(2, 3)};
+}
+
+Vec3 TransformThumbnailNormal(const Mat4 &matrix, const Vec3 &normal)
+{
+    return Normalize({matrix.At(0, 0) * normal.x + matrix.At(0, 1) * normal.y + matrix.At(0, 2) * normal.z,
+                      matrix.At(1, 0) * normal.x + matrix.At(1, 1) * normal.y + matrix.At(1, 2) * normal.z,
+                      matrix.At(2, 0) * normal.x + matrix.At(2, 1) * normal.y + matrix.At(2, 2) * normal.z});
+}
+
+void AppendThumbnailMesh(const MeshResource &mesh, const Mat4 &transform, const Vec4 &color, std::vector<ThumbnailVertex> &vertices)
+{
+    vertices.reserve(vertices.size() + mesh.GetVertices().size());
+    for (const auto &vertex : mesh.GetVertices())
+        vertices.push_back(
+            {TransformThumbnailPoint(transform, vertex.position), TransformThumbnailNormal(transform, vertex.normal), color});
+}
+
+void RenderThumbnailVertices(const std::vector<ThumbnailVertex> &vertices, std::vector<std::uint8_t> &pixels, const int size)
+{
+    if (vertices.empty())
+        return;
+    const Vec3 right = Normalize(Vec3{0.82f, 0.0f, -0.57f});
+    const Vec3 up = Normalize(Vec3{-0.24f, 0.91f, -0.34f});
+    const Vec3 forward = Normalize(Cross(right, up));
+    float minimumX = std::numeric_limits<float>::max(), minimumY = minimumX;
+    float maximumX = std::numeric_limits<float>::lowest(), maximumY = maximumX;
+    for (const auto &vertex : vertices)
+    {
+        const float x = Dot(vertex.position, right), y = Dot(vertex.position, up);
+        minimumX = std::min(minimumX, x);
+        minimumY = std::min(minimumY, y);
+        maximumX = std::max(maximumX, x);
+        maximumY = std::max(maximumY, y);
+    }
+    const float scale = size * 0.82f / std::max({maximumX - minimumX, maximumY - minimumY, 0.001f});
+    const float centerX = (minimumX + maximumX) * 0.5f, centerY = (minimumY + maximumY) * 0.5f;
+    std::vector<float> depth(static_cast<std::size_t>(size) * size, std::numeric_limits<float>::max());
+    for (const auto &vertex : vertices)
+    {
+        const int x = static_cast<int>((Dot(vertex.position, right) - centerX) * scale + size * 0.5f);
+        const int y = static_cast<int>((centerY - Dot(vertex.position, up)) * scale + size * 0.5f);
+        PutPixel(pixels, size, x, y, Dot(vertex.position, forward), depth, vertex.normal, vertex.color);
+        PutPixel(pixels, size, x + 1, y, Dot(vertex.position, forward), depth, vertex.normal, vertex.color);
+        PutPixel(pixels, size, x, y + 1, Dot(vertex.position, forward), depth, vertex.normal, vertex.color);
+    }
 }
 } // namespace
 
@@ -98,8 +160,8 @@ bool AssetMaintenance::RepairDependency(AssetRegistry &registry, const std::stri
     }
     auto dependencies = info->dependencies;
     for (auto &dependency : dependencies)
-        if (Normalize(dependency) == Normalize(missingPath))
-            dependency = Normalize(replacement);
+        if (NormalizePath(dependency) == NormalizePath(missingPath))
+            dependency = NormalizePath(replacement);
     return registry.SetDependencies(owner, std::move(dependencies));
 }
 
@@ -124,7 +186,7 @@ bool AssetMaintenance::MoveAsset(AssetRegistry &registry, const std::filesystem:
     const std::filesystem::path oldMeta = source.string() + ".meta", newMeta = destination.string() + ".meta";
     if (std::filesystem::is_regular_file(oldMeta))
         std::filesystem::rename(oldMeta, newMeta, code);
-    const std::string oldPath = Normalize(source), newPath = Normalize(destination);
+    const std::string oldPath = NormalizePath(source), newPath = NormalizePath(destination);
     for (const auto &asset : registry.GetAssets())
     {
         if (asset.path == oldPath)
@@ -135,7 +197,7 @@ bool AssetMaintenance::MoveAsset(AssetRegistry &registry, const std::filesystem:
         auto dependencies = asset.dependencies;
         bool changed = false;
         for (auto &dependency : dependencies)
-            if (Normalize(dependency) == oldPath)
+            if (NormalizePath(dependency) == oldPath)
             {
                 dependency = newPath;
                 changed = true;
@@ -200,16 +262,31 @@ bool AssetMaintenance::GenerateThumbnail(const AssetInfo &asset, const std::file
         MeshResource mesh;
         if (mesh.Load(asset.path) && !mesh.GetVertices().empty())
         {
-            std::vector<float> depth(static_cast<std::size_t>(size) * size, std::numeric_limits<float>::max());
-            const Aabb bounds = mesh.GetBounds();
-            const Vec3 center = (bounds.minimum + bounds.maximum) * 0.5f;
-            const float scale = 0.8f * size / std::max({bounds.maximum.x - bounds.minimum.x, bounds.maximum.y - bounds.minimum.y, 0.001f});
-            for (const auto &vertex : mesh.GetVertices())
-            {
-                const int x = static_cast<int>((vertex.position.x - center.x) * scale + size * 0.5f);
-                const int y = static_cast<int>((center.y - vertex.position.y) * scale + size * 0.5f);
-                PutPixel(pixels, size, x, y, vertex.position.z, depth, vertex.normal);
-            }
+            std::vector<ThumbnailVertex> vertices;
+            AppendThumbnailMesh(mesh, Mat4::Identity(), {0.28f, 0.59f, 0.9f, 1.0f}, vertices);
+            RenderThumbnailVertices(vertices, pixels, size);
+        }
+    }
+    else if (asset.type == "Prefab")
+    {
+        World previewWorld;
+        const auto roots = Prefab::Instantiate(previewWorld, asset.path);
+        if (!roots.empty())
+        {
+            std::vector<ThumbnailVertex> vertices;
+            for (const Entity entity : previewWorld.GetEntityManager().GetAliveEntities())
+                if (const auto *meshComponent = previewWorld.GetComponent<MeshComponent>(entity))
+                {
+                    MeshResource mesh;
+                    if (!mesh.Load(meshComponent->meshPath))
+                        continue;
+                    Vec4 color{0.28f, 0.59f, 0.9f, 1.0f};
+                    MaterialResource material;
+                    if (!meshComponent->materialPath.empty() && material.Load(meshComponent->materialPath))
+                        color = material.GetBaseColor();
+                    AppendThumbnailMesh(mesh, previewWorld.GetWorldMatrix(entity), color, vertices);
+                }
+            RenderThumbnailVertices(vertices, pixels, size);
         }
     }
     if (!SavePpm(output, size, pixels))
