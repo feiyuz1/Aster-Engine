@@ -22,8 +22,19 @@ struct PakEntry
 class PakArchive
 {
   public:
+    /// @brief 打包 `Directory`。
+    /// @param inputDirectory 相关文件、资源或目录路径。
+    /// @param outputFile 相关文件、资源或目录路径。
+    /// @return 操作成功时返回 `true`，否则返回 `false`。
     static bool PackDirectory(const std::filesystem::path &inputDirectory, const std::filesystem::path &outputFile);
+    /// @brief 列出归档中包含的全部逻辑路径。
+    /// @param archive 目标归档路径或归档对象。
+    /// @return 返回查询或处理得到的结果集合。
     static std::vector<PakEntry> List(const std::filesystem::path &archive);
+    /// @brief 读取 `File`。
+    /// @param archive 目标归档路径或归档对象。
+    /// @param path 文件、资源或目录路径。
+    /// @return 返回查询或处理得到的结果集合。
     static std::optional<std::vector<std::uint8_t>> ReadFile(const std::filesystem::path &archive, const std::string &path);
 };
 } // namespace MiniEngine

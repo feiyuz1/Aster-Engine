@@ -63,8 +63,18 @@ struct ModelImportResult
 class AssimpImporter
 {
   public:
+    /// @brief 判断是否可以 `Import` 条件。
+    /// @param source 源数据、源资源或源位置。
+    /// @return 条件成立时返回 `true`，否则返回 `false`。
     static bool CanImport(const std::filesystem::path &source);
+    /// @brief 获取 `SupportedExtensions`。
+    /// @return 返回查询或处理得到的结果集合。
     static std::vector<std::string> GetSupportedExtensions();
+    /// @brief 导入 `Model`。
+    /// @param source 源数据、源资源或源位置。
+    /// @param outputDirectory 生成文件的输出目录。
+    /// @param options 控制本次操作的选项。
+    /// @return 返回接口计算或查询得到的结果。
     static ModelImportResult ImportModel(const std::filesystem::path &source, const std::filesystem::path &outputDirectory,
                                          const ModelImportOptions &options = {});
 };
@@ -91,10 +101,24 @@ struct AssetImportSnapshot
 class AssetImportQueue
 {
   public:
+    /// @brief 初始化对象及其依赖资源。
+    /// @param jobs 接口所需的输入参数。
     void Initialize(JobSystem *jobs);
+    /// @brief 提交任务并返回跟踪信息。
+    /// @param source 源数据、源资源或源位置。
+    /// @param outputDirectory 生成文件的输出目录。
+    /// @param options 控制本次操作的选项。
+    /// @return 返回计算得到的数值、数量或索引。
     std::uint64_t Submit(std::filesystem::path source, std::filesystem::path outputDirectory, ModelImportOptions options = {});
+    /// @brief 判断是否可以 `cel` 条件。
+    /// @param id 目标对象、消息或任务标识符。
+    /// @return 条件成立时返回 `true`，否则返回 `false`。
     bool Cancel(std::uint64_t id);
+    /// @brief 获取目标对象或值。
+    /// @param id 目标对象、消息或任务标识符。
+    /// @return 返回查询或处理得到的结果集合。
     AssetImportSnapshot Get(std::uint64_t id) const;
+    /// @brief 清空 `Finished`。
     void ClearFinished();
 
   private:

@@ -42,13 +42,31 @@ struct ClusteredLightGrid
     std::vector<std::uint32_t> counts;
     std::vector<std::uint32_t> lightIndices;
 
+    /// @brief 获取 `ClusterCount`。
+    /// @return 返回计算得到的数值、数量或索引。
     std::size_t GetClusterCount() const;
+    /// @brief 计算深度 `Slice`。
+    /// @param viewDepth 接口所需的输入参数。
+    /// @return 返回计算得到的数值、数量或索引。
     std::uint32_t DepthSlice(float viewDepth) const;
 };
 
 class ClusteredLightBuilder
 {
   public:
+    /// @brief 根据当前输入构建结果。
+    /// @param lights 接口所需的输入参数。
+    /// @param view 当前帧的相机与光照视图数据。
+    /// @param projection 相关文件、资源或目录路径。
+    /// @param viewportWidth 目标尺寸、数量、索引或限制值。
+    /// @param viewportHeight 目标尺寸、数量、索引或限制值。
+    /// @param nearPlane 相机近裁剪面距离。
+    /// @param farPlane 相机远裁剪面距离。
+    /// @param tilesX 接口所需的输入参数。
+    /// @param tilesY 接口所需的输入参数。
+    /// @param slicesZ 接口所需的输入参数。
+    /// @param maximumLightsPerCluster 目标尺寸、数量、索引或限制值。
+    /// @return 返回接口计算或查询得到的结果。
     static ClusteredLightGrid Build(const std::vector<RenderLight> &lights, const Mat4 &view, const Mat4 &projection,
                                     std::uint32_t viewportWidth, std::uint32_t viewportHeight, float nearPlane, float farPlane,
                                     std::uint32_t tilesX = 16, std::uint32_t tilesY = 9, std::uint32_t slicesZ = 24,

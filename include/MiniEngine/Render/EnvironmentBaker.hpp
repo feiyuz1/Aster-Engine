@@ -23,6 +23,11 @@ struct EnvironmentBakeResult
 class EnvironmentBaker
 {
   public:
+    /// @brief 烘焙环境贴图、辐照度、预过滤贴图和 BRDF LUT。
+    /// @param source 源数据、源资源或源位置。
+    /// @param outputDirectory 生成文件的输出目录。
+    /// @param sampleCount 目标尺寸、数量、索引或限制值。
+    /// @return 返回接口计算或查询得到的结果。
     static EnvironmentBakeResult Bake(const std::filesystem::path &source, const std::filesystem::path &outputDirectory,
                                       int sampleCount = 64);
 };

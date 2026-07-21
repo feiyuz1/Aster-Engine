@@ -31,19 +31,41 @@ enum class ResourceState
 class Resource
 {
   public:
+    /// @brief 析构 `Resource` 对象并释放其持有资源。
     virtual ~Resource() = default;
+    /// @brief 加载数据或资源。
+    /// @param path 文件、资源或目录路径。
+    /// @return 操作成功时返回 `true`，否则返回 `false`。
     virtual bool Load(const std::string &path) = 0;
+    /// @brief 卸载资源并释放相关缓存。
     virtual void Unload() = 0;
+    /// @brief 获取 `ByteSize`。
+    /// @return 返回计算得到的数值、数量或索引。
     virtual std::size_t GetByteSize() const = 0;
 
+    /// @brief 获取 `Path`。
+    /// @return 返回对应对象的引用；有效期不超过其所属对象。
     const std::string &GetPath() const;
+    /// @brief 获取 `State`。
+    /// @return 返回接口计算或查询得到的结果。
     ResourceState GetState() const;
+    /// @brief 获取 `Error`。
+    /// @return 返回对应的文本或路径。
     std::string GetError() const;
+    /// @brief 判断是否满足 `Ready` 条件。
+    /// @return 条件成立时返回 `true`，否则返回 `false`。
     bool IsReady() const;
+    /// @brief 等待操作完成，并在失败时传播错误。
+    /// @return 操作成功时返回 `true`，否则返回 `false`。
     bool Wait() const;
+    /// @brief 标记 `Loading`。
+    /// @param path 文件、资源或目录路径。
     void MarkLoading(const std::string &path = {});
 
   protected:
+    /// @brief 设置 `State`。
+    /// @param state 目标状态、模式或类型。
+    /// @param error 可选的错误信息输出；可为空。
     void SetState(ResourceState state, std::string error = {});
     std::string m_path;
 
@@ -76,16 +98,38 @@ class TextureResource final : public Resource
         std::size_t offset = 0;
         std::size_t size = 0;
     };
+    /// @brief 加载数据或资源。
+    /// @param path 文件、资源或目录路径。
+    /// @return 操作成功时返回 `true`，否则返回 `false`。
     bool Load(const std::string &path) override;
+    /// @brief 卸载资源并释放相关缓存。
     void Unload() override;
+    /// @brief 获取 `ByteSize`。
+    /// @return 返回计算得到的数值、数量或索引。
     std::size_t GetByteSize() const override;
+    /// @brief 获取 `Data`。
+    /// @return 返回对应对象的引用；有效期不超过其所属对象。
     const std::vector<std::uint8_t> &GetData() const;
+    /// @brief 获取 `FloatData`。
+    /// @return 返回对应对象的引用；有效期不超过其所属对象。
     const std::vector<float> &GetFloatData() const;
+    /// @brief 判断是否满足 `Hdr` 条件。
+    /// @return 条件成立时返回 `true`，否则返回 `false`。
     bool IsHdr() const;
+    /// @brief 获取 `Width`。
+    /// @return 返回计算得到的数值、数量或索引。
     int GetWidth() const;
+    /// @brief 获取 `Height`。
+    /// @return 返回计算得到的数值、数量或索引。
     int GetHeight() const;
+    /// @brief 获取 `Compression`。
+    /// @return 返回接口计算或查询得到的结果。
     Compression GetCompression() const;
+    /// @brief 获取 `MipLevels`。
+    /// @return 返回对应对象的引用；有效期不超过其所属对象。
     const std::vector<MipLevel> &GetMipLevels() const;
+    /// @brief 判断是否满足 `SrgbEncoded` 条件。
+    /// @return 条件成立时返回 `true`，否则返回 `false`。
     bool IsSrgbEncoded() const;
 
   private:
@@ -112,11 +156,23 @@ struct MeshVertex
 class MeshResource final : public Resource
 {
   public:
+    /// @brief 加载数据或资源。
+    /// @param path 文件、资源或目录路径。
+    /// @return 操作成功时返回 `true`，否则返回 `false`。
     bool Load(const std::string &path) override;
+    /// @brief 卸载资源并释放相关缓存。
     void Unload() override;
+    /// @brief 获取 `ByteSize`。
+    /// @return 返回计算得到的数值、数量或索引。
     std::size_t GetByteSize() const override;
+    /// @brief 获取 `Vertices`。
+    /// @return 返回对应对象的引用；有效期不超过其所属对象。
     const std::vector<MeshVertex> &GetVertices() const;
+    /// @brief 获取 `Indices`。
+    /// @return 返回对应对象的引用；有效期不超过其所属对象。
     const std::vector<std::uint32_t> &GetIndices() const;
+    /// @brief 获取 `Bounds`。
+    /// @return 返回对应对象的引用；有效期不超过其所属对象。
     const Aabb &GetBounds() const;
 
   private:
@@ -128,9 +184,17 @@ class MeshResource final : public Resource
 class ShaderResource final : public Resource
 {
   public:
+    /// @brief 加载数据或资源。
+    /// @param path 文件、资源或目录路径。
+    /// @return 操作成功时返回 `true`，否则返回 `false`。
     bool Load(const std::string &path) override;
+    /// @brief 卸载资源并释放相关缓存。
     void Unload() override;
+    /// @brief 获取 `ByteSize`。
+    /// @return 返回计算得到的数值、数量或索引。
     std::size_t GetByteSize() const override;
+    /// @brief 获取 `Source`。
+    /// @return 返回对应对象的引用；有效期不超过其所属对象。
     const std::string &GetSource() const;
 
   private:
@@ -141,25 +205,66 @@ class ShaderResource final : public Resource
 class MaterialResource final : public Resource
 {
   public:
+    /// @brief 加载数据或资源。
+    /// @param path 文件、资源或目录路径。
+    /// @return 操作成功时返回 `true`，否则返回 `false`。
     bool Load(const std::string &path) override;
+    /// @brief 卸载资源并释放相关缓存。
     void Unload() override;
+    /// @brief 获取 `ByteSize`。
+    /// @return 返回计算得到的数值、数量或索引。
     std::size_t GetByteSize() const override;
+    /// @brief 获取 `BaseColor`。
+    /// @return 返回接口计算或查询得到的结果。
     Vec4 GetBaseColor() const;
+    /// @brief 获取 `ShaderPath`。
+    /// @return 返回对应对象的引用；有效期不超过其所属对象。
     const std::string &GetShaderPath() const;
+    /// @brief 获取 `TexturePath`。
+    /// @return 返回对应对象的引用；有效期不超过其所属对象。
     const std::string &GetTexturePath() const;
+    /// @brief 获取 `NormalTexturePath`。
+    /// @return 返回对应对象的引用；有效期不超过其所属对象。
     const std::string &GetNormalTexturePath() const;
+    /// @brief 获取 `MetallicTexturePath`。
+    /// @return 返回对应对象的引用；有效期不超过其所属对象。
     const std::string &GetMetallicTexturePath() const;
+    /// @brief 获取 `RoughnessTexturePath`。
+    /// @return 返回对应对象的引用；有效期不超过其所属对象。
     const std::string &GetRoughnessTexturePath() const;
+    /// @brief 获取 `AoTexturePath`。
+    /// @return 返回对应对象的引用；有效期不超过其所属对象。
     const std::string &GetAoTexturePath() const;
+    /// @brief 获取 `EmissiveTexturePath`。
+    /// @return 返回对应对象的引用；有效期不超过其所属对象。
     const std::string &GetEmissiveTexturePath() const;
+    /// @brief 获取 `Metallic`。
+    /// @return 返回计算得到的数值、数量或索引。
     float GetMetallic() const;
+    /// @brief 获取 `Roughness`。
+    /// @return 返回计算得到的数值、数量或索引。
     float GetRoughness() const;
+    /// @brief 获取 `Emissive`。
+    /// @return 返回接口计算或查询得到的结果。
     Vec3 GetEmissive() const;
+    /// @brief 判断是否满足 `Transparent` 条件。
+    /// @return 条件成立时返回 `true`，否则返回 `false`。
     bool IsTransparent() const;
+    /// @brief 获取 `ParentPath`。
+    /// @return 返回对应对象的引用；有效期不超过其所属对象。
     const std::string &GetParentPath() const;
+    /// @brief 判断是否满足 `Overridden` 条件。
+    /// @param property 用于查找或标识对象的名称。
+    /// @return 条件成立时返回 `true`，否则返回 `false`。
     bool IsOverridden(const std::string &property) const;
+    /// @brief 获取 `Parameters`。
+    /// @return 返回对应对象的引用；有效期不超过其所属对象。
     const std::unordered_map<std::string, Vec4> &GetParameters() const;
+    /// @brief 获取 `PackedTexturePath`。
+    /// @return 返回对应对象的引用；有效期不超过其所属对象。
     const std::string &GetPackedTexturePath() const;
+    /// @brief 获取 `PackedTextureLayout`。
+    /// @return 返回对应对象的引用；有效期不超过其所属对象。
     const std::string &GetPackedTextureLayout() const;
 
   private:

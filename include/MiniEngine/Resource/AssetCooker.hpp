@@ -35,6 +35,12 @@ struct CookOptions
 class AssetCooker
 {
   public:
+    /// @brief 将源资产烘焙为目标平台格式。
+    /// @param assetDirectory 相关文件、资源或目录路径。
+    /// @param cookedDirectory 相关文件、资源或目录路径。
+    /// @param outputPak 接口所需的输入参数。
+    /// @param options 控制本次操作的选项。
+    /// @return 返回接口计算或查询得到的结果。
     static CookResult Cook(const std::filesystem::path &assetDirectory, const std::filesystem::path &cookedDirectory,
                            const std::filesystem::path &outputPak, const CookOptions &options = {});
 };

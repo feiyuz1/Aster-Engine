@@ -51,8 +51,21 @@ struct TextLayoutResult
 class TextLayout
 {
   public:
+    /// @brief 解码 `Utf8`。
+    /// @param text 要处理的 UTF-8 或普通文本。
+    /// @return 返回查询或处理得到的结果集合。
     static std::vector<std::uint32_t> DecodeUtf8(const std::string &text);
+    /// @brief 编码 `Utf8`。
+    /// @param codepoints Unicode 码点序列。
+    /// @return 返回对应的文本或路径。
     static std::string EncodeUtf8(const std::vector<std::uint32_t> &codepoints);
+    /// @brief 对 UTF-8 文本执行塑形、双向重排和自动换行。
+    /// @param text 要处理的 UTF-8 或普通文本。
+    /// @param maximumWidth 目标尺寸、数量、索引或限制值。
+    /// @param style 控制本次操作行为的配置。
+    /// @param direction 目标状态、模式或类型。
+    /// @param richText 要处理的输入或输出数据。
+    /// @return 返回接口计算或查询得到的结果。
     static TextLayoutResult Shape(const std::string &text, float maximumWidth, const TextStyle &style = {},
                                   TextDirection direction = TextDirection::Auto, bool richText = true);
 };

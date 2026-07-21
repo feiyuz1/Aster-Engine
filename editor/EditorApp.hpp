@@ -29,48 +29,122 @@ class SdlGlRenderDevice;
 class EditorApp
 {
   public:
+    /// @brief 初始化对象及其依赖资源。
+    /// @param projectFile TinyEngine 项目文件路径。
+    /// @return 操作成功时返回 `true`，否则返回 `false`。
     bool Initialize(const std::filesystem::path &projectFile);
+    /// @brief 运行主循环或任务流程。
+    /// @param maximumFrames 最大运行帧数；为零表示不限制。
     void Run(std::uint32_t maximumFrames = 0);
+    /// @brief 停止服务并释放对象持有的资源。
     void Shutdown();
 
   private:
+    /// @brief 提交或绘制当前对象。
     void Draw();
+    /// @brief 绘制 `MenuBar`。
     void DrawMenuBar();
+    /// @brief 绘制 `Settings`。
     void DrawSettings();
+    /// @brief 绘制 `Hierarchy`。
     void DrawHierarchy();
+    /// @brief 绘制 `Inspector`。
     void DrawInspector();
+    /// @brief 绘制 `SceneView`。
     void DrawSceneView();
+    /// @brief 绘制 `Assets`。
     void DrawAssets();
+    /// @brief 绘制 `Console`。
     void DrawConsole();
+    /// @brief 绘制 `AnimationEditor`。
     void DrawAnimationEditor();
+    /// @brief 绘制 `ShaderEditor`。
     void DrawShaderEditor();
+    /// @brief 绘制 `MaterialGraphEditor`。
     void DrawMaterialGraphEditor();
+    /// @brief 绘制 `EffectEditor`。
     void DrawEffectEditor();
+    /// @brief 绘制 `BehaviorTreeEditor`。
     void DrawBehaviorTreeEditor();
+    /// @brief 绘制 `SceneTabs`。
     void DrawSceneTabs();
+    /// @brief 记录 `Undo`。
     void RecordUndo();
+    /// @brief 撤销最近一次可撤销操作。
     void Undo();
+    /// @brief 重做最近一次被撤销的操作。
     void Redo();
+    /// @brief 保存 `CurrentScene`。
+    /// @return 操作成功时返回 `true`，否则返回 `false`。
     bool SaveCurrentScene();
+    /// @brief 将当前编辑状态自动保存到恢复文件。
+    /// @return 操作成功时返回 `true`，否则返回 `false`。
     bool Autosave();
+    /// @brief 恢复 `Autosave`。
+    /// @return 操作成功时返回 `true`，否则返回 `false`。
     bool RestoreAutosave();
+    /// @brief 获取 `AutosavePath`。
+    /// @return 返回对应的文本或路径。
     std::filesystem::path GetAutosavePath();
+    /// @brief 获取 `EditorSettingsPath`。
+    /// @return 返回对应的文本或路径。
     std::filesystem::path GetEditorSettingsPath();
+    /// @brief 加载 `EditorSettings`。
     void LoadEditorSettings();
+    /// @brief 保存 `EditorSettings`。
+    /// @return 操作成功时返回 `true`，否则返回 `false`。
     bool SaveEditorSettings();
+    /// @brief 更新 `WindowTitle`。
     void UpdateWindowTitle();
+    /// @brief 根据当前界面语言选择对应文本。
+    /// @param english 接口所需的输入参数。
+    /// @param simplifiedChinese 接口所需的输入参数。
+    /// @return 返回目标对象指针；对象不存在时返回 `nullptr`。
     const char *Localize(const char *english, const char *simplifiedChinese) const;
+    /// @brief 本地化 `Reflected`。
+    /// @param text 要处理的 UTF-8 或普通文本。
+    /// @return 返回对应的文本或路径。
     std::string LocalizeReflected(std::string_view text) const;
+    /// @brief 打开 `SceneDocument`。
+    /// @param path 文件、资源或目录路径。
+    /// @return 操作成功时返回 `true`，否则返回 `false`。
     bool OpenSceneDocument(const std::filesystem::path &path);
+    /// @brief 新建 `SceneDocument`。
     void NewSceneDocument();
+    /// @brief 切换 `SceneDocument`。
+    /// @param index 目标元素或骨骼索引。
+    /// @return 操作成功时返回 `true`，否则返回 `false`。
     bool SwitchSceneDocument(std::size_t index);
     // 资产放置是一个可撤销事务：根据资产类型创建或修改实体，并将场景标记为脏。
+    /// @brief 放置 `AssetInScene`。
+    /// @param asset 要加载、维护或放置的资产信息。
+    /// @return 操作成功时返回 `true`，否则返回 `false`。
     bool PlaceAssetInScene(const AssetInfo &asset);
+    /// @brief 获取 `ThumbnailPath`。
+    /// @param asset 要加载、维护或放置的资产信息。
+    /// @return 返回对应的文本或路径。
     std::filesystem::path GetThumbnailPath(const AssetInfo &asset) const;
+    /// @brief 判断是否满足 `ThumbnailReady` 条件。
+    /// @param asset 要加载、维护或放置的资产信息。
+    /// @param path 文件、资源或目录路径。
+    /// @return 条件成立时返回 `true`，否则返回 `false`。
     bool IsThumbnailReady(const AssetInfo &asset, const std::filesystem::path &path) const;
+    /// @brief 请求 `Thumbnail`。
+    /// @param asset 要加载、维护或放置的资产信息。
+    /// @param force 是否启用对应行为。
     void RequestThumbnail(const AssetInfo &asset, bool force = false);
     // 选择与 Gizmo 使用同一套编辑器相机参数，避免视图显示与射线计算不一致。
+    /// @brief 拾取 `Entity`。
+    /// @param normalizedX 接口所需的输入参数。
+    /// @param normalizedY 接口所需的输入参数。
+    /// @return 返回实体句柄；失败时返回 `InvalidEntity`。
     Entity PickEntity(float normalizedX, float normalizedY) const;
+    /// @brief 绘制 `Gizmo`。
+    /// @param minimumX 目标尺寸、数量、索引或限制值。
+    /// @param minimumY 目标尺寸、数量、索引或限制值。
+    /// @param width 目标宽度。
+    /// @param height 目标高度。
+    /// @return 操作成功时返回 `true`，否则返回 `false`。
     bool DrawGizmo(float minimumX, float minimumY, float width, float height);
 
     enum class GizmoMode

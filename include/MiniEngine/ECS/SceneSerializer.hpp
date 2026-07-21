@@ -14,9 +14,24 @@ class World;
 class SceneSerializer
 {
   public:
+    /// @brief 将对象序列化为持久化数据。
+    /// @param world 要读取或修改的 World。
+    /// @return 返回对应的文本或路径。
     static std::string Serialize(const World &world);
+    /// @brief 从持久化数据恢复对象。
+    /// @param world 要读取或修改的 World。
+    /// @param text 要处理的 UTF-8 或普通文本。
+    /// @return 操作成功时返回 `true`，否则返回 `false`。
     static bool Deserialize(World &world, const std::string &text);
+    /// @brief 保存当前数据。
+    /// @param world 要读取或修改的 World。
+    /// @param path 文件、资源或目录路径。
+    /// @return 操作成功时返回 `true`，否则返回 `false`。
     static bool Save(const World &world, const std::filesystem::path &path);
+    /// @brief 加载数据或资源。
+    /// @param world 要读取或修改的 World。
+    /// @param path 文件、资源或目录路径。
+    /// @return 操作成功时返回 `true`，否则返回 `false`。
     static bool Load(World &world, const std::filesystem::path &path);
 };
 } // namespace MiniEngine

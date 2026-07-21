@@ -53,11 +53,19 @@ struct ReflectedComponent
 class ReflectionRegistry
 {
   public:
+    /// @brief 获取目标对象或值。
+    /// @return 返回对应对象的引用；有效期不超过其所属对象。
     static const ReflectionRegistry &Get();
+    /// @brief 获取 `Components`。
+    /// @return 返回对应对象的引用；有效期不超过其所属对象。
     const std::vector<ReflectedComponent> &GetComponents() const;
+    /// @brief 查找 `Component`。
+    /// @param name 对象名称或注册键。
+    /// @return 返回目标对象指针；对象不存在时返回 `nullptr`。
     const ReflectedComponent *FindComponent(const std::string &name) const;
 
   private:
+    /// @brief 构造 `ReflectionRegistry` 对象。
     ReflectionRegistry();
     std::vector<ReflectedComponent> m_components;
 };

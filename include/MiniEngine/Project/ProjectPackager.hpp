@@ -36,6 +36,9 @@ struct PackageResult
 class ProjectPackager
 {
   public:
+    /// @brief 根据项目设置生成可分发的运行时目录。
+    /// @param options 控制本次操作的选项。
+    /// @return 返回接口计算或查询得到的结果。
     static PackageResult Package(const PackageOptions &options);
 };
 } // namespace MiniEngine

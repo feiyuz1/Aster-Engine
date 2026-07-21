@@ -82,18 +82,40 @@ struct GpuParticleEmitter
 class ParticleEmitter
 {
   public:
+    /// @brief 构造 `ParticleEmitter` 对象。
+    /// @param settings 控制系统或操作行为的设置。
     explicit ParticleEmitter(ParticleEmitterSettings settings = {});
+    /// @brief 设置 `Position`。
+    /// @param position 世界空间或局部空间位置。
     void SetPosition(const Vec3 &position);
+    /// @brief 设置 `Playing`。
+    /// @param playing 接口所需的输入参数。
     void SetPlaying(bool playing);
+    /// @brief 立即生成指定数量的粒子。
+    /// @param count 要处理或生成的元素数量。
     void Burst(std::size_t count);
+    /// @brief 更新对象当前状态。
+    /// @param deltaTime 本帧时间间隔，单位为秒。
     void Update(float deltaTime);
+    /// @brief 获取 `Particles`。
+    /// @return 返回对应对象的引用；有效期不超过其所属对象。
     const std::vector<Particle> &GetParticles() const;
+    /// @brief 获取 `Settings`。
+    /// @return 返回对应对象的引用；有效期不超过其所属对象。
     const ParticleEmitterSettings &GetSettings() const;
+    /// @brief 获取 `Position`。
+    /// @return 返回对应对象的引用；有效期不超过其所属对象。
     const Vec3 &GetPosition() const;
+    /// @brief 获取 `ElapsedTime`。
+    /// @return 返回计算得到的数值、数量或索引。
     float GetElapsedTime() const;
 
   private:
+    /// @brief 生成随机 `Signed`。
+    /// @return 返回计算得到的数值、数量或索引。
     float RandomSigned();
+    /// @brief 根据发射器设置生成一个粒子。
+    /// @param count 要处理或生成的元素数量。
     void Spawn(std::size_t count);
     ParticleEmitterSettings m_settings;
     std::vector<Particle> m_particles;
@@ -107,13 +129,31 @@ class ParticleEmitter
 class VfxSystem
 {
   public:
+    /// @brief 创建 `Emitter`。
+    /// @param settings 控制系统或操作行为的设置。
+    /// @return 返回计算得到的数值、数量或索引。
     std::uint64_t CreateEmitter(const ParticleEmitterSettings &settings = {});
+    /// @brief 查找 `Emitter`。
+    /// @param id 目标对象、消息或任务标识符。
+    /// @return 返回目标对象指针；对象不存在时返回 `nullptr`。
     ParticleEmitter *FindEmitter(std::uint64_t id);
+    /// @brief 销毁 `Emitter`。
+    /// @param id 目标对象、消息或任务标识符。
+    /// @return 操作成功时返回 `true`，否则返回 `false`。
     bool DestroyEmitter(std::uint64_t id);
+    /// @brief 更新对象当前状态。
+    /// @param deltaTime 本帧时间间隔，单位为秒。
     void Update(float deltaTime);
+    /// @brief 清空对象保存的状态和数据。
     void Clear();
+    /// @brief 构建 `ParticleList`。
+    /// @return 返回查询或处理得到的结果集合。
     std::vector<Particle> BuildParticleList() const;
+    /// @brief 构建 `Batches`。
+    /// @return 返回查询或处理得到的结果集合。
     std::vector<ParticleBatch> BuildBatches() const;
+    /// @brief 构建 `GpuEmitterList`。
+    /// @return 返回查询或处理得到的结果集合。
     std::vector<GpuParticleEmitter> BuildGpuEmitterList() const;
 
   private:
@@ -121,6 +161,14 @@ class VfxSystem
     std::uint64_t m_nextId = 1;
 };
 
+/// @brief 保存 `ParticleEffectAsset`。
+/// @param settings 控制系统或操作行为的设置。
+/// @param path 文件、资源或目录路径。
+/// @return 操作成功时返回 `true`，否则返回 `false`。
 bool SaveParticleEffectAsset(const ParticleEmitterSettings &settings, const std::filesystem::path &path);
+/// @brief 加载 `ParticleEffectAsset`。
+/// @param path 文件、资源或目录路径。
+/// @param settings 控制系统或操作行为的设置。
+/// @return 操作成功时返回 `true`，否则返回 `false`。
 bool LoadParticleEffectAsset(const std::filesystem::path &path, ParticleEmitterSettings &settings);
 } // namespace MiniEngine

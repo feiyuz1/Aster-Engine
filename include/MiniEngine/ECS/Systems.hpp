@@ -19,6 +19,9 @@ namespace MiniEngine
 class MovementSystem final : public System
 {
   public:
+    /// @brief 更新对象当前状态。
+    /// @param world 要读取或修改的 World。
+    /// @param deltaTime 本帧时间间隔，单位为秒。
     void Update(World &world, float deltaTime) override;
 };
 
@@ -26,7 +29,12 @@ class AnimationSystem final : public System
 {
   public:
     using EventCallback = std::function<void(Entity, const AnimationEvent &)>;
+    /// @brief 更新对象当前状态。
+    /// @param world 要读取或修改的 World。
+    /// @param deltaTime 本帧时间间隔，单位为秒。
     void Update(World &world, float deltaTime) override;
+    /// @brief 设置 `EventCallback`。
+    /// @param callback 满足条件时调用的回调函数。
     void SetEventCallback(EventCallback callback);
 
   private:
@@ -42,9 +50,21 @@ class AnimationSystem final : public System
         float duration = 0.0f;
         std::vector<Keyframe> keys;
     };
+    /// @brief 加载 `Clip`。
+    /// @param path 文件、资源或目录路径。
+    /// @return 返回目标对象指针；对象不存在时返回 `nullptr`。
     const Clip *LoadClip(const std::string &path);
+    /// @brief 加载 `SkeletalClip`。
+    /// @param path 文件、资源或目录路径。
+    /// @return 返回目标对象指针；对象不存在时返回 `nullptr`。
     const SkeletalClip *LoadSkeletalClip(const std::string &path);
+    /// @brief 加载 `BlendTree`。
+    /// @param path 文件、资源或目录路径。
+    /// @return 返回目标对象指针；对象不存在时返回 `nullptr`。
     const BlendTree1D *LoadBlendTree(const std::string &path);
+    /// @brief 加载 `Graph`。
+    /// @param path 文件、资源或目录路径。
+    /// @return 返回接口计算或查询得到的结果。
     std::shared_ptr<const AnimationGraph> LoadGraph(const std::string &path);
     std::unordered_map<std::string, Clip> m_clips;
     std::unordered_map<std::string, Skeleton> m_skeletons;

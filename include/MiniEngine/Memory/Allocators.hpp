@@ -15,19 +15,36 @@ namespace MiniEngine
 class IAllocator
 {
   public:
+    /// @brief 析构 `IAllocator` 对象并释放其持有资源。
     virtual ~IAllocator() = default;
+    /// @brief 按指定尺寸和对齐方式分配内存。
+    /// @param size 数据、内存或目标区域的尺寸。
+    /// @param alignment 内存对齐字节数，必须为有效的二次幂。
+    /// @return 返回目标对象指针；对象不存在时返回 `nullptr`。
     virtual void *Allocate(std::size_t size, std::size_t alignment = alignof(std::max_align_t)) = 0;
+    /// @brief 释放先前分配的内存。
+    /// @param ptr 要释放或操作的内存指针。
     virtual void Free(void *ptr) = 0;
+    /// @brief 将对象恢复为初始状态。
     virtual void Reset() = 0;
 };
 
 class LinearAllocator final : public IAllocator
 {
   public:
+    /// @brief 构造 `LinearAllocator` 对象。
+    /// @param sizeBytes 目标尺寸、数量、索引或限制值。
     explicit LinearAllocator(std::size_t sizeBytes);
 
+    /// @brief 按指定尺寸和对齐方式分配内存。
+    /// @param size 数据、内存或目标区域的尺寸。
+    /// @param alignment 内存对齐字节数，必须为有效的二次幂。
+    /// @return 返回目标对象指针；对象不存在时返回 `nullptr`。
     void *Allocate(std::size_t size, std::size_t alignment = alignof(std::max_align_t)) override;
+    /// @brief 释放先前分配的内存。
+    /// @param ptr 要释放或操作的内存指针。
     void Free(void *ptr) override;
+    /// @brief 将对象恢复为初始状态。
     void Reset() override;
 
   private:
@@ -40,10 +57,20 @@ class LinearAllocator final : public IAllocator
 class PoolAllocator final : public IAllocator
 {
   public:
+    /// @brief 构造 `PoolAllocator` 对象。
+    /// @param blockSize 目标尺寸、数量、索引或限制值。
+    /// @param blockCount 目标尺寸、数量、索引或限制值。
     PoolAllocator(std::size_t blockSize, std::size_t blockCount);
 
+    /// @brief 按指定尺寸和对齐方式分配内存。
+    /// @param size 数据、内存或目标区域的尺寸。
+    /// @param alignment 内存对齐字节数，必须为有效的二次幂。
+    /// @return 返回目标对象指针；对象不存在时返回 `nullptr`。
     void *Allocate(std::size_t size, std::size_t alignment = alignof(std::max_align_t)) override;
+    /// @brief 释放先前分配的内存。
+    /// @param ptr 要释放或操作的内存指针。
     void Free(void *ptr) override;
+    /// @brief 将对象恢复为初始状态。
     void Reset() override;
 
   private:
@@ -57,11 +84,18 @@ class PoolAllocator final : public IAllocator
 class MemoryManager
 {
   public:
+    /// @brief 初始化对象及其依赖资源。
     void Initialize();
+    /// @brief 停止服务并释放对象持有的资源。
     void Shutdown();
 
+    /// @brief 获取 `FrameAllocator`。
+    /// @return 返回目标对象指针；对象不存在时返回 `nullptr`。
     IAllocator *GetFrameAllocator();
+    /// @brief 获取 `SmallObjectAllocator`。
+    /// @return 返回目标对象指针；对象不存在时返回 `nullptr`。
     IAllocator *GetSmallObjectAllocator();
+    /// @brief 重置 `Frame`。
     void ResetFrame();
 
   private:

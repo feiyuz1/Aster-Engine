@@ -15,6 +15,7 @@ namespace MiniEngine
 {
 struct Event
 {
+    /// @brief 析构 `Event` 对象并释放其持有资源。
     virtual ~Event() = default;
 };
 
@@ -23,6 +24,8 @@ class EventBus
   public:
     template <typename TEvent> using Handler = std::function<void(const TEvent &)>;
 
+    /// @brief 执行 `Subscribe` 所表示的操作。
+    /// @param handler 收到事件或 RPC 时调用的处理器。
     template <typename TEvent> void Subscribe(Handler<TEvent> handler)
     {
         std::lock_guard<std::mutex> lock(m_mutex);
@@ -30,6 +33,8 @@ class EventBus
             [captured = std::move(handler)](const Event &event) { captured(static_cast<const TEvent &>(event)); });
     }
 
+    /// @brief 执行 `Publish` 所表示的操作。
+    /// @param event 接口所需的输入参数。
     template <typename TEvent> void Publish(const TEvent &event)
     {
         std::vector<BaseHandler> localHandlers;

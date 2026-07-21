@@ -23,10 +23,14 @@ struct RenderGraphResourceHandle
 {
     // 0 保留为无效句柄，外部只能通过 RenderGraph 创建或导入资源。
     std::uint32_t id = 0;
+    /// @brief 实现 `bool` 运算符语义。
     explicit operator bool() const
     {
         return id != 0;
     }
+    /// @brief 实现 `==` 运算符语义。
+    /// @param other 用于比较的另一个对象。
+    /// @return 操作成功时返回 `true`，否则返回 `false`。
     bool operator==(const RenderGraphResourceHandle &other) const
     {
         return id == other.id;
@@ -66,20 +70,51 @@ struct RenderGraphPassDesc
 class RenderGraph
 {
   public:
+    /// @brief 创建 `Resource`。
+    /// @param desc 控制本次操作行为的配置。
+    /// @return 返回接口计算或查询得到的结果。
     RenderGraphResourceHandle CreateResource(RenderGraphResourceDesc desc);
+    /// @brief 导入 `Resource`。
+    /// @param desc 控制本次操作行为的配置。
+    /// @return 返回接口计算或查询得到的结果。
     RenderGraphResourceHandle ImportResource(RenderGraphResourceDesc desc);
+    /// @brief 添加 `Pass`。
+    /// @param pass 要执行的渲染通道。
+    /// @return 返回计算得到的数值、数量或索引。
     std::size_t AddPass(RenderGraphPassDesc pass);
+    /// @brief 编译当前描述并生成可执行结果。
+    /// @param error 可选的错误信息输出；可为空。
+    /// @return 操作成功时返回 `true`，否则返回 `false`。
     bool Compile(std::string *error = nullptr);
+    /// @brief 执行已准备好的操作。
+    /// @param error 可选的错误信息输出；可为空。
+    /// @return 操作成功时返回 `true`，否则返回 `false`。
     bool Execute(std::string *error = nullptr) const;
+    /// @brief 将对象恢复为初始状态。
     void Reset();
 
+    /// @brief 获取 `ExecutionOrder`。
+    /// @return 返回对应对象的引用；有效期不超过其所属对象。
     const std::vector<std::size_t> &GetExecutionOrder() const;
+    /// @brief 获取 `Resource`。
+    /// @param handle 目标资源或对象句柄。
+    /// @return 返回目标对象指针；对象不存在时返回 `nullptr`。
     const RenderGraphResourceDesc *GetResource(RenderGraphResourceHandle handle) const;
+    /// @brief 获取 `Lifetime`。
+    /// @param handle 目标资源或对象句柄。
+    /// @return 返回目标对象指针；对象不存在时返回 `nullptr`。
     const RenderGraphResourceLifetime *GetLifetime(RenderGraphResourceHandle handle) const;
+    /// @brief 获取 `PassCount`。
+    /// @return 返回计算得到的数值、数量或索引。
     std::size_t GetPassCount() const;
+    /// @brief 获取 `PhysicalResourceCount`。
+    /// @return 返回计算得到的数值、数量或索引。
     std::size_t GetPhysicalResourceCount() const;
 
   private:
+    /// @brief 判断是否满足 `Valid` 条件。
+    /// @param handle 目标资源或对象句柄。
+    /// @return 条件成立时返回 `true`，否则返回 `false`。
     bool IsValid(RenderGraphResourceHandle handle) const;
 
     std::vector<RenderGraphResourceDesc> m_resources;

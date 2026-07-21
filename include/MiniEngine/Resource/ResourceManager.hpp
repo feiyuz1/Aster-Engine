@@ -22,8 +22,15 @@ namespace MiniEngine
 class IAssetLoader
 {
   public:
+    /// @brief 析构 `IAssetLoader` 对象并释放其持有资源。
     virtual ~IAssetLoader() = default;
+    /// @brief 判断是否可以 `Load` 条件。
+    /// @param extension 用于查找或标识对象的名称。
+    /// @return 条件成立时返回 `true`，否则返回 `false`。
     virtual bool CanLoad(const std::string &extension) const = 0;
+    /// @brief 加载数据或资源。
+    /// @param path 文件、资源或目录路径。
+    /// @return 返回接口计算或查询得到的结果。
     virtual std::shared_ptr<Resource> Load(const std::string &path) = 0;
 };
 
@@ -31,9 +38,16 @@ class IAssetLoader
 class ResourceManager
 {
   public:
+    /// @brief 初始化对象及其依赖资源。
+    /// @param jobSystem 接口所需的输入参数。
+    /// @param assetRoot 相关文件、资源或目录路径。
     void Initialize(JobSystem *jobSystem = nullptr, std::filesystem::path assetRoot = "assets");
+    /// @brief 停止服务并释放对象持有的资源。
     void Shutdown();
 
+    /// @brief 加载数据或资源。
+    /// @param path 文件、资源或目录路径。
+    /// @return 返回接口计算或查询得到的结果。
     template <typename T> std::shared_ptr<T> Load(const std::string &path)
     {
         const std::string key = NormalizePath(path);
@@ -68,6 +82,9 @@ class ResourceManager
         return resource;
     }
 
+    /// @brief 加载 `Async`。
+    /// @param path 文件、资源或目录路径。
+    /// @return 返回接口计算或查询得到的结果。
     template <typename T> std::shared_ptr<T> LoadAsync(const std::string &path)
     {
         const std::string key = NormalizePath(path);
@@ -97,17 +114,40 @@ class ResourceManager
         return resource;
     }
 
+    /// @brief 注册 `Loader`。
+    /// @param loader 接口所需的输入参数。
     void RegisterLoader(std::shared_ptr<IAssetLoader> loader);
+    /// @brief 回收不再被外部引用的缓存对象。
     void GarbageCollect();
+    /// @brief 卸载 `Unused`。
+    /// @param path 文件、资源或目录路径。
+    /// @return 操作成功时返回 `true`，否则返回 `false`。
     bool UnloadUnused(const std::string &path);
+    /// @brief 重新加载资源并更新缓存。
+    /// @param path 文件、资源或目录路径。
+    /// @return 操作成功时返回 `true`，否则返回 `false`。
     bool Reload(const std::string &path);
+    /// @brief 获取 `CachedResourceCount`。
+    /// @return 返回计算得到的数值、数量或索引。
     std::size_t GetCachedResourceCount() const;
+    /// @brief 获取 `CachedByteSize`。
+    /// @return 返回计算得到的数值、数量或索引。
     std::size_t GetCachedByteSize() const;
+    /// @brief 获取 `AssetRegistry`。
+    /// @return 返回对应对象的引用；有效期不超过其所属对象。
     AssetRegistry &GetAssetRegistry();
+    /// @brief 获取 `AssetRegistry`。
+    /// @return 返回对应对象的引用；有效期不超过其所属对象。
     const AssetRegistry &GetAssetRegistry() const;
 
   private:
+    /// @brief 规范化 `Path`。
+    /// @param path 文件、资源或目录路径。
+    /// @return 返回对应的文本或路径。
     static std::string NormalizePath(const std::string &path);
+    /// @brief 加载 `WithRegisteredLoaders`。
+    /// @param path 文件、资源或目录路径。
+    /// @return 返回接口计算或查询得到的结果。
     std::shared_ptr<Resource> LoadWithRegisteredLoaders(const std::string &path);
 
     std::unordered_map<std::string, std::shared_ptr<Resource>> m_cache;

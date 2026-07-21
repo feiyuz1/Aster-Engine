@@ -64,29 +64,72 @@ struct EngineContext
 class Engine : private WorldListener
 {
   public:
+    /// @brief 初始化对象及其依赖资源。
+    /// @param projectFile TinyEngine 项目文件路径。
+    /// @param startInPlayMode 目标状态、模式或类型。
+    /// @return 操作成功时返回 `true`，否则返回 `false`。
     bool Initialize(const std::filesystem::path &projectFile = {}, bool startInPlayMode = true);
+    /// @brief 运行主循环或任务流程。
+    /// @param maxFrames 目标尺寸、数量、索引或限制值。
     void Run(std::uint32_t maxFrames = 0);
+    /// @brief 停止服务并释放对象持有的资源。
     void Shutdown();
+    /// @brief 获取 `Context`。
+    /// @return 返回对应对象的引用；有效期不超过其所属对象。
     const EngineContext &GetContext() const;
+    /// @brief 设置 `Paused`。
+    /// @param paused 是否启用对应行为。
     void SetPaused(bool paused);
+    /// @brief 判断是否满足 `Paused` 条件。
+    /// @return 条件成立时返回 `true`，否则返回 `false`。
     bool IsPaused() const;
+    /// @brief 设置 `TimeScale`。
+    /// @param scale 缩放比例或缩放向量。
     void SetTimeScale(float scale);
+    /// @brief 加载 `Scene`。
+    /// @param path 文件、资源或目录路径。
+    /// @return 操作成功时返回 `true`，否则返回 `false`。
     bool LoadScene(const std::filesystem::path &path);
+    /// @brief 保存 `Scene`。
+    /// @param path 文件、资源或目录路径。
+    /// @return 操作成功时返回 `true`，否则返回 `false`。
     bool SaveScene(const std::filesystem::path &path = {});
+    /// @brief 进入 `PlayMode`。
+    /// @return 操作成功时返回 `true`，否则返回 `false`。
     bool EnterPlayMode();
+    /// @brief 退出 `PlayMode`。
+    /// @return 操作成功时返回 `true`，否则返回 `false`。
     bool ExitPlayMode();
+    /// @brief 判断是否满足 `Playing` 条件。
+    /// @return 条件成立时返回 `true`，否则返回 `false`。
     bool IsPlaying() const;
+    /// @brief 获取 `SceneManager`。
+    /// @return 返回对应对象的引用；有效期不超过其所属对象。
     SceneManager &GetSceneManager();
+    /// @brief 获取 `ProjectSettings`。
+    /// @return 返回对应对象的引用；有效期不超过其所属对象。
     ProjectSettings &GetProjectSettings();
+    /// @brief 设置 `GameInstance`。
+    /// @param gameInstance 接口所需的输入参数。
     void SetGameInstance(std::unique_ptr<GameInstance> gameInstance);
+    /// @brief 获取 `ModuleManager`。
+    /// @return 返回对应对象的引用；有效期不超过其所属对象。
     ModuleManager &GetModuleManager();
+    /// @brief 获取 `PluginManager`。
+    /// @return 返回对应对象的引用；有效期不超过其所属对象。
     PluginManager &GetPluginManager();
 
   private:
     // Tick 只处理一帧编排；帧率相关更新和固定步长更新在此处明确分流。
+    /// @brief 推进一次按帧更新。
+    /// @param deltaTime 本帧时间间隔，单位为秒。
     void Tick(float deltaTime);
+    /// @brief 设置 `upDemoScene`。
     void SetupDemoScene();
+    /// @brief 响应 `EntityDestroying`。
+    /// @param entity 目标实体句柄。
     void OnEntityDestroying(World &, Entity entity) override;
+    /// @brief 响应 `WorldCleared`。
     void OnWorldCleared(World &) override;
 
     Logger m_logger;

@@ -31,16 +31,27 @@ enum class JobPriority : std::uint8_t
 class Job
 {
   public:
+    /// @brief 构造 `Job` 对象。
+    /// @param task 作业系统执行的任务函数。
+    /// @param priority 任务或资源请求优先级。
     explicit Job(std::function<void()> task, JobPriority priority = JobPriority::Normal);
 
+    /// @brief 等待操作完成，并在失败时传播错误。
     void Wait() const;
+    /// @brief 判断是否满足 `Finished` 条件。
+    /// @return 条件成立时返回 `true`，否则返回 `false`。
     bool IsFinished() const;
+    /// @brief 获取 `Priority`。
+    /// @return 返回接口计算或查询得到的结果。
     JobPriority GetPriority() const;
 
   private:
     friend class JobSystem;
     friend class WorkerThread;
+    /// @brief 执行已准备好的操作。
     void Execute();
+    /// @brief 添加 `Continuation`。
+    /// @param continuation 满足条件时调用的回调函数。
     void AddContinuation(std::function<void()> continuation);
 
     std::function<void()> m_task;
@@ -62,12 +73,22 @@ using JobHandle = std::shared_ptr<Job>;
 class JobQueue
 {
   public:
+    /// @brief 把数据压入队列或缓冲区。
+    /// @param job 目标作业句柄。
     void Push(const JobHandle &job);
+    /// @brief 取出 `Blocking`。
+    /// @param runningFlag 由接口读取并可能修改的输入/输出参数。
+    /// @return 返回接口计算或查询得到的结果。
     JobHandle PopBlocking(std::atomic<bool> &runningFlag);
+    /// @brief 判断容器当前是否为空。
+    /// @return 条件成立时返回 `true`，否则返回 `false`。
     bool Empty() const;
+    /// @brief 唤醒全部等待线程。
     void NotifyAll();
 
   private:
+    /// @brief 判断是否包含 `JobsUnsafe` 条件。
+    /// @return 条件成立时返回 `true`，否则返回 `false`。
     bool HasJobsUnsafe() const;
     mutable std::mutex m_mutex;
     std::condition_variable m_cv;
@@ -78,13 +99,20 @@ class JobQueue
 class WorkerThread
 {
   public:
+    /// @brief 构造 `WorkerThread` 对象。
+    /// @param queue 接口所需的输入参数。
     explicit WorkerThread(JobQueue *queue);
+    /// @brief 析构 `WorkerThread` 对象并释放其持有资源。
     ~WorkerThread();
+    /// @brief 启动对应任务或服务。
     void Start();
+    /// @brief 停止对应任务或服务。
     void Stop();
+    /// @brief 等待工作线程结束。
     void Join();
 
   private:
+    /// @brief 执行 `RunLoop` 所表示的操作。
     void RunLoop();
     JobQueue *m_queue = nullptr;
     std::atomic<bool> m_running{false};
@@ -95,19 +123,42 @@ class WorkerThread
 class JobSystem
 {
   public:
+    /// @brief 初始化对象及其依赖资源。
+    /// @param workerCount 目标尺寸、数量、索引或限制值。
     void Initialize(std::uint32_t workerCount);
+    /// @brief 停止服务并释放对象持有的资源。
     void Shutdown();
 
+    /// @brief 创建 `Job`。
+    /// @param func 工作线程或遍历过程调用的函数。
+    /// @param priority 任务或资源请求优先级。
+    /// @return 返回接口计算或查询得到的结果。
     JobHandle CreateJob(std::function<void()> func, JobPriority priority = JobPriority::Normal);
+    /// @brief 添加 `Dependency`。
+    /// @param job 目标作业句柄。
+    /// @param dependency 接口所需的输入参数。
     void AddDependency(const JobHandle &job, const JobHandle &dependency);
+    /// @brief 提交任务并返回跟踪信息。
+    /// @param job 目标作业句柄。
     void Submit(const JobHandle &job);
+    /// @brief 等待操作完成，并在失败时传播错误。
+    /// @param job 目标作业句柄。
     void Wait(const JobHandle &job) const;
+    /// @brief 等待所有已提交工作完成。
     void WaitIdle() const;
+    /// @brief 分派待处理事件或任务。
+    /// @param count 要处理或生成的元素数量。
+    /// @param task 作业系统执行的任务函数。
     void Dispatch(std::size_t count, const std::function<void(std::size_t)> &task);
+    /// @brief 获取 `OutstandingJobCount`。
+    /// @return 返回计算得到的数值、数量或索引。
     std::size_t GetOutstandingJobCount() const;
 
   private:
+    /// @brief 加入队列 `WhenReady`。
+    /// @param job 目标作业句柄。
     void QueueWhenReady(const JobHandle &job);
+    /// @brief 响应 `JobCompleted`。
     void OnJobCompleted();
 
     JobQueue m_globalQueue;

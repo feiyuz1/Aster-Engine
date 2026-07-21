@@ -29,8 +29,18 @@ struct AssetCompileResult
 class PlatformAssetCompiler
 {
   public:
+    /// @brief 编译当前描述并生成可执行结果。
+    /// @param source 源数据、源资源或源位置。
+    /// @param destination 目标路径、对象或输出缓冲区。
+    /// @return 返回查询或处理得到的结果集合。
     static AssetCompileResult Compile(const std::filesystem::path &source, const std::filesystem::path &destination);
+    /// @brief 判断是否满足 `Texture` 条件。
+    /// @param path 文件、资源或目录路径。
+    /// @return 条件成立时返回 `true`，否则返回 `false`。
     static bool IsTexture(const std::filesystem::path &path);
+    /// @brief 判断是否满足 `Mesh` 条件。
+    /// @param path 文件、资源或目录路径。
+    /// @return 条件成立时返回 `true`，否则返回 `false`。
     static bool IsMesh(const std::filesystem::path &path);
 };
 } // namespace MiniEngine
