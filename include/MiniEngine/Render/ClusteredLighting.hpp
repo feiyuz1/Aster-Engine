@@ -1,3 +1,8 @@
+﻿// 文件：include/MiniEngine/Render/ClusteredLighting.hpp
+// 作用：把局部光源分配到视锥分簇，供 Forward+ 光照阶段查询。
+// 约定：GPU 对象只应在拥有图形上下文的线程创建、使用和销毁。
+// 类型：公开声明。
+
 #pragma once
 
 #include "MiniEngine/Math/Math.hpp"

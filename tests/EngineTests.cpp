@@ -1,3 +1,8 @@
+﻿// 文件：tests/EngineTests.cpp
+// 作用：覆盖引擎核心模块和跨系统集成行为的自动化测试。
+// 约定：测试必须可重复执行，不依赖执行顺序或开发机上的隐式状态。
+// 类型：实现文件。
+
 #include "MiniEngine/AI/BehaviorTree.hpp"
 #include "MiniEngine/Animation/SkeletalAnimation.hpp"
 #include "MiniEngine/Audio/AudioEngine.hpp"

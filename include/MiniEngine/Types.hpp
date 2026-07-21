@@ -1,3 +1,8 @@
+﻿// 文件：include/MiniEngine/Types.hpp
+// 作用：集中声明引擎通用整数别名、实体句柄和基础常量。
+// 约定：这里的别名会进入多数公开 ABI；调整位宽或句柄布局必须同步序列化与插件版本。
+// 类型：公开声明。
+
 #pragma once
 
 #include <cstdint>

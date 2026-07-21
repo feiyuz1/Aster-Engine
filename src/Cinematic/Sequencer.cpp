@@ -1,3 +1,8 @@
+﻿// 文件：src/Cinematic/Sequencer.cpp
+// 作用：提供镜头、属性轨道和关键帧驱动的轻量级过场序列。
+// 约定：序列只写入被轨道驱动的属性，停止时由调用者决定是否恢复。
+// 类型：实现文件。
+
 #include "MiniEngine/Cinematic/Sequencer.hpp"
 
 #include <algorithm>

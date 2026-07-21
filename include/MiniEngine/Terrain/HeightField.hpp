@@ -1,3 +1,8 @@
+﻿// 文件：include/MiniEngine/Terrain/HeightField.hpp
+// 作用：表示高度场地形数据，并提供采样、分块和碰撞构建。
+// 约定：大地形按块工作，查询接口不得假设全部块常驻。
+// 类型：公开声明。
+
 #pragma once
 
 #include "MiniEngine/Resource/Resource.hpp"

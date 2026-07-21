@@ -1,3 +1,8 @@
+﻿// 文件：include/MiniEngine/Localization/Localization.hpp
+// 作用：提供中英文界面文本表、语言切换和键值回退机制。
+// 约定：文本键是稳定标识；缺失翻译时回退而不是返回空字符串。
+// 类型：公开声明。
+
 #pragma once
 
 #include <cstdint>

@@ -1,3 +1,8 @@
+﻿// 文件：include/MiniEngine/World/WorldPartition.hpp
+// 作用：按空间单元管理大型世界内容的加载、卸载和可见状态。
+// 约定：分区加载改变实体集合，持有实体引用的系统必须响应卸载。
+// 类型：公开声明。
+
 #pragma once
 
 #include "MiniEngine/Math/Math.hpp"

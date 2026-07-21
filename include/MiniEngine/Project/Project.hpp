@@ -1,3 +1,8 @@
+﻿// 文件：include/MiniEngine/Project/Project.hpp
+// 作用：定义项目设置、场景切换、Prefab 实例化以及编辑/运行态快照。
+// 约定：编辑态和运行态场景相互隔离，运行结束后恢复进入前快照。
+// 类型：公开声明。
+
 #pragma once
 
 #include "MiniEngine/Core/Config.hpp"
@@ -11,6 +16,7 @@ namespace MiniEngine
 {
 class World;
 
+// 项目文件的稳定配置模型；路径按项目根目录解析，不依赖启动进程的当前目录。
 struct ProjectSettings
 {
     std::string name = "TinyGame";
@@ -28,6 +34,7 @@ struct ProjectSettings
     std::filesystem::path Resolve(const std::filesystem::path &path) const;
 };
 
+// 场景事务边界：加载先在临时数据中验证，成功后再替换活动 World。
 class SceneManager
 {
   public:
@@ -45,6 +52,7 @@ class SceneManager
     std::filesystem::path m_currentScene;
 };
 
+// 项目可替换的运行时入口，生命周期夹在 Engine 初始化完成与子系统关闭之间。
 class GameInstance
 {
   public:
@@ -63,6 +71,7 @@ class GameInstance
     }
 };
 
+// Prefab 实例化生成新的实体集合，资产中的实体编号仅用于重建内部引用，不能泄漏到 World。
 class Prefab
 {
   public:
@@ -70,6 +79,7 @@ class Prefab
     static std::vector<Entity> Instantiate(World &world, const std::filesystem::path &path, Entity parent = InvalidEntity);
 };
 
+// SaveGame 保存面向玩家进度的数据，不等价于编辑器场景序列化格式。
 class SaveGame
 {
   public:

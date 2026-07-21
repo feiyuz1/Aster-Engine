@@ -1,3 +1,8 @@
+﻿// 文件：src/Runtime/Engine.cpp
+// 作用：组装全部运行时子系统并驱动初始化、主循环、游戏态切换和关闭。
+// 约定：子系统初始化与关闭顺序严格相反，避免悬空服务指针。
+// 类型：实现文件。
+
 #include "MiniEngine/Runtime/Engine.hpp"
 
 #include "MiniEngine/ECS/Components.hpp"
@@ -11,6 +16,7 @@
 
 namespace MiniEngine
 {
+// 初始化按“基础服务 -> 资源与世界 -> 表现系统 -> 项目内容”的依赖方向进行；任一步失败都由 Shutdown 逆序收尾。
 bool Engine::Initialize(const std::filesystem::path &projectFile, const bool startInPlayMode)
 {
     if (m_initialized)
@@ -146,6 +152,7 @@ bool Engine::Initialize(const std::filesystem::path &projectFile, const bool sta
     return true;
 }
 
+// maxFrames 为测试提供确定的退出条件；传 0 时由窗口关闭或外部状态结束循环。
 void Engine::Run(const std::uint32_t maxFrames)
 {
     if (!m_initialized)
@@ -172,6 +179,7 @@ void Engine::Run(const std::uint32_t maxFrames)
     m_logger.Info("Engine loop end.");
 }
 
+// 先停止产生新工作的上层系统，再等待作业和资源，最后销毁平台/渲染后端。
 void Engine::Shutdown()
 {
     m_running = false;
@@ -239,6 +247,7 @@ bool Engine::SaveScene(const std::filesystem::path &path)
     return !m_playing && m_sceneManager.SaveScene(path);
 }
 
+// Play 前保存完整编辑态快照，使运行时产生、删除和修改的实体都能一次性回滚。
 bool Engine::EnterPlayMode()
 {
     if (!m_initialized || m_playing)
@@ -295,6 +304,7 @@ PluginManager &Engine::GetPluginManager()
     return m_pluginManager;
 }
 
+// 可变步长驱动表现层，物理通过累加器以固定步长追帧，避免不同刷新率得到不同结果。
 void Engine::Tick(const float rawDeltaTime)
 {
     const float deltaTime = m_paused ? 0.0f : rawDeltaTime * m_timeScale;

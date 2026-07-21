@@ -1,3 +1,8 @@
+﻿// 文件：src/Task/JobSystem.cpp
+// 作用：实现带优先级与依赖关系的工作线程池和作业同步。
+// 约定：作业函数可在任意工作线程执行，不得依赖主线程局部状态。
+// 类型：实现文件。
+
 #include "MiniEngine/Task/JobSystem.hpp"
 
 #include <algorithm>
@@ -10,6 +15,7 @@ Job::Job(std::function<void()> task, const JobPriority priority) : m_task(std::m
 {
 }
 
+// 任务异常保存在 Job 内，由 Wait 线程观察；无论成功失败都必须完成延续任务和唤醒。
 void Job::Execute()
 {
     std::vector<std::function<void()>> continuations;
@@ -167,6 +173,7 @@ void JobSystem::Initialize(std::uint32_t workerCount)
     }
 }
 
+// 禁止新提交后等待 outstanding 归零，再广播停止信号，确保队列中的任务不会被静默丢弃。
 void JobSystem::Shutdown()
 {
     if (!m_accepting.exchange(false))
@@ -185,6 +192,7 @@ JobHandle JobSystem::CreateJob(std::function<void()> func, const JobPriority pri
     return std::make_shared<Job>(std::move(func), priority);
 }
 
+// 延续回调只递减依赖计数；真正入队由 QueueWhenReady 统一处理，避免重复提交。
 void JobSystem::AddDependency(const JobHandle &job, const JobHandle &dependency)
 {
     if (!job || !dependency)

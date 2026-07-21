@@ -1,3 +1,8 @@
+﻿// 文件：src/Plugin/PluginManager.cpp
+// 作用：发现、校验和装卸动态插件，并维护稳定 ABI 的生命周期。
+// 约定：跨动态库边界仅使用版本化 C ABI，所有权由接口文档约定。
+// 类型：实现文件。
+
 #include "MiniEngine/Plugin/PluginManager.hpp"
 
 #include <algorithm>
@@ -70,6 +75,7 @@ bool PluginManager::RegisterStatic(const TinyPluginAPI *api)
     return Register(nullptr, api);
 }
 
+// 在调用插件代码前验证 ABI 版本、结构尺寸和必需函数；失败时立即归还动态库句柄。
 bool PluginManager::Register(void *library, const TinyPluginAPI *api)
 {
     if (!api || api->abi_version != TINY_PLUGIN_ABI_VERSION || api->struct_size < sizeof(TinyPluginAPI) || !api->name || !api->startup ||
@@ -101,6 +107,7 @@ void PluginManager::Tick(const double deltaSeconds)
             plugin.api->tick(std::max(0.0, deltaSeconds));
 }
 
+// 按加载逆序关闭插件，允许后加载插件在 Shutdown 中访问其依赖的早期插件。
 void PluginManager::UnloadAll()
 {
     for (auto plugin = m_plugins.rbegin(); plugin != m_plugins.rend(); ++plugin)

@@ -1,3 +1,8 @@
+﻿// 文件：src/Resource/AssetRegistry.cpp
+// 作用：扫描资产元数据，维护 GUID、类型、源文件和依赖索引。
+// 约定：资源对象可能异步完成，调用方必须检查状态或显式等待。
+// 类型：实现文件。
+
 #include "MiniEngine/Resource/AssetRegistry.hpp"
 #include "MiniEngine/Core/Config.hpp"
 
@@ -60,6 +65,7 @@ std::string AssetType(const std::string &extension)
 }
 } // namespace
 
+// 扫描时以 .meta 中的 GUID 为权威；移动资产只要携带 meta 文件就能保持引用稳定。
 void AssetRegistry::Scan(const std::filesystem::path &root, const bool createMetadata)
 {
     std::lock_guard<std::mutex> lock(m_mutex);

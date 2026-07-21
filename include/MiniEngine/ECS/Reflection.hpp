@@ -1,3 +1,8 @@
+﻿// 文件：include/MiniEngine/ECS/Reflection.hpp
+// 作用：登记组件字段元数据，供序列化器和 Inspector 共用。
+// 约定：实体句柄包含代际信息，禁止长期保存未校验的裸实体编号。
+// 类型：公开声明。
+
 #pragma once
 
 #include "MiniEngine/ECS/ECS.hpp"

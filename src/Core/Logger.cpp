@@ -1,3 +1,8 @@
+﻿// 文件：src/Core/Logger.cpp
+// 作用：提供线程安全的分级日志、输出目标和最近日志缓存。
+// 约定：核心层不依赖上层业务，修改公开契约时需检查所有模块。
+// 类型：实现文件。
+
 #include "MiniEngine/Core/Logger.hpp"
 
 #include <chrono>

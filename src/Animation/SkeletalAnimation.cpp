@@ -1,3 +1,8 @@
+﻿// 文件：src/Animation/SkeletalAnimation.cpp
+// 作用：定义骨架、动画片段、压缩曲线、混合树、动画图和运行时姿势采样。
+// 约定：骨骼索引必须与逆绑定矩阵及 GPU 调色板保持一致。
+// 类型：实现文件。
+
 #include "MiniEngine/Animation/SkeletalAnimation.hpp"
 #include "MiniEngine/Platform/Platform.hpp"
 
@@ -36,6 +41,7 @@ float CurveError(const Vec3 &actual, const Vec3 &expected, const bool angular)
     return std::max({difference(actual.x, expected.x), difference(actual.y, expected.y), difference(actual.z, expected.z)});
 }
 
+// 递归保留线性插值误差最大的关键帧；终止时所有被删除点都满足给定误差上限。
 void ReduceCurveRange(const std::vector<Vec3CurveKey> &source, const std::size_t first, const std::size_t last, const float tolerance,
                       const bool angular, std::vector<bool> &kept)
 {
@@ -299,6 +305,7 @@ Vec3 SkeletalClip::SampleRootMotion(float time, const bool shouldLoop) const
     return SampleCurve(rootMotion, time);
 }
 
+// 循环跨越片段末尾时拆成两段累加，避免根位移在时间回绕处反向跳变。
 Vec3 SkeletalClip::ExtractRootMotion(const float previousTime, const float currentTime, const bool shouldLoop) const
 {
     if (rootMotion.empty() || duration <= 0.0f || previousTime == currentTime)
@@ -661,6 +668,7 @@ std::vector<BonePose> BlendTree2D::Sample(const Vec2 &value, const float time, c
     return result;
 }
 
+// 名称是资产间最稳定的弱标识；映射同时记录参考姿势差值，运行时无需修改源 Clip。
 bool SkeletonRetargeter::BuildNameMap(const Skeleton &source, const Skeleton &target)
 {
     if (!source.IsValid() || !target.IsValid())
@@ -713,6 +721,7 @@ std::vector<BonePose> BlendAnimationLayers(const std::vector<BonePose> &basePose
     return result;
 }
 
+// 二骨骼 IK 在目标超出可达范围时钳制长度，并用 poleVector 固定弯曲平面以避免翻转。
 bool SolveTwoBoneIk(const Skeleton &skeleton, std::vector<BonePose> &localPose, const int rootBone, const int middleBone, const int endBone,
                     const Vec3 &target, const Vec3 &pole, const float weight)
 {
@@ -854,6 +863,7 @@ bool LoadAnimationGraphAsset(const std::filesystem::path &path, AnimationGraph &
     return true;
 }
 
+// Player 持有不可变图定义并重置所有运行态，防止旧状态名或播放时间泄漏到新图。
 bool AnimationGraphPlayer::SetGraph(std::shared_ptr<const AnimationGraph> graph)
 {
     if (!graph || !graph->IsValid())

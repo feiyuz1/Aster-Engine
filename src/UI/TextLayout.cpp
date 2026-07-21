@@ -1,3 +1,8 @@
+﻿// 文件：src/UI/TextLayout.cpp
+// 作用：完成 Unicode 字形缓存、文本塑形、双向排版、换行与富文本布局。
+// 约定：布局和输入在 CPU 侧生成绘制命令，渲染后端不持有控件对象。
+// 类型：实现文件。
+
 #include "MiniEngine/UI/TextLayout.hpp"
 
 #include <algorithm>
@@ -45,6 +50,7 @@ bool ParseColor(const std::string &value, Vec4 &color)
 }
 } // namespace
 
+// 无效 UTF-8 序列替换为 U+FFFD 并至少前进一个字节，既保留后续文本也避免死循环。
 std::vector<std::uint32_t> TextLayout::DecodeUtf8(const std::string &text)
 {
     std::vector<std::uint32_t> result;
@@ -107,6 +113,7 @@ std::string TextLayout::EncodeUtf8(const std::vector<std::uint32_t> &codepoints)
     return result;
 }
 
+// 富文本样式只影响显式范围；形状与 BiDi 重排后再断行，保持 cluster 可追溯到逻辑文本。
 TextLayoutResult TextLayout::Shape(const std::string &source, const float maximumWidth, const TextStyle &baseStyle,
                                    const TextDirection requestedDirection, const bool richText)
 {

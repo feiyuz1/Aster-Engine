@@ -1,3 +1,8 @@
+﻿// 文件：include/MiniEngine/Render/ShaderPipeline.hpp
+// 作用：管理着色器源码、参数反射、编译诊断以及热重载流程。
+// 约定：GPU 对象只应在拥有图形上下文的线程创建、使用和销毁。
+// 类型：公开声明。
+
 #pragma once
 
 #include <array>

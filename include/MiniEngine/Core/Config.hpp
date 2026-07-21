@@ -1,3 +1,8 @@
+﻿// 文件：include/MiniEngine/Core/Config.hpp
+// 作用：读取、查询和保存引擎及项目的键值配置。
+// 约定：核心层不依赖上层业务，修改公开契约时需检查所有模块。
+// 类型：公开声明。
+
 #pragma once
 
 #include <string>

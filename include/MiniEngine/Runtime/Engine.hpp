@@ -1,3 +1,8 @@
+﻿// 文件：include/MiniEngine/Runtime/Engine.hpp
+// 作用：组装全部运行时子系统并驱动初始化、主循环、游戏态切换和关闭。
+// 约定：子系统初始化与关闭顺序严格相反，避免悬空服务指针。
+// 类型：公开声明。
+
 #pragma once
 
 #include "MiniEngine/Audio/AudioEngine.hpp"
@@ -28,6 +33,7 @@
 
 namespace MiniEngine
 {
+// 各子系统的非拥有型服务视图。Engine 负责这些对象的实际生命周期，外部代码不得缓存到 Engine::Shutdown 之后。
 struct EngineContext
 {
     Logger *logger = nullptr;
@@ -53,6 +59,8 @@ struct EngineContext
     PluginManager *pluginManager = nullptr;
 };
 
+// 引擎总控对象。它按照依赖顺序启动模块，以固定步长更新物理，并在每帧末提交渲染与诊断数据。
+// 一个 Engine 实例只对应一个活动 World；编辑器的 Play 操作通过场景快照隔离运行态修改。
 class Engine : private WorldListener
 {
   public:
@@ -75,6 +83,7 @@ class Engine : private WorldListener
     PluginManager &GetPluginManager();
 
   private:
+    // Tick 只处理一帧编排；帧率相关更新和固定步长更新在此处明确分流。
     void Tick(float deltaTime);
     void SetupDemoScene();
     void OnEntityDestroying(World &, Entity entity) override;

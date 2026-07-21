@@ -1,3 +1,8 @@
+﻿// 文件：src/Network/Replication.cpp
+// 作用：实现快照复制、可靠通道、RPC、所有权、预测与服务器纠错。
+// 约定：网络输入均视为不可信数据，解码前先验证长度和权限。
+// 类型：实现文件。
+
 #include "MiniEngine/Network/Replication.hpp"
 
 #include "MiniEngine/Platform/Platform.hpp"
@@ -61,6 +66,7 @@ std::vector<std::uint8_t> SnapshotCodec::Encode(const NetworkSnapshot &snapshot)
     return writer.GetData();
 }
 
+// 先解码到临时对象并完成全部边界检查，成功后再替换输出，避免半解析快照污染调用方状态。
 bool SnapshotCodec::Decode(const std::vector<std::uint8_t> &bytes, NetworkSnapshot &snapshot)
 {
     if (bytes.size() < 24 || !std::equal(bytes.begin(), bytes.begin() + 8, "TNYNET1\0"))
@@ -94,6 +100,7 @@ void SnapshotBuffer::Push(NetworkSnapshot snapshot)
         m_snapshots.erase(m_snapshots.begin(), m_snapshots.end() - 64);
 }
 
+// 在包围目标时间的两个快照间插值；实体只存在于一侧时采用临近权威状态而不凭空外推。
 bool SnapshotBuffer::Sample(const double timestamp, std::vector<ReplicatedEntityState> &states) const
 {
     if (m_snapshots.empty())
@@ -379,6 +386,7 @@ std::vector<std::vector<std::uint8_t>> ReliableChannel::BuildPackets(const doubl
     return result;
 }
 
+// ackBits 的第 n 位确认 ack-(n+1)，使用无符号环绕比较处理序列号溢出。
 void ReliableChannel::ApplyAcks(const std::uint32_t ack, const std::uint32_t ackBits)
 {
     m_pending.erase(std::remove_if(m_pending.begin(), m_pending.end(),
@@ -541,6 +549,7 @@ Vec3 ClientPrediction::ApplyInput(const PredictedInput &input)
     return m_position;
 }
 
+// 丢弃服务器已确认输入，从权威位置重放余下输入；误差过大时直接吸附以阻止长期发散。
 Vec3 ClientPrediction::Reconcile(const std::uint32_t acknowledgedInput, const Vec3 &authoritativePosition, const float snapDistance)
 {
     while (!m_inputs.empty() && m_inputs.front().sequence <= acknowledgedInput)

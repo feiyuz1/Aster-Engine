@@ -1,3 +1,8 @@
+﻿// 文件：tests/TestDynamicPlugin.cpp
+// 作用：构造测试动态插件，用于验证插件 ABI 与生命周期。
+// 约定：测试必须可重复执行，不依赖执行顺序或开发机上的隐式状态。
+// 类型：实现文件。
+
 #include "MiniEngine/Plugin/PluginAPI.h"
 
 #include <cstdint>

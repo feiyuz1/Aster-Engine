@@ -1,3 +1,8 @@
+﻿// 文件：include/MiniEngine/Render/Renderer.hpp
+// 作用：组织相机、可见性、光照、阴影、后处理和 UI 的逐帧渲染。
+// 约定：GPU 对象只应在拥有图形上下文的线程创建、使用和销毁。
+// 类型：公开声明。
+
 #pragma once
 
 #include "MiniEngine/Math/Math.hpp"
@@ -41,6 +46,7 @@ struct InputState
     float cursorX = 0.0f, cursorY = 0.0f;
 };
 
+// 一帧共享的视图常量。previousViewProjection 与 temporalJitter 共同支持运动矢量和 TAA。
 struct FrameView
 {
     static constexpr std::size_t MaxLights = 64;
@@ -65,6 +71,7 @@ struct FrameView
     std::shared_ptr<TextureResource> environmentBrdfLut;
 };
 
+// 从 ECS 抽取出的不可变绘制快照；渲染设备不直接读取 World，避免提交期间结构变化。
 struct RenderItem
 {
     Entity entity = InvalidEntity;
@@ -105,6 +112,7 @@ enum class PostProcessPass
     ToneMap
 };
 
+// 渲染后端边界。所有方法都由渲染/主线程调用，具体后端拥有 GPU 资源和图形上下文。
 class RenderDevice
 {
   public:
@@ -133,6 +141,7 @@ class RenderDevice
     virtual void TrimGpuResources() = 0;
 };
 
+// 无窗口、无 GPU 的后端，用于单元测试、服务器和命令行工具。
 class NullRenderDevice final : public RenderDevice
 {
   public:
@@ -164,6 +173,7 @@ class NullRenderDevice final : public RenderDevice
     std::size_t m_gpuBudget = 0;
 };
 
+// 保存一帧绘制项，并按不透明状态、材质和距离排序以兼顾批处理与透明混合正确性。
 class RenderQueue
 {
   public:
@@ -176,6 +186,7 @@ class RenderQueue
     std::vector<RenderItem> m_items;
 };
 
+// 高层渲染编排器：从 World 构建可见集合，再通过 RenderGraph 驱动阴影、场景和后处理。
 class Renderer
 {
   public:

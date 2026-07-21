@@ -1,3 +1,8 @@
+﻿// 文件：include/MiniEngine/Resource/AssetStreaming.hpp
+// 作用：根据依赖、距离和内存预算调度大型资产的分块流式加载。
+// 约定：资源对象可能异步完成，调用方必须检查状态或显式等待。
+// 类型：公开声明。
+
 #pragma once
 
 #include "MiniEngine/Resource/AssetRegistry.hpp"
@@ -50,6 +55,7 @@ template <typename T> class AssetHandle
     std::shared_ptr<T> m_resource;
 };
 
+// 从 Registry 构建只读依赖图，并能计算传递闭包及报告循环依赖。
 class AssetDependencyGraph
 {
   public:
@@ -66,6 +72,7 @@ class AssetDependencyGraph
     bool m_hasCycles = false;
 };
 
+// 基于请求优先级和预算推进流式状态机；Update 只提交有限工作，避免单帧加载尖峰。
 class AssetStreamingManager
 {
   public:

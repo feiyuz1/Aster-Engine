@@ -1,3 +1,8 @@
+﻿// 文件：include/MiniEngine/Plugin/PluginManager.hpp
+// 作用：发现、校验和装卸动态插件，并维护稳定 ABI 的生命周期。
+// 约定：跨动态库边界仅使用版本化 C ABI，所有权由接口文档约定。
+// 类型：公开声明。
+
 #pragma once
 
 #include "MiniEngine/Plugin/PluginAPI.h"

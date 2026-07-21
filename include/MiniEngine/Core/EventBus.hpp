@@ -1,3 +1,8 @@
+﻿// 文件：include/MiniEngine/Core/EventBus.hpp
+// 作用：提供按事件类型订阅和同步广播的轻量消息总线。
+// 约定：核心层不依赖上层业务，修改公开契约时需检查所有模块。
+// 类型：公开声明。
+
 #pragma once
 
 #include <functional>

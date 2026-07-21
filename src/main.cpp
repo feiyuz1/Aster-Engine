@@ -1,3 +1,8 @@
+﻿// 文件：src/main.cpp
+// 作用：启动最小演示程序，用于验证引擎运行时主循环。
+// 约定：命令行工具以非交互方式运行，失败时返回非零退出码并输出可定位的错误。
+// 类型：实现文件。
+
 #include "MiniEngine/Core/CrashReporter.hpp"
 #include "MiniEngine/Runtime/Engine.hpp"
 

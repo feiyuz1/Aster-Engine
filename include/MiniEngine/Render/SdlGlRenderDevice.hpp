@@ -1,3 +1,8 @@
+﻿// 文件：include/MiniEngine/Render/SdlGlRenderDevice.hpp
+// 作用：实现基于 SDL2 与 OpenGL 的渲染设备、窗口输入和 GPU 资源提交。
+// 约定：GPU 对象只应在拥有图形上下文的线程创建、使用和销毁。
+// 类型：公开声明。
+
 #pragma once
 
 #include "MiniEngine/Render/Renderer.hpp"

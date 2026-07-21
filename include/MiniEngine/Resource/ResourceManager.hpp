@@ -1,3 +1,8 @@
+﻿// 文件：include/MiniEngine/Resource/ResourceManager.hpp
+// 作用：统一资源缓存、同步/异步加载、加载器扩展和回收。
+// 约定：资源对象可能异步完成，调用方必须检查状态或显式等待。
+// 类型：公开声明。
+
 #pragma once
 
 #include "MiniEngine/Resource/AssetRegistry.hpp"
@@ -13,6 +18,7 @@
 
 namespace MiniEngine
 {
+// 自定义资产加载器扩展点；CanLoad 接收规范化的小写扩展名。
 class IAssetLoader
 {
   public:
@@ -21,6 +27,7 @@ class IAssetLoader
     virtual std::shared_ptr<Resource> Load(const std::string &path) = 0;
 };
 
+// 线程安全资源缓存。同一路径在并发加载时只创建一个 Resource 实例，调用方共享其状态机。
 class ResourceManager
 {
   public:
@@ -45,6 +52,7 @@ class ResourceManager
                 created = true;
             }
         }
+        // 已有线程负责加载时只等待状态变化，不能在当前线程重复执行 Load。
         if (!created && resource->GetState() == ResourceState::Loading)
             return resource->Wait() ? resource : nullptr;
         if (resource->IsReady())
@@ -78,6 +86,7 @@ class ResourceManager
             resource->MarkLoading(key);
             m_cache[key] = resource;
         }
+        // 无 JobSystem 的工具环境退化为同步加载，但仍保持相同的资源状态语义。
         if (!m_jobSystem)
         {
             resource->Load(key);

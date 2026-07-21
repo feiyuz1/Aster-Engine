@@ -1,3 +1,8 @@
+﻿// 文件：src/Project/ProjectPackager.cpp
+// 作用：把烘焙资源、运行时文件和项目配置组装成可分发目录。
+// 约定：编辑态和运行态场景相互隔离，运行结束后恢复进入前快照。
+// 类型：实现文件。
+
 #include "MiniEngine/Project/ProjectPackager.hpp"
 
 #include "MiniEngine/Core/Config.hpp"

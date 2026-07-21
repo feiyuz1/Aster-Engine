@@ -1,3 +1,8 @@
+﻿// 文件：src/ECS/SceneSerializer.cpp
+// 作用：在 World 与场景文本格式之间进行序列化和反序列化。
+// 约定：实体句柄包含代际信息，禁止长期保存未校验的裸实体编号。
+// 类型：实现文件。
+
 #include "MiniEngine/ECS/SceneSerializer.hpp"
 
 #include "MiniEngine/ECS/Components.hpp"

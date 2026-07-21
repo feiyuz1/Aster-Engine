@@ -1,3 +1,8 @@
+﻿// 文件：src/Resource/AssetStreaming.cpp
+// 作用：根据依赖、距离和内存预算调度大型资产的分块流式加载。
+// 约定：资源对象可能异步完成，调用方必须检查状态或显式等待。
+// 类型：实现文件。
+
 #include "MiniEngine/Resource/AssetStreaming.hpp"
 
 #include <algorithm>
@@ -42,6 +47,7 @@ std::vector<std::string> AssetDependencyGraph::GetDependencies(const std::string
     return found == m_dependencies.end() ? std::vector<std::string>{} : found->second;
 }
 
+// 闭包按依赖优先顺序返回，并用访问集合同时防止重复项与循环递归。
 std::vector<std::string> AssetDependencyGraph::ResolveClosure(const std::string &path, std::vector<std::string> *missing) const
 {
     std::unordered_set<std::string> visiting, visited;
@@ -120,6 +126,7 @@ void AssetStreamingManager::Touch(const std::string &path)
         found->second.lastTouched = ++m_tick;
 }
 
+// 超预算时按“未固定且最久未使用”顺序回收；仅移除管理器持有的引用，不强制破坏业务引用。
 void AssetStreamingManager::Update()
 {
     if (!m_resources)

@@ -1,3 +1,8 @@
+﻿// 文件：src/Script/ScriptEngine.cpp
+// 作用：提供脚本组件生命周期、宿主 API 和可替换脚本后端接口。
+// 约定：脚本异常被隔离到当前实例，不能越过帧边界破坏主循环。
+// 类型：实现文件。
+
 #include "MiniEngine/Script/ScriptEngine.hpp"
 
 #include "MiniEngine/Core/Logger.hpp"

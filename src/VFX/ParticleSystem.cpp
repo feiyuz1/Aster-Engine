@@ -1,3 +1,8 @@
+﻿// 文件：src/VFX/ParticleSystem.cpp
+// 作用：定义 CPU/GPU 粒子发射器、生命周期仿真和渲染数据。
+// 约定：粒子数量受预算约束，渲染数据每帧重建且不跨帧持有指针。
+// 类型：实现文件。
+
 #include "MiniEngine/VFX/ParticleSystem.hpp"
 #include "MiniEngine/Platform/Platform.hpp"
 

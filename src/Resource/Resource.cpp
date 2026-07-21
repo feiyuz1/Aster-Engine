@@ -1,3 +1,8 @@
+﻿// 文件：src/Resource/Resource.cpp
+// 作用：定义资源状态机以及纹理、网格、材质和着色器的运行时数据。
+// 约定：资源对象可能异步完成，调用方必须检查状态或显式等待。
+// 类型：实现文件。
+
 #include "MiniEngine/Resource/Resource.hpp"
 
 #include "MiniEngine/Platform/Platform.hpp"
@@ -313,6 +318,7 @@ std::string Resource::GetError() const
     return m_error;
 }
 
+// 条件变量谓词同时接受 Loaded 与 Failed，保证失败资源不会让等待线程永久阻塞。
 bool Resource::Wait() const
 {
     std::unique_lock<std::mutex> lock(m_stateMutex);
@@ -330,6 +336,7 @@ void Resource::MarkLoading(const std::string &path)
     SetState(ResourceState::Loading);
 }
 
+// 错误字符串和状态在同一临界区发布，再统一唤醒所有同步及异步调用方。
 void Resource::SetState(const ResourceState state, std::string error)
 {
     {

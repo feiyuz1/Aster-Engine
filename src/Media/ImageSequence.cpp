@@ -1,3 +1,8 @@
+﻿// 文件：src/Media/ImageSequence.cpp
+// 作用：读取图片序列并按时间输出帧，供媒体与过场系统使用。
+// 约定：媒体解码与显示时钟分离，丢帧优先于阻塞主循环。
+// 类型：实现文件。
+
 #include "MiniEngine/Media/ImageSequence.hpp"
 
 #include <algorithm>

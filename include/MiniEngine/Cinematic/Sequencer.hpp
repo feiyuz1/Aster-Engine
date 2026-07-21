@@ -1,3 +1,8 @@
+﻿// 文件：include/MiniEngine/Cinematic/Sequencer.hpp
+// 作用：提供镜头、属性轨道和关键帧驱动的轻量级过场序列。
+// 约定：序列只写入被轨道驱动的属性，停止时由调用者决定是否恢复。
+// 类型：公开声明。
+
 #pragma once
 
 #include "MiniEngine/Animation/SkeletalAnimation.hpp"

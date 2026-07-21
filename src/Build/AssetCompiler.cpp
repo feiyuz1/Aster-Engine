@@ -1,3 +1,8 @@
+﻿// 文件：src/Build/AssetCompiler.cpp
+// 作用：把源资产转换为目标平台可直接加载的运行时格式。
+// 约定：烘焙输出必须可重复，并且不能依赖编辑器进程内的临时状态。
+// 类型：实现文件。
+
 #include "MiniEngine/Build/AssetCompiler.hpp"
 
 #include "MiniEngine/Platform/Platform.hpp"
@@ -31,6 +36,7 @@ bool Copy(const std::filesystem::path &source, const std::filesystem::path &dest
 }
 } // namespace
 
+// 根据目标平台选择纹理压缩与资源布局；相同输入和平台配置必须生成字节一致的输出。
 AssetCompileResult PlatformAssetCompiler::Compile(const std::filesystem::path &source, const std::filesystem::path &destination)
 {
     AssetCompileResult result;

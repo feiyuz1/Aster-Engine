@@ -1,3 +1,8 @@
+﻿// 文件：src/Project/Project.cpp
+// 作用：定义项目设置、场景切换、Prefab 实例化以及编辑/运行态快照。
+// 约定：编辑态和运行态场景相互隔离，运行结束后恢复进入前快照。
+// 类型：实现文件。
+
 #include "MiniEngine/Project/Project.hpp"
 
 #include "MiniEngine/Core/Config.hpp"
@@ -65,6 +70,7 @@ void SceneManager::NewScene()
         m_world->Clear();
     m_currentScene.clear();
 }
+// 反序列化器只有在完整解析成功后才替换 World，加载失败保持当前场景可继续编辑。
 bool SceneManager::LoadScene(const std::filesystem::path &path)
 {
     if (!m_world || !SceneSerializer::Load(*m_world, path))
@@ -154,6 +160,7 @@ bool Prefab::Save(const World &world, const Entity root, const std::filesystem::
     return SceneSerializer::Save(prefabWorld, path);
 }
 
+// 先创建全部实体并建立旧到新编号映射，再恢复父子和组件引用，避免引用尚未创建的目标。
 std::vector<Entity> Prefab::Instantiate(World &world, const std::filesystem::path &path, const Entity parent)
 {
     World prefabWorld;

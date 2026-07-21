@@ -1,3 +1,8 @@
+﻿// 文件：include/MiniEngine/Navigation/Navigation.hpp
+// 作用：实现网格/多边形寻路、动态障碍、Crowd 与 EQS 查询。
+// 约定：导航查询可能跨帧执行，动态重建时应避免暴露半成品数据。
+// 类型：公开声明。
+
 #pragma once
 
 #include "MiniEngine/Math/Math.hpp"

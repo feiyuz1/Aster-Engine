@@ -1,3 +1,8 @@
+﻿// 文件：include/MiniEngine/Input/InputSystem.hpp
+// 作用：统一键鼠、手柄、输入映射、运行时重绑定和设备热插拔。
+// 约定：原始设备事件先归一化，再通过映射资产转换为游戏动作。
+// 类型：公开声明。
+
 #pragma once
 
 #include "MiniEngine/Render/Renderer.hpp"

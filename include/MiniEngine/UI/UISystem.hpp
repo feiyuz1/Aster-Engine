@@ -1,3 +1,8 @@
+﻿// 文件：include/MiniEngine/UI/UISystem.hpp
+// 作用：定义运行时 UI 控件树、布局、输入分发和绘制命令生成。
+// 约定：布局和输入在 CPU 侧生成绘制命令，渲染后端不持有控件对象。
+// 类型：公开声明。
+
 #pragma once
 
 #include "MiniEngine/Math/Math.hpp"

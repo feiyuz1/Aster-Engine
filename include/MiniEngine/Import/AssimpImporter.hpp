@@ -1,3 +1,8 @@
+﻿// 文件：include/MiniEngine/Import/AssimpImporter.hpp
+// 作用：通过 Assimp 导入 FBX、glTF、OBJ 等模型及骨骼动画，并生成引擎资产。
+// 约定：导入阶段处理不可信外部数据，必须保留边界校验和错误上下文。
+// 类型：公开声明。
+
 #pragma once
 
 #include <cstdint>
@@ -10,6 +15,7 @@
 
 namespace MiniEngine
 {
+// 导入选项只描述源到引擎格式的转换；resourcePrefix 决定生成资产中记录的逻辑路径。
 struct ModelImportOptions
 {
     float scale = 1.0f;
@@ -29,6 +35,7 @@ struct ImportedAsset
     std::filesystem::path path;
 };
 
+// 面向兼容性测试和编辑器诊断的统计，不参与运行时资源加载。
 struct ModelCompatibilityReport
 {
     std::size_t sourceMeshes = 0;
@@ -52,6 +59,7 @@ struct ModelImportResult
     std::string error;
 };
 
+// 无状态导入入口。ImportModel 先完整构建中间结果，成功后才写出 Prefab 及其依赖。
 class AssimpImporter
 {
   public:
@@ -79,6 +87,7 @@ struct AssetImportSnapshot
     ModelImportResult result;
 };
 
+// 编辑器异步导入队列。Snapshot 是锁内状态的副本，可安全地在 UI 线程轮询。
 class AssetImportQueue
 {
   public:

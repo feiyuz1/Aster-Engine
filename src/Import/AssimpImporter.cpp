@@ -1,3 +1,8 @@
+﻿// 文件：src/Import/AssimpImporter.cpp
+// 作用：通过 Assimp 导入 FBX、glTF、OBJ 等模型及骨骼动画，并生成引擎资产。
+// 约定：导入阶段处理不可信外部数据，必须保留边界校验和错误上下文。
+// 类型：实现文件。
+
 #include "MiniEngine/Import/AssimpImporter.hpp"
 #include "MiniEngine/Animation/SkeletalAnimation.hpp"
 
@@ -285,6 +290,7 @@ std::vector<std::string> AssimpImporter::GetSupportedExtensions()
     return result;
 }
 
+// 导入流程先统一节点/骨骼编号，再写网格、材质、动画与 Prefab；警告保留可恢复的数据损失，error 表示事务失败。
 ModelImportResult AssimpImporter::ImportModel(const std::filesystem::path &source, const std::filesystem::path &outputDirectory,
                                               const ModelImportOptions &options)
 {
@@ -566,6 +572,7 @@ struct AssetImportQueue::TaskState
     ModelImportResult result;
 };
 
+// jobs 是非拥有指针，队列必须在 JobSystem::Shutdown 之前停止提交并清空完成项。
 void AssetImportQueue::Initialize(JobSystem *jobs)
 {
     m_jobs = jobs;
@@ -610,6 +617,7 @@ std::uint64_t AssetImportQueue::Submit(std::filesystem::path source, std::filesy
     return task->id;
 }
 
+// 取消是协作式状态转换：已运行的第三方 Assimp 调用不能强制中断，只阻止结果继续发布为成功。
 bool AssetImportQueue::Cancel(const std::uint64_t id)
 {
     std::lock_guard<std::mutex> lock(m_mutex);

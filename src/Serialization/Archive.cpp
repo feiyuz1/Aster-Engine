@@ -1,3 +1,8 @@
+﻿// 文件：src/Serialization/Archive.cpp
+// 作用：提供有边界检查的二进制读写器，作为网络和资源格式的基础。
+// 约定：格式读取始终执行尺寸和版本检查，写入保持确定性。
+// 类型：实现文件。
+
 #include "MiniEngine/Serialization/Archive.hpp"
 
 #include "MiniEngine/Platform/Platform.hpp"
@@ -114,6 +119,7 @@ bool BinaryReader::ReadFloat(float &value)
     return true;
 }
 
+// 先验证声明长度、调用方上限和剩余字节，再修改输出字符串，抵御损坏或恶意输入。
 bool BinaryReader::ReadString(std::string &value, const std::size_t maximumLength)
 {
     std::uint64_t size = 0;
@@ -190,6 +196,7 @@ bool VersionedTextArchive::Deserialize(const std::string &text, VersionedDocumen
     return true;
 }
 
+// 先写同目录临时文件并关闭句柄，再原子替换目标；崩溃时旧文件或临时文件至少保留一份。
 bool VersionedTextArchive::SaveAtomic(const std::filesystem::path &path, const VersionedDocument &document, const bool keepBackup)
 {
     const auto temporary = path.string() + ".tmp";

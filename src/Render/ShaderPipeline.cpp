@@ -1,3 +1,8 @@
+﻿// 文件：src/Render/ShaderPipeline.cpp
+// 作用：管理着色器源码、参数反射、编译诊断以及热重载流程。
+// 约定：GPU 对象只应在拥有图形上下文的线程创建、使用和销毁。
+// 类型：实现文件。
+
 #include "MiniEngine/Render/ShaderPipeline.hpp"
 #include "MiniEngine/Platform/Platform.hpp"
 
@@ -23,6 +28,7 @@ std::uint64_t Hash(const std::string &text)
     return value;
 }
 
+// include 展开使用当前递归栈检测环，而 dependencies 单独记录热重载需要监听的完整文件集合。
 bool Expand(const std::filesystem::path &path, std::set<std::string> &stack, std::vector<std::filesystem::path> &dependencies,
             std::string &output, std::string &error, const bool root)
 {
@@ -159,6 +165,7 @@ bool ShaderPipeline::WriteCache(const ShaderPreprocessResult &result, const std:
     return PlatformFile::WriteAllText(cacheDirectory / name.str(), result.source);
 }
 
+// 反射结果只暴露编辑器可编辑参数，内部矩阵和引擎保留 uniform 不进入 Inspector。
 std::vector<ShaderParameterInfo> ShaderPipeline::ReflectParameters(const std::filesystem::path &path)
 {
     const auto preprocessed = Preprocess(path);

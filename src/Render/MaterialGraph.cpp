@@ -1,3 +1,8 @@
+﻿// 文件：src/Render/MaterialGraph.cpp
+// 作用：定义可视化材质节点图并生成可供着色器管线使用的源码。
+// 约定：GPU 对象只应在拥有图形上下文的线程创建、使用和销毁。
+// 类型：实现文件。
+
 #include "MiniEngine/Render/MaterialGraph.hpp"
 
 #include "MiniEngine/Platform/Platform.hpp"
@@ -78,6 +83,7 @@ bool MaterialGraph::Save(const std::filesystem::path &path) const
         output << "link " << link.fromNode << ' ' << link.toNode << ' ' << link.toInput << '\n';
     return PlatformFile::WriteAllText(path, output.str());
 }
+// 从输出节点反向遍历依赖并检测环；只有可达节点参与生成，孤立编辑节点不会污染 Shader。
 std::string MaterialGraph::Compile(std::vector<std::string> *errors) const
 {
     const auto output =

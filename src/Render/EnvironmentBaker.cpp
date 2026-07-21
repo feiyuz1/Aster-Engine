@@ -1,3 +1,8 @@
+﻿// 文件：src/Render/EnvironmentBaker.cpp
+// 作用：离线生成环境光照所需的辐照度、预过滤立方体贴图和 BRDF 查找表。
+// 约定：GPU 对象只应在拥有图形上下文的线程创建、使用和销毁。
+// 类型：实现文件。
+
 #include "MiniEngine/Render/EnvironmentBaker.hpp"
 
 #include "MiniEngine/Math/Math.hpp"
@@ -94,6 +99,7 @@ void Store(std::vector<float> &pixels, const int width, const int x, const int y
 }
 } // namespace
 
+// 使用确定性的低差异采样离线积分；运行时只读取结果，避免每次启动重复昂贵卷积。
 EnvironmentBakeResult EnvironmentBaker::Bake(const std::filesystem::path &source, const std::filesystem::path &outputDirectory,
                                              const int sampleCount)
 {

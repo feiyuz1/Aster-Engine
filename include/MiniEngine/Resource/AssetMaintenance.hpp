@@ -1,3 +1,8 @@
+﻿// 文件：include/MiniEngine/Resource/AssetMaintenance.hpp
+// 作用：执行资源重命名、迁移、引用更新、缺失依赖检测和修复。
+// 约定：资源对象可能异步完成，调用方必须检查状态或显式等待。
+// 类型：公开声明。
+
 #pragma once
 
 #include "MiniEngine/Resource/AssetRegistry.hpp"

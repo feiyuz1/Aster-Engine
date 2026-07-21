@@ -1,3 +1,8 @@
+﻿// 文件：include/MiniEngine/Serialization/Archive.hpp
+// 作用：提供有边界检查的二进制读写器，作为网络和资源格式的基础。
+// 约定：格式读取始终执行尺寸和版本检查，写入保持确定性。
+// 类型：公开声明。
+
 #pragma once
 
 #include <cstddef>

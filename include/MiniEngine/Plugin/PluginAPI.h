@@ -1,3 +1,8 @@
+﻿// 文件：include/MiniEngine/Plugin/PluginAPI.h
+// 作用：声明供外部动态库使用的 C ABI，避免跨编译器暴露 C++ 对象布局。
+// 约定：跨动态库边界仅使用版本化 C ABI，所有权由接口文档约定。
+// 类型：公开声明。
+
 #pragma once
 
 #include <stddef.h>

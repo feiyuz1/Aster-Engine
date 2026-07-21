@@ -1,3 +1,8 @@
+﻿// 文件：src/Memory/Allocators.cpp
+// 作用：提供线性、池式分配器和引擎内存统计服务。
+// 约定：分配器返回内存的有效期由所属 Arena 或 Pool 决定。
+// 类型：实现文件。
+
 #include "MiniEngine/Memory/Allocators.hpp"
 
 #include <algorithm>

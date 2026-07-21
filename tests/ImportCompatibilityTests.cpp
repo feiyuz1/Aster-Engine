@@ -1,3 +1,8 @@
+﻿// 文件：tests/ImportCompatibilityTests.cpp
+// 作用：使用真实模型样本验证 Assimp 导入兼容性矩阵。
+// 约定：测试必须可重复执行，不依赖执行顺序或开发机上的隐式状态。
+// 类型：实现文件。
+
 #include "MiniEngine/Animation/SkeletalAnimation.hpp"
 #include "MiniEngine/Import/AssimpImporter.hpp"
 #include "MiniEngine/Platform/Platform.hpp"

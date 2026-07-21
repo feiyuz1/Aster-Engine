@@ -1,3 +1,8 @@
+﻿// 文件：include/MiniEngine/ECS/ECS.hpp
+// 作用：定义带代际句柄的实体、类型化组件存储、系统调度和 World 生命周期。
+// 约定：实体句柄包含代际信息，禁止长期保存未校验的裸实体编号。
+// 类型：公开声明。
+
 #pragma once
 
 #include "MiniEngine/Math/Math.hpp"
@@ -14,6 +19,7 @@
 
 namespace MiniEngine
 {
+// 分配实体索引并维护代际号。Destroy 后旧句柄即使索引被复用也不会重新变为有效。
 class EntityManager
 {
   public:
@@ -38,6 +44,7 @@ class IComponentStorage
     virtual void Clear() = 0;
 };
 
+// 每种组件拥有一个稀疏哈希存储；组件地址可能在插入时失效，不应跨结构修改长期保存指针。
 template <typename T> class ComponentStorage final : public IComponentStorage
 {
   public:
@@ -87,6 +94,7 @@ template <typename T> class ComponentStorage final : public IComponentStorage
     std::unordered_map<Entity, T> m_data;
 };
 
+// 使用 type_index 擦除组件类型，使 World 能以统一方式删除实体的全部组件。
 class ComponentManager
 {
   public:
@@ -142,6 +150,7 @@ class ComponentManager
         auto *second = FindStorage<TSecond>();
         if (first == nullptr || second == nullptr)
             return;
+        // 从较小的组件集合开始遍历，避免为简单双组件查询建立临时结果集。
         if (first->Data().size() <= second->Data().size())
         {
             for (auto &pair : first->Data())
@@ -203,6 +212,7 @@ class ComponentManager
 
 class World;
 
+// 生命周期监听器在组件被清理前收到 Destroying，适合释放系统侧缓存和外部句柄。
 class WorldListener
 {
   public:
@@ -233,6 +243,7 @@ class System
     }
 };
 
+// 系统严格按注册顺序初始化和更新，并按反序关闭；注册顺序即隐式的数据依赖顺序。
 class SystemManager
 {
   public:
@@ -254,6 +265,7 @@ class SystemManager
     std::vector<std::unique_ptr<System>> m_systems;
 };
 
+// World 是实体、组件和系统的聚合根，同时维护父子层级与生命周期通知。
 class World
 {
   public:

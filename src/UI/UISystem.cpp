@@ -1,3 +1,8 @@
+﻿// 文件：src/UI/UISystem.cpp
+// 作用：定义运行时 UI 控件树、布局、输入分发和绘制命令生成。
+// 约定：布局和输入在 CPU 侧生成绘制命令，渲染后端不持有控件对象。
+// 类型：实现文件。
+
 #include "MiniEngine/UI/UISystem.hpp"
 
 #include <algorithm>
@@ -81,6 +86,7 @@ void UISystem::Clear()
     m_drawList.clear();
     m_focusedId.clear();
 }
+// 输入按最终布局后的逆绘制顺序命中，保证视觉上位于上层的控件优先接收事件。
 void UISystem::Update(const float cursorX, const float cursorY, const bool primaryDown)
 {
     ResolveLayout();

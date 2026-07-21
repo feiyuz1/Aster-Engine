@@ -1,3 +1,8 @@
+﻿// 文件：include/MiniEngine/Resource/Resource.hpp
+// 作用：定义资源状态机以及纹理、网格、材质和着色器的运行时数据。
+// 约定：资源对象可能异步完成，调用方必须检查状态或显式等待。
+// 类型：公开声明。
+
 #pragma once
 
 #include "MiniEngine/Math/Math.hpp"
@@ -22,6 +27,7 @@ enum class ResourceState
     PendingUnload
 };
 
+// 资源状态机的同步基类。加载线程通过 SetState 唤醒等待者；Failed 状态同时保存错误文本。
 class Resource
 {
   public:
@@ -48,6 +54,7 @@ class Resource
     std::string m_error;
 };
 
+// CPU 侧纹理载荷；压缩块和 Mip 只记录视图，真正的 GPU 上传由 RenderDevice 完成。
 class TextureResource final : public Resource
 {
   public:
@@ -91,6 +98,7 @@ class TextureResource final : public Resource
     bool m_srgbEncoded = false;
 };
 
+// 固定顶点布局与默认着色器一致；骨骼权重最多四个且导入后已归一化。
 struct MeshVertex
 {
     Vec3 position;
@@ -129,6 +137,7 @@ class ShaderResource final : public Resource
     std::string m_source;
 };
 
+// 材质实例保存父材质路径和显式覆盖位；未覆盖属性应在解析时继承父级值。
 class MaterialResource final : public Resource
 {
   public:

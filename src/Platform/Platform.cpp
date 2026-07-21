@@ -1,3 +1,8 @@
+﻿// 文件：src/Platform/Platform.cpp
+// 作用：封装计时、文件、动态库、进程和平台输入等操作系统差异。
+// 约定：平台差异集中封装在此层，上层模块不直接调用系统 API。
+// 类型：实现文件。
+
 #include "MiniEngine/Platform/Platform.hpp"
 #include "MiniEngine/Resource/PakArchive.hpp"
 

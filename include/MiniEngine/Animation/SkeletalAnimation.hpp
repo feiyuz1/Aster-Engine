@@ -1,3 +1,8 @@
+﻿// 文件：include/MiniEngine/Animation/SkeletalAnimation.hpp
+// 作用：定义骨架、动画片段、压缩曲线、混合树、动画图和运行时姿势采样。
+// 约定：骨骼索引必须与逆绑定矩阵及 GPU 调色板保持一致。
+// 类型：公开声明。
+
 #pragma once
 
 #include "MiniEngine/Math/Math.hpp"
@@ -18,6 +23,7 @@ struct Bone
     Mat4 inverseBind = Mat4::Identity();
 };
 
+// bones 的数组下标就是运行时统一骨骼编号，parentIndex、轨道和 GPU 矩阵调色板均引用该编号。
 struct Skeleton
 {
     std::vector<Bone> bones;
@@ -72,6 +78,7 @@ struct SkeletalCompressionStats
     float ratio = 1.0f;
 };
 
+// 骨骼动画片段。Sample 支持压缩与未压缩轨道，事件查询使用“前一时间到当前时间”的半开区间。
 class SkeletalClip
 {
   public:
@@ -107,6 +114,7 @@ struct BlendTreeSample
     std::string clipPath;
 };
 
+// 在相邻阈值样本间线性混合；超出范围时钳制到首尾样本，避免动画姿势外推。
 class BlendTree1D
 {
   public:
@@ -127,6 +135,7 @@ struct BlendTree2DSample
     std::string clipPath;
 };
 
+// 在二维参数平面内选择临近样本并归一化权重，适合速度方向等连续控制量。
 class BlendTree2D
 {
   public:
@@ -146,6 +155,7 @@ struct RetargetBoneMap
     float translationScale = 1.0f;
 };
 
+// 通过名称映射和参考姿势修正把源骨架姿势转换到目标骨架，不修改原始动画资产。
 class SkeletonRetargeter
 {
   public:
@@ -157,6 +167,7 @@ class SkeletonRetargeter
     std::vector<RetargetBoneMap> m_mapping;
 };
 
+// 分层混合通过骨骼遮罩限制影响范围；weight 为 0 的层不会参与姿势求值。
 struct AnimationLayer
 {
     std::vector<BonePose> pose;
@@ -216,6 +227,7 @@ struct AnimationGraphTransition
     float blendSeconds = 0.15f;
 };
 
+// 可序列化的状态与转移描述；图本身不保存播放时间，因而可被多个 Player 共享。
 class AnimationGraph
 {
   public:
@@ -231,6 +243,7 @@ class AnimationGraph
 bool SaveAnimationGraphAsset(const AnimationGraph &graph, const std::filesystem::path &path);
 bool LoadAnimationGraphAsset(const std::filesystem::path &path, AnimationGraph &graph);
 
+// AnimationGraph 的有状态运行实例，保存当前状态、参数和转移进度。
 class AnimationGraphPlayer
 {
   public:

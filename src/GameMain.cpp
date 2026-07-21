@@ -1,3 +1,8 @@
+﻿// 文件：src/GameMain.cpp
+// 作用：启动面向发布包的独立游戏运行时。
+// 约定：命令行工具以非交互方式运行，失败时返回非零退出码并输出可定位的错误。
+// 类型：实现文件。
+
 #include "MiniEngine/Core/CrashReporter.hpp"
 #include "MiniEngine/Runtime/Engine.hpp"
 

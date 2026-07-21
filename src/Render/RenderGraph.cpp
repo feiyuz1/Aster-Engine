@@ -1,3 +1,8 @@
+﻿// 文件：src/Render/RenderGraph.cpp
+// 作用：描述渲染通道及资源依赖，负责编译顺序、资源别名和执行。
+// 约定：GPU 对象只应在拥有图形上下文的线程创建、使用和销毁。
+// 类型：实现文件。
+
 #include "MiniEngine/Render/RenderGraph.hpp"
 
 #include <algorithm>
@@ -40,6 +45,7 @@ std::size_t RenderGraph::AddPass(RenderGraphPassDesc pass)
     return m_passes.size() - 1;
 }
 
+// 从读写关系建立有向依赖并做拓扑排序，同时计算瞬时资源的首末使用通道以便复用物理槽。
 bool RenderGraph::Compile(std::string *error)
 {
     m_executionOrder.clear();
@@ -165,6 +171,7 @@ bool RenderGraph::Compile(std::string *error)
     return true;
 }
 
+// 执行阶段不再改变图结构；通道异常被转换为带通道名的错误，避免丢失 GPU 工作上下文。
 bool RenderGraph::Execute(std::string *error) const
 {
     if (!m_compiled)

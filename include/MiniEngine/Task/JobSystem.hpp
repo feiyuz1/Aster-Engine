@@ -1,3 +1,8 @@
+﻿// 文件：include/MiniEngine/Task/JobSystem.hpp
+// 作用：实现带优先级与依赖关系的工作线程池和作业同步。
+// 约定：作业函数可在任意工作线程执行，不得依赖主线程局部状态。
+// 类型：公开声明。
+
 #pragma once
 
 #include <array>
@@ -22,6 +27,7 @@ enum class JobPriority : std::uint8_t
     Critical = 3
 };
 
+// 可等待的作业节点。依赖计数归零后才入队，异常在 Wait 调用线程重新抛出。
 class Job
 {
   public:
@@ -52,6 +58,7 @@ class Job
 
 using JobHandle = std::shared_ptr<Job>;
 
+// 四级优先队列；PopBlocking 总是优先取高优先级任务，并由条件变量避免空转。
 class JobQueue
 {
   public:
@@ -67,6 +74,7 @@ class JobQueue
     std::array<std::deque<JobHandle>, 4> m_queues;
 };
 
+// WorkerThread 只拥有线程本身，Job 和队列生命周期由 JobSystem 统一管理。
 class WorkerThread
 {
   public:
@@ -83,6 +91,7 @@ class WorkerThread
     std::thread m_thread;
 };
 
+// 通用工作线程池。Shutdown 停止接收新任务并等待已提交任务结束后再回收线程。
 class JobSystem
 {
   public:

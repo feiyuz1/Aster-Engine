@@ -1,3 +1,8 @@
+﻿// 文件：editor/EditorApp.cpp
+// 作用：定义编辑器窗口、面板状态、选择、Gizmo、资产浏览和撤销重做。
+// 约定：编辑器状态与运行时 World 分离；所有写操作都应进入撤销或明确标记为临时预览。
+// 类型：实现文件。
+
 #ifdef _WIN32
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -511,6 +516,7 @@ bool EditorApp::SaveEditorSettings()
     return output.good();
 }
 
+// 编辑器复用 Engine 的 World 与服务，但以编辑态启动，并把 ImGui 回调挂到场景渲染之后。
 bool EditorApp::Initialize(const std::filesystem::path &projectFile)
 {
     if (!m_engine.Initialize(projectFile, false))
@@ -1127,6 +1133,7 @@ void EditorApp::DrawInspector()
     ImGui::End();
 }
 
+// Scene View 同时处理相机、点选、框选和 Gizmo；输入优先级保证拖动 Gizmo 时不会误触场景选择。
 void EditorApp::DrawSceneView()
 {
     const ImGuiViewport *viewport = ImGui::GetMainViewport();
@@ -1323,6 +1330,7 @@ void EditorApp::DrawSceneView()
     ImGui::End();
 }
 
+// 从归一化视口坐标反投影射线，并选取最近包围盒交点；不可见或无几何边界的实体不会被命中。
 Entity EditorApp::PickEntity(const float normalizedX, const float normalizedY) const
 {
     const float pitch = DegreesToRadians(m_editorCameraRotation.x), yaw = DegreesToRadians(m_editorCameraRotation.y);
@@ -1369,6 +1377,7 @@ Entity EditorApp::PickEntity(const float normalizedX, const float normalizedY) c
     return selected;
 }
 
+// 多选时先求枢轴，再把同一增量应用到各实体；开始拖动时仅记录一次 Undo 快照。
 bool EditorApp::DrawGizmo(const float minimumX, const float minimumY, const float width, const float height)
 {
     World &world = *m_engine.GetContext().world;
@@ -1491,6 +1500,7 @@ bool EditorApp::DrawGizmo(const float minimumX, const float minimumY, const floa
     return hovered || m_activeGizmoAxis >= 0;
 }
 
+// 依据资产类型选择放置策略：Prefab 重建完整层级，Mesh 则创建或替换单个 MeshRenderer。
 bool EditorApp::PlaceAssetInScene(const AssetInfo &asset)
 {
     if (m_engine.IsPlaying())
@@ -1546,6 +1556,7 @@ bool EditorApp::IsThumbnailReady(const AssetInfo &asset, const std::filesystem::
     return true;
 }
 
+// 缩略图生成提交到 JobSystem；m_thumbnailJobs 去重，UI 线程只轮询完成状态而不阻塞。
 void EditorApp::RequestThumbnail(const AssetInfo &asset, const bool force)
 {
     const auto path = GetThumbnailPath(asset);
@@ -2880,6 +2891,7 @@ void EditorApp::NewSceneDocument()
     m_redo.clear();
 }
 
+// 当前实现使用完整场景快照换取可靠性；记录新操作后必须清空 redo 分支。
 void EditorApp::RecordUndo()
 {
     if (m_engine.IsPlaying())

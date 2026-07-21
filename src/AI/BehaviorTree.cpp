@@ -1,3 +1,8 @@
+﻿// 文件：src/AI/BehaviorTree.cpp
+// 作用：定义 Blackboard、行为树节点、运行时执行和调试信息。
+// 约定：行为节点返回运行状态，长任务必须可在后续帧继续。
+// 类型：实现文件。
+
 #include "MiniEngine/AI/BehaviorTree.hpp"
 #include "MiniEngine/Platform/Platform.hpp"
 

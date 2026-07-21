@@ -1,3 +1,8 @@
+﻿// 文件：src/Physics/PhysicsWorld.cpp
+// 作用：管理碰撞体、刚体仿真、射线/形状查询和角色控制器。
+// 约定：仿真使用固定时间步；编辑器帧率不能直接改变物理积分步长。
+// 类型：实现文件。
+
 #include "MiniEngine/Physics/PhysicsWorld.hpp"
 
 #include "MiniEngine/ECS/Components.hpp"
@@ -320,6 +325,7 @@ Aabb PhysicsWorld::ComputeBounds(const World &world, const Entity entity)
     return {center - extent, center + extent};
 }
 
+// 先积分动态刚体，再生成接触并修正穿透，最后与上一帧接触集合比较得到 Enter/Stay/Exit。
 void PhysicsWorld::Step(World &world, const float fixedDeltaTime)
 {
     m_events.clear();
@@ -535,6 +541,7 @@ bool PhysicsWorld::Raycast(const World &world, const Ray &ray, const float maxDi
     return found;
 }
 
+// Sweep 返回沿位移最早的命中；零位移与退化形状都要在进入窄相位前处理。
 bool PhysicsWorld::ShapeSweep(const World &world, const ShapeSweepGeometry &geometry, const Vec3 &origin, const Vec3 &displacement,
                               RaycastHit &hit, const PhysicsQuery &query) const
 {

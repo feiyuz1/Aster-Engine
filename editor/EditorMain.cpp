@@ -1,3 +1,8 @@
+﻿// 文件：editor/EditorMain.cpp
+// 作用：解析编辑器启动参数并创建 EditorApp。
+// 约定：编辑器状态与运行时 World 分离；所有写操作都应进入撤销或明确标记为临时预览。
+// 类型：实现文件。
+
 #include "EditorApp.hpp"
 #include "MiniEngine/Core/CrashReporter.hpp"
 

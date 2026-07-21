@@ -1,3 +1,8 @@
+﻿// 文件：src/ECS/ECS.cpp
+// 作用：定义带代际句柄的实体、类型化组件存储、系统调度和 World 生命周期。
+// 约定：实体句柄包含代际信息，禁止长期保存未校验的裸实体编号。
+// 类型：实现文件。
+
 #include "MiniEngine/ECS/ECS.hpp"
 #include "MiniEngine/ECS/Components.hpp"
 
@@ -6,6 +11,7 @@
 
 namespace MiniEngine
 {
+// 优先复用空闲索引，但沿用该槽递增后的 generation，使旧 Entity 句柄保持失效。
 Entity EntityManager::Create()
 {
     u32 index = 0;
@@ -86,6 +92,7 @@ Entity World::CreateEntity(const std::string &name)
     return entity;
 }
 
+// 先通知监听器，再解除层级并删除组件；监听器因此仍可读取即将销毁实体的组件完成清理。
 void World::DestroyEntity(const Entity entity)
 {
     if (!m_entityManager.IsAlive(entity))
@@ -128,6 +135,7 @@ void World::RemoveListener(WorldListener *listener)
     m_listeners.erase(std::remove(m_listeners.begin(), m_listeners.end(), listener), m_listeners.end());
 }
 
+// 沿父链检查环，禁止 child 成为自己的祖先，否则世界矩阵递归将无法终止。
 bool World::SetParent(const Entity child, const Entity parent)
 {
     if (!IsAlive(child) || (parent != InvalidEntity && !IsAlive(parent)) || child == parent)
@@ -144,6 +152,7 @@ bool World::SetParent(const Entity child, const Entity parent)
     return true;
 }
 
+// 从当前实体向根收集局部变换后逆序相乘，避免依赖实体存储或创建顺序。
 Mat4 World::GetWorldMatrix(const Entity entity) const
 {
     const auto *transform = GetComponent<TransformComponent>(entity);

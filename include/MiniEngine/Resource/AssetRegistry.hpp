@@ -1,3 +1,8 @@
+﻿// 文件：include/MiniEngine/Resource/AssetRegistry.hpp
+// 作用：扫描资产元数据，维护 GUID、类型、源文件和依赖索引。
+// 约定：资源对象可能异步完成，调用方必须检查状态或显式等待。
+// 类型：公开声明。
+
 #pragma once
 
 #include <filesystem>

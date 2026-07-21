@@ -1,3 +1,8 @@
+﻿// 文件：src/Navigation/Navigation.cpp
+// 作用：实现网格/多边形寻路、动态障碍、Crowd 与 EQS 查询。
+// 约定：导航查询可能跨帧执行，动态重建时应避免暴露半成品数据。
+// 类型：实现文件。
+
 #include "MiniEngine/Navigation/Navigation.hpp"
 
 #include <algorithm>
@@ -82,6 +87,7 @@ Vec3 NavigationGrid::CellToWorld(const NavCell &cell) const
             m_origin.z + (static_cast<float>(cell.z) + 0.5f) * m_cellSize};
 }
 
+// A* 的 g 值包含单元遍历代价；允许对角移动时禁止穿过两个相邻阻挡角。
 std::vector<Vec3> NavigationGrid::FindPath(const Vec3 &start, const Vec3 &goal, const bool allowDiagonal) const
 {
     NavCell startCell, goalCell;
@@ -342,6 +348,7 @@ bool PolygonNavMesh::RemoveDynamicObstacle(const std::uint64_t id)
     return true;
 }
 
+// 动态障碍只重算受影响多边形的可行状态，基础拓扑仍来自最近一次静态 Build。
 void PolygonNavMesh::RebuildDynamicObstacles()
 {
     m_dynamicBlocked.assign(m_polygons.size(), false);

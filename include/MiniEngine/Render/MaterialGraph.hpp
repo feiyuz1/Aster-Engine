@@ -1,3 +1,8 @@
+﻿// 文件：include/MiniEngine/Render/MaterialGraph.hpp
+// 作用：定义可视化材质节点图并生成可供着色器管线使用的源码。
+// 约定：GPU 对象只应在拥有图形上下文的线程创建、使用和销毁。
+// 类型：公开声明。
+
 #pragma once
 
 #include "MiniEngine/Math/Math.hpp"

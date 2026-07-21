@@ -1,3 +1,8 @@
+﻿// 文件：src/Resource/ResourceManager.cpp
+// 作用：统一资源缓存、同步/异步加载、加载器扩展和回收。
+// 约定：资源对象可能异步完成，调用方必须检查状态或显式等待。
+// 类型：实现文件。
+
 #include "MiniEngine/Resource/ResourceManager.hpp"
 
 #include <filesystem>
@@ -11,6 +16,7 @@ void ResourceManager::Initialize(JobSystem *jobSystem, std::filesystem::path ass
     m_registry.Scan(m_assetRoot);
 }
 
+// 先停止异步入口的使用者，再清理缓存；ResourceManager 本身不拥有外部 JobSystem。
 void ResourceManager::Shutdown()
 {
     if (m_jobSystem)
@@ -32,6 +38,7 @@ void ResourceManager::RegisterLoader(std::shared_ptr<IAssetLoader> loader)
     m_loaders.push_back(std::move(loader));
 }
 
+// 仅回收缓存独占且未处于 Loading 的对象，避免任务线程仍写入已经析构的 Resource。
 void ResourceManager::GarbageCollect()
 {
     std::lock_guard<std::mutex> lock(m_mutex);

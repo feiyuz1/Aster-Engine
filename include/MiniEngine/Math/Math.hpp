@@ -1,3 +1,8 @@
+﻿// 文件：include/MiniEngine/Math/Math.hpp
+// 作用：定义向量、矩阵、四元数、包围体及常用几何运算。
+// 约定：数学类型采用列主序约定；跨渲染与物理边界时需保持坐标系一致。
+// 类型：公开声明。
+
 #pragma once
 
 #include <algorithm>

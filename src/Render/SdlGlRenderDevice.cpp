@@ -1,3 +1,8 @@
+﻿// 文件：src/Render/SdlGlRenderDevice.cpp
+// 作用：实现基于 SDL2 与 OpenGL 的渲染设备、窗口输入和 GPU 资源提交。
+// 约定：GPU 对象只应在拥有图形上下文的线程创建、使用和销毁。
+// 类型：实现文件。
+
 #include "MiniEngine/Render/SdlGlRenderDevice.hpp"
 
 #include "MiniEngine/Platform/Platform.hpp"
@@ -527,6 +532,8 @@ constexpr const char *GpuParticleFragmentShaderSource = R"GLSL(
         )GLSL";
 } // namespace
 
+// OpenGL 细节隐藏在 PImpl 中，避免公开头文件暴露 SDL/OpenGL 类型并缩短上层重编译范围。
+// 该对象与创建它的线程绑定；缓存中的 GLuint 只允许在上下文仍有效时销毁。
 struct SdlGlRenderDevice::Impl
 {
     using GenVertexArraysProc = void(APIENTRY *)(GLsizei, GLuint *);
@@ -1566,6 +1573,7 @@ SdlGlRenderDevice::~SdlGlRenderDevice()
     Shutdown();
 }
 
+// 先创建窗口和上下文，再探测扩展能力；可选功能失败时降级，核心着色器失败则终止初始化。
 bool SdlGlRenderDevice::Initialize()
 {
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMECONTROLLER | SDL_INIT_AUDIO) != 0)
@@ -1623,6 +1631,7 @@ bool SdlGlRenderDevice::Initialize()
     return true;
 }
 
+// GPU 缓存必须先于 OpenGL Context 清空，否则驱动无法安全释放对应对象。
 void SdlGlRenderDevice::Shutdown()
 {
     if (!m_impl)
@@ -1981,6 +1990,7 @@ void SdlGlRenderDevice::EndShadowPass()
     m_impl->BindFramebuffer(GL_FRAMEBUFFER, 0);
 }
 
+// 保存本帧公共常量并准备离屏颜色、深度和运动矢量目标，后处理统一从这些目标读取。
 void SdlGlRenderDevice::BeginFrame(const FrameView &view)
 {
     m_impl->view = view;
@@ -2138,6 +2148,7 @@ void SdlGlRenderDevice::Draw(const RenderItem &item)
     m_impl->BindVertexArray(0);
 }
 
+// 只有网格与材质布局兼容的项目才可合批；实例矩阵和上一帧矩阵同时上传以生成运动矢量。
 void SdlGlRenderDevice::DrawInstanced(const std::vector<RenderItem> &items)
 {
     if (items.empty())
@@ -2363,6 +2374,7 @@ void SdlGlRenderDevice::DrawGpuParticles(const std::vector<GpuParticleEmitter> &
     glDisable(GL_BLEND);
 }
 
+// 后处理显式 ping-pong 颜色目标，禁止同一通道同时采样和写入同一纹理造成未定义反馈。
 void SdlGlRenderDevice::ExecutePostProcess(const PostProcessPass pass)
 {
     if (!m_impl || !m_impl->sceneTargetEnabled || !m_impl->postFramebuffer)
@@ -2620,6 +2632,7 @@ void SdlGlRenderDevice::SetGpuMemoryBudget(const std::size_t bytes)
         m_impl->gpuMemoryBudget = std::max<std::size_t>(bytes, 1024 * 1024);
 }
 
+// 只淘汰当前帧未使用且无外部引用的缓存对象，避免预算收缩导致正在绘制的资源失效。
 void SdlGlRenderDevice::TrimGpuResources()
 {
     if (m_impl && m_impl->context)

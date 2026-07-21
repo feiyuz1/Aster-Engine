@@ -200,9 +200,6 @@ if(TINYENGINE_BUILD_EDITOR)
     add_executable(tinyengine_editor editor/EditorMain.cpp editor/EditorApp.cpp)
     target_include_directories(tinyengine_editor PRIVATE editor)
     target_link_libraries(tinyengine_editor PRIVATE tinyengine tinyengine_imgui)
-    if(MSVC)
-        target_compile_options(tinyengine_editor PRIVATE /utf-8)
-    endif()
     if(TINYENGINE_BUILD_IMPORTERS)
         target_link_libraries(tinyengine_editor PRIVATE tinyengine_importers)
         target_compile_definitions(tinyengine_editor PRIVATE TINYENGINE_HAS_ASSIMP=1)
@@ -245,9 +242,6 @@ if(TINYENGINE_BUILD_TESTS)
     target_compile_definitions(tinyengine_extended_tests PRIVATE
         TINYENGINE_TEST_PLUGIN_PATH="$<TARGET_FILE:tinyengine_test_dynamic_plugin>")
     add_dependencies(tinyengine_extended_tests tinyengine_test_dynamic_plugin)
-    if(MSVC)
-        target_compile_options(tinyengine_extended_tests PRIVATE /utf-8)
-    endif()
     if(TINYENGINE_BUILD_IMPORTERS)
         target_link_libraries(tinyengine_tests PRIVATE tinyengine_importers)
         target_compile_definitions(tinyengine_tests PRIVATE TINYENGINE_HAS_ASSIMP=1)
@@ -262,6 +256,19 @@ if(TINYENGINE_BUILD_TESTS)
     set_tests_properties(tinyengine_core PROPERTIES WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
     add_test(NAME tinyengine_extended COMMAND tinyengine_extended_tests)
     set_tests_properties(tinyengine_extended PROPERTIES WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+endif()
+
+# 只为 TinyEngine 自有源码启用 UTF-8；不能把该选项全局传给 Assimp、zlib、SDL 或 ImGui。
+if(MSVC)
+    foreach(TINYENGINE_SOURCE_TARGET IN ITEMS
+            tinyengine tinyengine_demo tinyengine_game tinyengine_importers tinyengine_editor
+            tinyengine_asset_tool tinyengine_scene_tool tinyengine_package_tool tinyengine_commandlet
+            tinyengine_tests tinyengine_test_dynamic_plugin tinyengine_extended_tests
+            tinyengine_import_compatibility_tests)
+        if(TARGET ${TINYENGINE_SOURCE_TARGET})
+            target_compile_options(${TINYENGINE_SOURCE_TARGET} PRIVATE /utf-8)
+        endif()
+    endforeach()
 endif()
 
 include(GNUInstallDirs)

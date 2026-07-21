@@ -1,3 +1,8 @@
+﻿// 文件：src/Render/Renderer.cpp
+// 作用：组织相机、可见性、光照、阴影、后处理和 UI 的逐帧渲染。
+// 约定：GPU 对象只应在拥有图形上下文的线程创建、使用和销毁。
+// 类型：实现文件。
+
 #include "MiniEngine/Render/Renderer.hpp"
 
 #include "MiniEngine/Core/Logger.hpp"
@@ -207,6 +212,7 @@ const InputState &Renderer::GetInputState() const
     return m_device ? m_device->GetInputState() : empty;
 }
 
+// 在提交 GPU 前拍平 ECS 数据，并在这里完成视锥、LOD、遮挡候选和材质资源解析。
 void Renderer::BuildRenderQueue(World &world)
 {
     m_renderQueue.Clear();
@@ -389,6 +395,7 @@ void Renderer::BuildRenderQueue(World &world)
     ++m_frameNumber;
 }
 
+// 每帧重建 RenderGraph，明确表达阴影、深度层级、场景、GTAO、Bloom、TAA 和色调映射的依赖。
 void Renderer::RenderFrame(World &world)
 {
     if (!m_device)

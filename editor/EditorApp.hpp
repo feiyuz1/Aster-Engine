@@ -1,3 +1,8 @@
+﻿// 文件：editor/EditorApp.hpp
+// 作用：定义编辑器窗口、面板状态、选择、Gizmo、资产浏览和撤销重做。
+// 约定：编辑器状态与运行时 World 分离；所有写操作都应进入撤销或明确标记为临时预览。
+// 类型：公开声明。
+
 #pragma once
 
 #include "MiniEngine/AI/BehaviorTree.hpp"
@@ -20,6 +25,7 @@ namespace MiniEngine
 {
 class SdlGlRenderDevice;
 
+// 单窗口编辑器外壳。EditorApp 拥有 UI 状态，场景与各运行时服务仍由 Engine 统一持有。
 class EditorApp
 {
   public:
@@ -58,10 +64,12 @@ class EditorApp
     bool OpenSceneDocument(const std::filesystem::path &path);
     void NewSceneDocument();
     bool SwitchSceneDocument(std::size_t index);
+    // 资产放置是一个可撤销事务：根据资产类型创建或修改实体，并将场景标记为脏。
     bool PlaceAssetInScene(const AssetInfo &asset);
     std::filesystem::path GetThumbnailPath(const AssetInfo &asset) const;
     bool IsThumbnailReady(const AssetInfo &asset, const std::filesystem::path &path) const;
     void RequestThumbnail(const AssetInfo &asset, bool force = false);
+    // 选择与 Gizmo 使用同一套编辑器相机参数，避免视图显示与射线计算不一致。
     Entity PickEntity(float normalizedX, float normalizedY) const;
     bool DrawGizmo(float minimumX, float minimumY, float width, float height);
 
@@ -143,6 +151,7 @@ class EditorApp
     double m_lastAutosaveTime = 0.0;
     bool m_lastTitleDirty = false;
     bool m_titleInitialized = false;
+    // 每个标签页保存自己的序列化快照；切换前先回写当前 World，切换后再恢复目标快照。
     struct SceneDocument
     {
         std::filesystem::path path;

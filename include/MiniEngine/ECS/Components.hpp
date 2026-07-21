@@ -1,3 +1,8 @@
+﻿// 文件：include/MiniEngine/ECS/Components.hpp
+// 作用：集中声明引擎内置 ECS 组件的数据布局。
+// 约定：实体句柄包含代际信息，禁止长期保存未校验的裸实体编号。
+// 类型：公开声明。
+
 #pragma once
 
 #include "MiniEngine/Math/Math.hpp"

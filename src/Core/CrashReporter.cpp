@@ -1,3 +1,8 @@
+﻿// 文件：src/Core/CrashReporter.cpp
+// 作用：安装崩溃处理器并写出诊断信息和小型转储文件。
+// 约定：核心层不依赖上层业务，修改公开契约时需检查所有模块。
+// 类型：实现文件。
+
 #include "MiniEngine/Core/CrashReporter.hpp"
 #include "MiniEngine/Platform/Platform.hpp"
 
@@ -10,6 +15,7 @@
 #define NOMINMAX
 // clang-format off: DbgHelp requires Windows types to be declared first.
 #include <Windows.h>
+
 #include <DbgHelp.h>
 // clang-format on
 #endif

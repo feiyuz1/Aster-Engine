@@ -1,3 +1,8 @@
+﻿// 文件：src/Audio/AudioEngine.cpp
+// 作用：管理音频解码、流式播放、空间声源、Voice 并发以及 Mixer/Bus。
+// 约定：Voice 生命周期由音频系统拥有，流式缓冲不得在回调中阻塞。
+// 类型：实现文件。
+
 #include "MiniEngine/Audio/AudioEngine.hpp"
 
 #include "MiniEngine/Core/Logger.hpp"
@@ -56,6 +61,7 @@ void AudioEngine::Shutdown()
     m_logger = nullptr;
 }
 
+// 解码和 Voice 分配发生在控制线程；实时音频回调只读取已准备好的缓冲，不能执行文件 I/O。
 bool AudioEngine::StartVoice(const std::string &path, const float volume, const std::string &bus, const bool loop, const Entity entity,
                              const float attenuation, const float pan)
 {
@@ -223,6 +229,7 @@ void AudioEngine::UpdateWorld(const World &world)
             ++iterator;
 }
 
+// 实时回调路径避免日志、分配和阻塞；每个 Voice 先应用空间衰减，再进入 Bus 和主输出。
 void AudioEngine::MixCallback(void *userData, std::uint8_t *stream, const int length)
 {
     auto &engine = *static_cast<AudioEngine *>(userData);

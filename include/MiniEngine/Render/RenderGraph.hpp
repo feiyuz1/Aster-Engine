@@ -1,3 +1,8 @@
+﻿// 文件：include/MiniEngine/Render/RenderGraph.hpp
+// 作用：描述渲染通道及资源依赖，负责编译顺序、资源别名和执行。
+// 约定：GPU 对象只应在拥有图形上下文的线程创建、使用和销毁。
+// 类型：公开声明。
+
 #pragma once
 
 #include <cstddef>
@@ -16,6 +21,7 @@ enum class RenderGraphResourceType
 
 struct RenderGraphResourceHandle
 {
+    // 0 保留为无效句柄，外部只能通过 RenderGraph 创建或导入资源。
     std::uint32_t id = 0;
     explicit operator bool() const
     {
@@ -39,6 +45,7 @@ struct RenderGraphResourceDesc
     bool transient = true;
 };
 
+// 编译阶段计算出的逻辑资源生存期；生存期不重叠的瞬时资源可以共用 aliasSlot。
 struct RenderGraphResourceLifetime
 {
     std::size_t firstPass = 0;
@@ -55,6 +62,7 @@ struct RenderGraphPassDesc
     bool sideEffect = false;
 };
 
+// 每帧重建的轻量渲染图。Compile 完成依赖排序、无效引用检查和瞬时资源别名分配。
 class RenderGraph
 {
   public:

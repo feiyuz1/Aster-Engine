@@ -1,3 +1,8 @@
+﻿// 文件：tools/SceneTool.cpp
+// 作用：提供场景验证与转换的命令行入口。
+// 约定：命令行工具以非交互方式运行，失败时返回非零退出码并输出可定位的错误。
+// 类型：实现文件。
+
 #include "MiniEngine/ECS/Components.hpp"
 #include "MiniEngine/ECS/ECS.hpp"
 #include "MiniEngine/ECS/SceneSerializer.hpp"

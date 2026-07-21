@@ -1,3 +1,8 @@
+﻿// 文件：src/Resource/AssetMaintenance.cpp
+// 作用：执行资源重命名、迁移、引用更新、缺失依赖检测和修复。
+// 约定：资源对象可能异步完成，调用方必须检查状态或显式等待。
+// 类型：实现文件。
+
 #include "MiniEngine/Resource/AssetMaintenance.hpp"
 
 #include "MiniEngine/ECS/Components.hpp"
@@ -165,6 +170,7 @@ bool AssetMaintenance::RepairDependency(AssetRegistry &registry, const std::stri
     return registry.SetDependencies(owner, std::move(dependencies));
 }
 
+// 资产、meta 和文本引用作为一个维护事务更新；任何文件操作失败都返回可定位信息，不伪报成功。
 bool AssetMaintenance::MoveAsset(AssetRegistry &registry, const std::filesystem::path &source, const std::filesystem::path &destination,
                                  std::string *error)
 {
@@ -298,6 +304,7 @@ bool AssetMaintenance::GenerateThumbnail(const AssetInfo &asset, const std::file
     return true;
 }
 
+// 分块清单记录每块尺寸和顺序，读取端可只加载覆盖请求区间的块。
 bool AssetMaintenance::ChunkAsset(const std::filesystem::path &source, const std::filesystem::path &manifest,
                                   const std::size_t requestedChunkBytes, std::string *error)
 {

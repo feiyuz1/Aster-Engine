@@ -1,3 +1,8 @@
+﻿// 文件：src/Input/InputSystem.cpp
+// 作用：统一键鼠、手柄、输入映射、运行时重绑定和设备热插拔。
+// 约定：原始设备事件先归一化，再通过映射资产转换为游戏动作。
+// 类型：实现文件。
+
 #include "MiniEngine/Input/InputSystem.hpp"
 #include "MiniEngine/Platform/Platform.hpp"
 

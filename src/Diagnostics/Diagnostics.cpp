@@ -1,3 +1,8 @@
+﻿// 文件：src/Diagnostics/Diagnostics.cpp
+// 作用：收集帧性能、内存和系统状态，向调试界面提供快照。
+// 约定：诊断采样不得改变被观测系统的生命周期或成为显著性能负担。
+// 类型：实现文件。
+
 #include "MiniEngine/Diagnostics/Diagnostics.hpp"
 
 #include <algorithm>

@@ -1,3 +1,8 @@
+﻿// 文件：src/Automation/Automation.cpp
+// 作用：提供命令式自动化测试、编辑器 UI 驱动钩子和结果记录。
+// 约定：测试钩子只观测或驱动公开行为，不应成为产品逻辑依赖。
+// 类型：实现文件。
+
 #include "MiniEngine/Automation/Automation.hpp"
 
 #include "MiniEngine/Build/TargetPlatform.hpp"

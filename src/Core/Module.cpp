@@ -1,3 +1,8 @@
+﻿// 文件：src/Core/Module.cpp
+// 作用：定义引擎模块生命周期及按依赖顺序初始化的模块管理器。
+// 约定：核心层不依赖上层业务，修改公开契约时需检查所有模块。
+// 类型：实现文件。
+
 #include "MiniEngine/Core/Module.hpp"
 
 #include <algorithm>

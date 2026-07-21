@@ -1,3 +1,8 @@
+﻿// 文件：src/Build/TargetPlatform.cpp
+// 作用：描述目标平台能力、纹理格式和构建输出约束。
+// 约定：烘焙输出必须可重复，并且不能依赖编辑器进程内的临时状态。
+// 类型：实现文件。
+
 #include "MiniEngine/Build/TargetPlatform.hpp"
 #include "MiniEngine/Build/AssetCompiler.hpp"
 

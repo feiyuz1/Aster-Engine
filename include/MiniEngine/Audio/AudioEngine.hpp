@@ -1,3 +1,8 @@
+﻿// 文件：include/MiniEngine/Audio/AudioEngine.hpp
+// 作用：管理音频解码、流式播放、空间声源、Voice 并发以及 Mixer/Bus。
+// 约定：Voice 生命周期由音频系统拥有，流式缓冲不得在回调中阻塞。
+// 类型：公开声明。
+
 #pragma once
 
 #include "MiniEngine/Math/Math.hpp"

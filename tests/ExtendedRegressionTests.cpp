@@ -1,3 +1,8 @@
+﻿// 文件：tests/ExtendedRegressionTests.cpp
+// 作用：覆盖编辑器、渲染、资产等扩展功能的回归测试。
+// 约定：测试必须可重复执行，不依赖执行顺序或开发机上的隐式状态。
+// 类型：实现文件。
+
 #include "MiniEngine/Animation/SkeletalAnimation.hpp"
 #include "MiniEngine/Audio/AudioEngine.hpp"
 #include "MiniEngine/ECS/Components.hpp"

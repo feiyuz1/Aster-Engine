@@ -1,3 +1,8 @@
+﻿// 文件：include/MiniEngine/Gameplay/Gameplay.hpp
+// 作用：组织 GameInstance、Pawn、Controller 等运行时游戏框架对象。
+// 约定：该层只编排运行时对象，不直接承担平台或渲染实现。
+// 类型：公开声明。
+
 #pragma once
 
 #include "MiniEngine/Types.hpp"

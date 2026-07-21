@@ -1,3 +1,8 @@
+﻿// 文件：include/MiniEngine/Network/Replication.hpp
+// 作用：实现快照复制、可靠通道、RPC、所有权、预测与服务器纠错。
+// 约定：网络输入均视为不可信数据，解码前先验证长度和权限。
+// 类型：公开声明。
+
 #pragma once
 
 #include "MiniEngine/Math/Math.hpp"
@@ -28,6 +33,7 @@ struct NetworkSnapshot
     std::vector<ReplicatedEntityState> entities;
 };
 
+// 确定性快照编解码器；解码任何变长字段前都必须验证剩余字节数和数量上限。
 class SnapshotCodec
 {
   public:
@@ -35,6 +41,7 @@ class SnapshotCodec
     static bool Decode(const std::vector<std::uint8_t> &bytes, NetworkSnapshot &snapshot);
 };
 
+// 按服务器时间排序的抖动缓冲区，通过延迟少量显示时间换取稳定插值。
 class SnapshotBuffer
 {
   public:
@@ -47,6 +54,7 @@ class SnapshotBuffer
     std::vector<NetworkSnapshot> m_snapshots;
 };
 
+// 复用快照格式的离线回放流；文件版本不兼容时应明确失败而不是猜测布局。
 class ReplayStream
 {
   public:
@@ -71,6 +79,7 @@ struct UdpEndpoint
     std::uint16_t port = 0;
 };
 
+// UDP 系统句柄的 RAII 封装；Open 成功后由析构或 Close 唯一释放。
 class UdpSocket
 {
   public:
@@ -90,6 +99,7 @@ class UdpSocket
     std::uint16_t m_boundPort = 0;
 };
 
+// 在 UDP 上维护序列号、确认位图和超时重发；可靠仅保证送达，不保证业务幂等。
 class ReliableChannel
 {
   public:
@@ -114,6 +124,7 @@ class ReliableChannel
     std::uint32_t m_receivedBits = 0;
 };
 
+// 令牌桶式流量限制，所有来自远端的消息应在解析高成本载荷前通过此检查。
 class NetworkRateLimiter
 {
   public:
@@ -127,6 +138,7 @@ class NetworkRateLimiter
     double m_lastTime = -1.0;
 };
 
+// RPC 白名单与分发表。未登记、尺寸超限或无权限调用必须在触达游戏逻辑前拒绝。
 class RpcRegistry
 {
   public:
@@ -140,6 +152,7 @@ class RpcRegistry
     std::unordered_map<std::uint32_t, NetworkRateLimiter> m_limiters;
 };
 
+// 记录实体的网络所有者；客户端上行修改只能作用于其拥有的实体。
 class NetworkOwnership
 {
   public:
@@ -159,6 +172,7 @@ struct PredictedInput
     float deltaTime = 0.0f;
 };
 
+// 保存未确认输入并在服务器权威状态到达时回滚、重放，缩小本地交互延迟。
 class ClientPrediction
 {
   public:

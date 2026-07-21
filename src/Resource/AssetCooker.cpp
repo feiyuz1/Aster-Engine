@@ -1,3 +1,8 @@
+﻿// 文件：src/Resource/AssetCooker.cpp
+// 作用：验证并烘焙资产，生成运行时清单和平台输出。
+// 约定：资源对象可能异步完成，调用方必须检查状态或显式等待。
+// 类型：实现文件。
+
 #include "MiniEngine/Resource/AssetCooker.hpp"
 
 #include "MiniEngine/Platform/Platform.hpp"

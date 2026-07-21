@@ -1,3 +1,8 @@
+﻿// 文件：tools/AssetTool.cpp
+// 作用：提供资产导入、烘焙和维护的命令行入口。
+// 约定：命令行工具以非交互方式运行，失败时返回非零退出码并输出可定位的错误。
+// 类型：实现文件。
+
 #include "MiniEngine/Render/EnvironmentBaker.hpp"
 #include "MiniEngine/Resource/AssetCooker.hpp"
 #include "MiniEngine/Resource/AssetMaintenance.hpp"
