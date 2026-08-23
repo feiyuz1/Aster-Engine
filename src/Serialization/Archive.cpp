@@ -199,24 +199,7 @@ bool VersionedTextArchive::Deserialize(const std::string &text, VersionedDocumen
 // 先写同目录临时文件并关闭句柄，再原子替换目标；崩溃时旧文件或临时文件至少保留一份。
 bool VersionedTextArchive::SaveAtomic(const std::filesystem::path &path, const VersionedDocument &document, const bool keepBackup)
 {
-    const auto temporary = path.string() + ".tmp";
-    const auto backup = path.string() + ".bak";
-    if (!PlatformFile::WriteAllText(temporary, Serialize(document)))
-        return false;
-    std::error_code error;
-    if (keepBackup && std::filesystem::is_regular_file(path))
-    {
-        std::filesystem::copy_file(path, backup, std::filesystem::copy_options::overwrite_existing, error);
-        error.clear();
-    }
-    std::filesystem::rename(temporary, path, error);
-    if (!error)
-        return true;
-    error.clear();
-    std::filesystem::remove(path, error);
-    error.clear();
-    std::filesystem::rename(temporary, path, error);
-    return !error;
+    return PlatformFile::WriteAllTextAtomic(path, Serialize(document), keepBackup);
 }
 
 bool MigrationRegistry::Key::operator==(const Key &other) const

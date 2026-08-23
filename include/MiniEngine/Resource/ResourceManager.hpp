@@ -51,6 +51,7 @@ class ResourceManager
     template <typename T> std::shared_ptr<T> Load(const std::string &path)
     {
         const std::string key = NormalizePath(path);
+        const std::string resolvedPath = ResolvePath(key);
         std::shared_ptr<T> resource;
         bool created = false;
         {
@@ -71,7 +72,7 @@ class ResourceManager
             return resource->Wait() ? resource : nullptr;
         if (resource->IsReady())
             return resource;
-        if (!resource->Load(key))
+        if (!resource->Load(resolvedPath))
         {
             std::lock_guard<std::mutex> lock(m_mutex);
             const auto found = m_cache.find(key);
@@ -88,6 +89,7 @@ class ResourceManager
     template <typename T> std::shared_ptr<T> LoadAsync(const std::string &path)
     {
         const std::string key = NormalizePath(path);
+        const std::string resolvedPath = ResolvePath(key);
         std::shared_ptr<T> resource;
         {
             std::lock_guard<std::mutex> lock(m_mutex);
@@ -106,10 +108,10 @@ class ResourceManager
         // 无 JobSystem 的工具环境退化为同步加载，但仍保持相同的资源状态语义。
         if (!m_jobSystem)
         {
-            resource->Load(key);
+            resource->Load(resolvedPath);
             return resource;
         }
-        auto job = m_jobSystem->CreateJob([resource, key]() { resource->Load(key); }, JobPriority::High);
+        auto job = m_jobSystem->CreateJob([resource, resolvedPath]() { resource->Load(resolvedPath); }, JobPriority::High);
         m_jobSystem->Submit(job);
         return resource;
     }
@@ -145,6 +147,10 @@ class ResourceManager
     /// @param path 文件、资源或目录路径。
     /// @return 返回对应的文本或路径。
     static std::string NormalizePath(const std::string &path);
+    /// @brief 以初始化时的资产根目录解析逻辑资源路径，不依赖进程当前目录。
+    /// @param path 已规范化的逻辑资源路径。
+    /// @return 物理文件存在时返回绝对路径；挂载包资源保持逻辑路径。
+    std::string ResolvePath(const std::string &path) const;
     /// @brief 加载 `WithRegisteredLoaders`。
     /// @param path 文件、资源或目录路径。
     /// @return 返回接口计算或查询得到的结果。

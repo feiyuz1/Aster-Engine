@@ -207,8 +207,13 @@ EnvironmentBakeResult EnvironmentBaker::Bake(const std::filesystem::path &source
         result.error = "Cannot write baked environment textures";
         return result;
     }
+    std::error_code relativeError;
+    auto skyPath = std::filesystem::relative(source, outputDirectory, relativeError);
+    if (relativeError || skyPath.empty())
+        skyPath = source;
     std::ostringstream manifest;
-    manifest << "TINY_ENV 1\nirradiance " << std::quoted(result.irradiancePath.filename().generic_string()) << "\nprefilter "
+    manifest << "TINY_ENV 1\nsky " << std::quoted(skyPath.generic_string()) << "\nirradiance "
+             << std::quoted(result.irradiancePath.filename().generic_string()) << "\nprefilter "
              << std::quoted(result.prefilterPath.filename().generic_string()) << "\nbrdf "
              << std::quoted(result.brdfLutPath.filename().generic_string()) << '\n';
     result.success = PlatformFile::WriteAllText(result.environmentPath, manifest.str());

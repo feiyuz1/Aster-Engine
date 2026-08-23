@@ -38,6 +38,12 @@ class PlatformFile
     /// @param text 要处理的 UTF-8 或普通文本。
     /// @return 操作成功时返回 `true`，否则返回 `false`。
     static bool WriteAllText(const std::filesystem::path &path, const std::string &text);
+    /// @brief 先写入同目录临时文件，再替换目标文件；失败时保留原文件。
+    /// @param path 文件、资源或目录路径。
+    /// @param text 要处理的 UTF-8 或普通文本。
+    /// @param keepBackup 覆盖已有文件前是否保留 `.bak` 副本。
+    /// @return 操作成功时返回 `true`，否则返回 `false`。
+    static bool WriteAllTextAtomic(const std::filesystem::path &path, const std::string &text, bool keepBackup = false);
     /// @brief 将输入值规范化。
     /// @param path 文件、资源或目录路径。
     /// @return 返回对应的文本或路径。

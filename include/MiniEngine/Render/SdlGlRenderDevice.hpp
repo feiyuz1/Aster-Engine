@@ -56,6 +56,8 @@ class SdlGlRenderDevice final : public RenderDevice
     /// @brief 开始一帧处理并准备帧级状态。
     /// @param view 当前帧的相机与光照视图数据。
     void BeginFrame(const FrameView &view) override;
+    /// @brief 绘制环境天空背景。
+    void DrawSkybox() override;
     /// @brief 提交或绘制当前对象。
     /// @param item 要处理的单个元素。
     void Draw(const RenderItem &item) override;

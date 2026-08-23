@@ -52,8 +52,6 @@ int main(int argc, char **argv)
         return 2;
     }
 
-    std::error_code error;
-    std::filesystem::current_path(executableDirectory, error);
     MiniEngine::Engine engine;
     if (!engine.Initialize(std::filesystem::absolute(projectFile).lexically_normal(), true))
         return 1;

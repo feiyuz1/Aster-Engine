@@ -182,6 +182,29 @@ constexpr const char *ToneVertexShaderSource = R"GLSL(
             }
         )GLSL";
 
+constexpr const char *SkyFragmentShaderSource = R"GLSL(
+            #version 330 core
+            in vec2 vUv;
+            uniform mat4 uProjection;
+            uniform mat4 uView;
+            uniform sampler2D uEnvironmentSky;
+            layout(location = 0) out vec4 outColor;
+            vec2 DirectionToEquirect(vec3 direction)
+            {
+                direction = normalize(direction);
+                return vec2(atan(direction.z, direction.x) / 6.2831853 + 0.5,
+                            asin(clamp(direction.y, -1.0, 1.0)) / 3.14159265 + 0.5);
+            }
+            void main()
+            {
+                vec2 ndc = vUv * 2.0 - 1.0;
+                vec3 viewDirection = normalize(vec3((ndc.x + uProjection[2][0]) / uProjection[0][0],
+                                                     (ndc.y + uProjection[2][1]) / uProjection[1][1], -1.0));
+                vec3 worldDirection = normalize(transpose(mat3(uView)) * viewDirection);
+                outColor = vec4(texture(uEnvironmentSky, DirectionToEquirect(worldDirection)).rgb, 1.0);
+            }
+        )GLSL";
+
 constexpr const char *HzbFragmentShaderSource = R"GLSL(
             #version 330 core
             in vec2 vUv;
@@ -595,7 +618,7 @@ struct SdlGlRenderDevice::Impl
     SDL_GLContext context = nullptr;
     InputState input;
     FrameView view;
-    GLuint program = 0, shadowProgram = 0, toneProgram = 0, presentProgram = 0, hzbProgram = 0, gtaoProgram = 0, bloomProgram = 0,
+    GLuint program = 0, shadowProgram = 0, skyProgram = 0, toneProgram = 0, presentProgram = 0, hzbProgram = 0, gtaoProgram = 0, bloomProgram = 0,
            taaProgram = 0, gpuCullProgram = 0, uiProgram = 0, particleProgram = 0, gpuParticleProgram = 0, fullScreenVao = 0,
            particleInstanceBuffer = 0;
     GLuint uiVao = 0, uiVertexBuffer = 0, uiIndexBuffer = 0, fontAtlas = 0;
@@ -652,6 +675,7 @@ struct SdlGlRenderDevice::Impl
     GLint environmentIrradianceLocation = -1, environmentPrefilterLocation = -1, environmentBrdfLocation = -1, hasEnvironmentLocation = -1;
     GLint shadowMvpLocation = -1, shadowLightViewProjectionLocation = -1, shadowInstancedLocation = -1, shadowAlphaTextureLocation = -1,
           shadowHasAlphaTextureLocation = -1, shadowOpacityLocation = -1;
+    GLint skyProjectionLocation = -1, skyViewLocation = -1, skyEnvironmentLocation = -1;
     GLint exposureLocation = -1, inverseResolutionLocation = -1, fxaaEnabledLocation = -1;
     GLint hzbSourceLocation = -1, hzbSourceTexelLocation = -1;
     GLint gtaoDepthLocation = -1, gtaoInverseResolutionLocation = -1;
@@ -1244,6 +1268,7 @@ struct SdlGlRenderDevice::Impl
     bool CreateAuxiliaryPrograms()
     {
         shadowProgram = CreateLinkedProgram(ShadowVertexShaderSource, ShadowFragmentShaderSource);
+        skyProgram = CreateLinkedProgram(ToneVertexShaderSource, SkyFragmentShaderSource);
         toneProgram = CreateLinkedProgram(ToneVertexShaderSource, FinalToneFragmentShaderSource);
         presentProgram = CreateLinkedProgram(ToneVertexShaderSource, PresentFragmentShaderSource);
         hzbProgram = CreateLinkedProgram(ToneVertexShaderSource, HzbFragmentShaderSource);
@@ -1258,7 +1283,7 @@ struct SdlGlRenderDevice::Impl
         uiProgram = CreateLinkedProgram(UiVertexShaderSource, UiFragmentShaderSource);
         particleProgram = CreateLinkedProgram(ParticleVertexShaderSource, ParticleFragmentShaderSource);
         gpuParticleProgram = CreateLinkedProgram(GpuParticleVertexShaderSource, GpuParticleFragmentShaderSource);
-        if (!shadowProgram || !toneProgram || !presentProgram || !hzbProgram || !gtaoProgram || !bloomProgram || !taaProgram ||
+        if (!shadowProgram || !skyProgram || !toneProgram || !presentProgram || !hzbProgram || !gtaoProgram || !bloomProgram || !taaProgram ||
             !uiProgram || !particleProgram || !gpuParticleProgram)
             return false;
         shadowMvpLocation = GetUniformLocation(shadowProgram, "uLightMvp");
@@ -1267,6 +1292,9 @@ struct SdlGlRenderDevice::Impl
         shadowAlphaTextureLocation = GetUniformLocation(shadowProgram, "uShadowAlphaTexture");
         shadowHasAlphaTextureLocation = GetUniformLocation(shadowProgram, "uShadowHasAlphaTexture");
         shadowOpacityLocation = GetUniformLocation(shadowProgram, "uShadowOpacity");
+        skyProjectionLocation = GetUniformLocation(skyProgram, "uProjection");
+        skyViewLocation = GetUniformLocation(skyProgram, "uView");
+        skyEnvironmentLocation = GetUniformLocation(skyProgram, "uEnvironmentSky");
         toneResolvedLocation = GetUniformLocation(toneProgram, "uResolved");
         presentSceneColorLocation = GetUniformLocation(presentProgram, "uSceneColor");
         exposureLocation = GetUniformLocation(toneProgram, "uExposure");
@@ -1420,9 +1448,11 @@ struct SdlGlRenderDevice::Impl
         EnableVertexAttribArray(4);
         VertexAttribPointer(5, 4, GL_FLOAT, GL_FALSE, sizeof(MeshVertex), reinterpret_cast<void *>(offsetof(MeshVertex, boneWeights)));
         EnableVertexAttribArray(5);
+        // 已启用的顶点属性即使在 Shader 分支中未使用也可能被驱动抓取；普通绘制必须有合法的实例属性 0。
+        const Mat4 identityInstance = Mat4::Identity();
         GenBuffers(1, &mesh.instanceBuffer);
         BindBuffer(GL_ARRAY_BUFFER, mesh.instanceBuffer);
-        BufferData(GL_ARRAY_BUFFER, 0, nullptr, GL_DYNAMIC_DRAW);
+        BufferData(GL_ARRAY_BUFFER, sizeof(Mat4), identityInstance.Data(), GL_DYNAMIC_DRAW);
         for (GLuint column = 0; column < 4; ++column)
         {
             VertexAttribPointer(8 + column, 4, GL_FLOAT, GL_FALSE, sizeof(Mat4),
@@ -1432,7 +1462,7 @@ struct SdlGlRenderDevice::Impl
         }
         GenBuffers(1, &mesh.previousInstanceBuffer);
         BindBuffer(GL_ARRAY_BUFFER, mesh.previousInstanceBuffer);
-        BufferData(GL_ARRAY_BUFFER, 0, nullptr, GL_DYNAMIC_DRAW);
+        BufferData(GL_ARRAY_BUFFER, sizeof(Mat4), identityInstance.Data(), GL_DYNAMIC_DRAW);
         for (GLuint column = 0; column < 4; ++column)
         {
             VertexAttribPointer(12 + column, 4, GL_FLOAT, GL_FALSE, sizeof(Mat4),
@@ -1691,6 +1721,11 @@ void SdlGlRenderDevice::Shutdown()
         {
             m_impl->DeleteProgram(m_impl->shadowProgram);
             m_impl->shadowProgram = 0;
+        }
+        if (m_impl->skyProgram)
+        {
+            m_impl->DeleteProgram(m_impl->skyProgram);
+            m_impl->skyProgram = 0;
         }
         if (m_impl->toneProgram)
         {
@@ -2070,6 +2105,33 @@ void SdlGlRenderDevice::BeginFrame(const FrameView &view)
     m_impl->Uniform3f(m_impl->cameraPositionLocation, view.cameraPosition.x, view.cameraPosition.y, view.cameraPosition.z);
     m_impl->Uniform1i(m_impl->textureLocation, 0);
     m_impl->ActiveTexture(GL_TEXTURE0);
+}
+
+// 天空在几何体之前写入 HDR 目标；随后网格的深度测试和颜色写入会自然覆盖它。
+void SdlGlRenderDevice::DrawSkybox()
+{
+    if (!m_impl || !m_impl->view.environmentSky || !m_impl->view.environmentSky->IsReady())
+        return;
+    const GLuint skyTexture = m_impl->GetOrCreateTexture(m_impl->view.environmentSky, false);
+    if (!skyTexture)
+        return;
+    glDisable(GL_DEPTH_TEST);
+    glDepthMask(GL_FALSE);
+    glDisable(GL_CULL_FACE);
+    m_impl->UseProgram(m_impl->skyProgram);
+    m_impl->UniformMatrix4fv(m_impl->skyProjectionLocation, 1, GL_FALSE, m_impl->view.projection.Data());
+    m_impl->UniformMatrix4fv(m_impl->skyViewLocation, 1, GL_FALSE, m_impl->view.view.Data());
+    m_impl->ActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, skyTexture);
+    m_impl->Uniform1i(m_impl->skyEnvironmentLocation, 0);
+    m_impl->BindVertexArray(m_impl->fullScreenVao);
+    glDrawArrays(GL_TRIANGLES, 0, 3);
+    m_impl->BindVertexArray(0);
+    m_impl->ActiveTexture(GL_TEXTURE0);
+    m_impl->UseProgram(m_impl->program);
+    glEnable(GL_CULL_FACE);
+    glEnable(GL_DEPTH_TEST);
+    glDepthMask(GL_TRUE);
 }
 
 void SdlGlRenderDevice::Draw(const RenderItem &item)

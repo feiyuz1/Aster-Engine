@@ -25,6 +25,7 @@ struct PackageResult
     bool success = false;
     std::filesystem::path outputDirectory;
     std::filesystem::path executable;
+    std::filesystem::path buildInfo;
     std::filesystem::path projectFile;
     std::filesystem::path archive;
     std::size_t stagedFiles = 0;

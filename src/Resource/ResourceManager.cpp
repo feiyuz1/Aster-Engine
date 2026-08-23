@@ -5,6 +5,8 @@
 
 #include "MiniEngine/Resource/ResourceManager.hpp"
 
+#include "MiniEngine/Platform/Platform.hpp"
+
 #include <filesystem>
 
 namespace MiniEngine
@@ -80,7 +82,7 @@ bool ResourceManager::Reload(const std::string &path)
         resource = found->second;
     }
     resource->Unload();
-    return resource->Load(key);
+    return resource->Load(ResolvePath(key));
 }
 
 std::size_t ResourceManager::GetCachedResourceCount() const
@@ -113,6 +115,25 @@ std::string ResourceManager::NormalizePath(const std::string &path)
     return std::filesystem::path(path).lexically_normal().generic_string();
 }
 
+std::string ResourceManager::ResolvePath(const std::string &path) const
+{
+    const std::filesystem::path logical(path);
+    if (logical.is_absolute())
+        return logical.lexically_normal().generic_string();
+    const auto root = std::filesystem::absolute(m_assetRoot).lexically_normal();
+    std::filesystem::path candidate = root / logical;
+    const auto first = logical.begin();
+    if (first != logical.end() && *first == root.filename())
+        candidate = root.parent_path() / logical;
+    std::error_code error;
+    if (std::filesystem::is_regular_file(candidate, error))
+        return candidate.lexically_normal().generic_string();
+    // 包内资源通过 PlatformFile 的逻辑 URI 查找，不能强制转成不存在的物理绝对路径。
+    if (PlatformFile::Exists(logical))
+        return logical.lexically_normal().generic_string();
+    return candidate.lexically_normal().generic_string();
+}
+
 std::shared_ptr<Resource> ResourceManager::LoadWithRegisteredLoaders(const std::string &path)
 {
     std::vector<std::shared_ptr<IAssetLoader>> loaders;
@@ -123,7 +144,7 @@ std::shared_ptr<Resource> ResourceManager::LoadWithRegisteredLoaders(const std::
     const std::string extension = std::filesystem::path(path).extension().string();
     for (const auto &loader : loaders)
         if (loader && loader->CanLoad(extension))
-            return loader->Load(path);
+            return loader->Load(ResolvePath(path));
     return nullptr;
 }
 } // namespace MiniEngine

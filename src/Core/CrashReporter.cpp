@@ -11,6 +11,7 @@
 #include <exception>
 #include <iomanip>
 #include <sstream>
+#include <vector>
 #ifdef _WIN32
 #define NOMINMAX
 // clang-format off: DbgHelp requires Windows types to be declared first.
@@ -41,6 +42,64 @@ std::string Timestamp()
     return output.str();
 }
 #ifdef _WIN32
+std::string DescribeException(EXCEPTION_POINTERS *exception)
+{
+    if (!exception || !exception->ExceptionRecord || !exception->ContextRecord)
+        return "Unhandled structured exception";
+
+    std::ostringstream description;
+    description << "Unhandled structured exception code=0x" << std::hex << std::uppercase
+                << exception->ExceptionRecord->ExceptionCode << " address=0x"
+                << reinterpret_cast<std::uintptr_t>(exception->ExceptionRecord->ExceptionAddress);
+
+    HANDLE process = GetCurrentProcess();
+    SymSetOptions(SYMOPT_LOAD_LINES | SYMOPT_UNDNAME | SYMOPT_DEFERRED_LOADS);
+    if (!SymInitialize(process, nullptr, TRUE))
+        return description.str();
+
+    CONTEXT context = *exception->ContextRecord;
+    STACKFRAME64 frame{};
+#if defined(_M_X64)
+    const DWORD machine = IMAGE_FILE_MACHINE_AMD64;
+    frame.AddrPC.Offset = context.Rip;
+    frame.AddrFrame.Offset = context.Rbp;
+    frame.AddrStack.Offset = context.Rsp;
+#elif defined(_M_IX86)
+    const DWORD machine = IMAGE_FILE_MACHINE_I386;
+    frame.AddrPC.Offset = context.Eip;
+    frame.AddrFrame.Offset = context.Ebp;
+    frame.AddrStack.Offset = context.Esp;
+#else
+    SymCleanup(process);
+    return description.str();
+#endif
+    frame.AddrPC.Mode = AddrModeFlat;
+    frame.AddrFrame.Mode = AddrModeFlat;
+    frame.AddrStack.Mode = AddrModeFlat;
+
+    std::vector<unsigned char> symbolStorage(sizeof(SYMBOL_INFO) + MAX_SYM_NAME);
+    auto *symbol = reinterpret_cast<SYMBOL_INFO *>(symbolStorage.data());
+    symbol->SizeOfStruct = sizeof(SYMBOL_INFO);
+    symbol->MaxNameLen = MAX_SYM_NAME;
+    for (unsigned int depth = 0; depth < 32 && frame.AddrPC.Offset != 0; ++depth)
+    {
+        DWORD64 displacement = 0;
+        IMAGEHLP_LINE64 line{};
+        line.SizeOfStruct = sizeof(line);
+        DWORD lineDisplacement = 0;
+        description << "\nstack[" << std::dec << depth << "]=0x" << std::hex << frame.AddrPC.Offset;
+        if (SymFromAddr(process, frame.AddrPC.Offset, &displacement, symbol))
+            description << ' ' << symbol->Name << "+0x" << displacement;
+        if (SymGetLineFromAddr64(process, frame.AddrPC.Offset, &lineDisplacement, &line) && line.FileName)
+            description << " (" << line.FileName << ':' << std::dec << line.LineNumber << ')';
+        if (!StackWalk64(machine, process, GetCurrentThread(), &frame, &context, nullptr, SymFunctionTableAccess64,
+                         SymGetModuleBase64, nullptr))
+            break;
+    }
+    SymCleanup(process);
+    return description.str();
+}
+
 LONG WINAPI Unhandled(EXCEPTION_POINTERS *exception)
 {
     const auto base = directory / (application + "-" + Timestamp());
@@ -53,7 +112,7 @@ LONG WINAPI Unhandled(EXCEPTION_POINTERS *exception)
                           nullptr);
         CloseHandle(file);
     }
-    CrashReporter::WriteReport("Unhandled structured exception", directory);
+    CrashReporter::WriteReport(DescribeException(exception), directory);
     return EXCEPTION_EXECUTE_HANDLER;
 }
 #endif

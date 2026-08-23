@@ -57,7 +57,7 @@ void RegisterBuiltInCommandlets(CommandletRegistry &registry)
         const auto entries = assets.GetAssets();
         for (const auto &asset : entries)
             for (const auto &dependency : asset.dependencies)
-                if (!assets.Find(dependency) && !PlatformFile::Exists(dependency))
+                if (!assets.Find(dependency) && !assets.FindById(dependency) && !PlatformFile::Exists(dependency))
                     result.errors.push_back(asset.path + " -> missing " + dependency);
         result.exitCode = result.errors.empty() ? 0 : 1;
         result.output = "Validated " + std::to_string(entries.size()) + " assets";

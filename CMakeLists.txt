@@ -1,6 +1,17 @@
 cmake_minimum_required(VERSION 3.20)
 project(TinyEngine VERSION 0.27.0 LANGUAGES C CXX)
 
+execute_process(COMMAND git rev-parse --short=12 HEAD
+    WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+    OUTPUT_VARIABLE TINYENGINE_GIT_REVISION
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+    ERROR_QUIET)
+if(NOT TINYENGINE_GIT_REVISION)
+    set(TINYENGINE_GIT_REVISION "source-archive")
+endif()
+set(TINYENGINE_BUILD_ID "${PROJECT_VERSION}-${TINYENGINE_GIT_REVISION}")
+set(TINYENGINE_COMPILER_ID "${CMAKE_CXX_COMPILER_ID}-${CMAKE_CXX_COMPILER_VERSION}")
+
 option(TINYENGINE_BUILD_TESTS "Build TinyEngine tests" ON)
 option(TINYENGINE_BUILD_DEMO "Build TinyEngine demo" ON)
 option(TINYENGINE_BUILD_GAME "Build standalone TinyEngine game runtime" ON)
@@ -114,6 +125,7 @@ add_library(tinyengine STATIC
     src/Plugin/PluginManager.cpp
     src/Build/TargetPlatform.cpp
     src/Build/AssetCompiler.cpp
+    src/Build/BuildCompatibility.cpp
     src/Automation/Automation.cpp
     src/Render/Renderer.cpp
     src/Render/RenderGraph.cpp
@@ -134,7 +146,12 @@ add_library(tinyengine STATIC
 
 target_include_directories(tinyengine PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include> $<INSTALL_INTERFACE:include>)
 target_include_directories(tinyengine PRIVATE "${TINYENGINE_STB_DIR}")
-target_compile_definitions(tinyengine PRIVATE TINYENGINE_HAS_STB_VORBIS=1)
+target_compile_definitions(tinyengine PRIVATE
+    TINYENGINE_HAS_STB_VORBIS=1
+    TINYENGINE_VERSION="${PROJECT_VERSION}"
+    TINYENGINE_BUILD_ID="${TINYENGINE_BUILD_ID}"
+    TINYENGINE_BUILD_CONFIGURATION="$<CONFIG>"
+    TINYENGINE_COMPILER_ID="${TINYENGINE_COMPILER_ID}")
 if (TARGET SDL2::SDL2)
     target_link_libraries(tinyengine PUBLIC SDL2::SDL2 OpenGL::GL)
 elseif(TARGET SDL2-static)
@@ -173,6 +190,18 @@ if(TINYENGINE_BUILD_GAME)
     add_executable(tinyengine_game src/GameMain.cpp)
     target_link_libraries(tinyengine_game PRIVATE tinyengine)
     target_compile_definitions(tinyengine_game PRIVATE TINYENGINE_SHIPPING=1)
+    add_custom_command(TARGET tinyengine_game POST_BUILD
+        COMMAND ${CMAKE_COMMAND}
+            -DOUTPUT=$<TARGET_FILE:tinyengine_game>.buildinfo
+            -DENGINE_VERSION=${PROJECT_VERSION}
+            -DENGINE_ABI=1
+            -DSCENE_FORMAT=11
+            -DBUILD_ID=${TINYENGINE_BUILD_ID}
+            -DCONFIGURATION=$<CONFIG>
+            -DCOMPILER=${TINYENGINE_COMPILER_ID}
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/WriteBuildInfo.cmake"
+        COMMENT "Writing TinyEngine Game compatibility metadata"
+        VERBATIM)
 endif()
 
 if(TINYENGINE_BUILD_IMPORTERS)
@@ -235,6 +264,8 @@ if(TINYENGINE_BUILD_TESTS)
     target_compile_definitions(tinyengine PUBLIC TINYENGINE_TEST_HOOKS=1)
     add_executable(tinyengine_tests tests/EngineTests.cpp)
     target_link_libraries(tinyengine_tests PRIVATE tinyengine)
+    add_executable(tinyengine_scene_save_tests tests/SceneSaveTests.cpp)
+    target_link_libraries(tinyengine_scene_save_tests PRIVATE tinyengine)
     add_library(tinyengine_test_dynamic_plugin SHARED tests/TestDynamicPlugin.cpp)
     target_include_directories(tinyengine_test_dynamic_plugin PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
     add_executable(tinyengine_extended_tests tests/ExtendedRegressionTests.cpp)
@@ -254,6 +285,8 @@ if(TINYENGINE_BUILD_TESTS)
     endif()
     add_test(NAME tinyengine_core COMMAND tinyengine_tests)
     set_tests_properties(tinyengine_core PROPERTIES WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+    add_test(NAME tinyengine_scene_save COMMAND tinyengine_scene_save_tests)
+    set_tests_properties(tinyengine_scene_save PROPERTIES WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
     add_test(NAME tinyengine_extended COMMAND tinyengine_extended_tests)
     set_tests_properties(tinyengine_extended PROPERTIES WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
 endif()
@@ -263,10 +296,11 @@ if(MSVC)
     foreach(TINYENGINE_SOURCE_TARGET IN ITEMS
             tinyengine tinyengine_demo tinyengine_game tinyengine_importers tinyengine_editor
             tinyengine_asset_tool tinyengine_scene_tool tinyengine_package_tool tinyengine_commandlet
-            tinyengine_tests tinyengine_test_dynamic_plugin tinyengine_extended_tests
+            tinyengine_tests tinyengine_scene_save_tests tinyengine_test_dynamic_plugin tinyengine_extended_tests
             tinyengine_import_compatibility_tests)
         if(TARGET ${TINYENGINE_SOURCE_TARGET})
-            target_compile_options(${TINYENGINE_SOURCE_TARGET} PRIVATE /utf-8)
+            # /FS 在 CMake/MSBuild 并行编译时串行化各目标的 PDB 写入，避免编译器争用。
+            target_compile_options(${TINYENGINE_SOURCE_TARGET} PRIVATE /utf-8 /FS)
         endif()
     endforeach()
 endif()

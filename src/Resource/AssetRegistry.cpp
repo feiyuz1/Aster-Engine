@@ -5,10 +5,12 @@
 
 #include "MiniEngine/Resource/AssetRegistry.hpp"
 #include "MiniEngine/Core/Config.hpp"
+#include "MiniEngine/Platform/Platform.hpp"
 
 #include <algorithm>
 #include <chrono>
 #include <iomanip>
+#include <optional>
 #include <random>
 #include <sstream>
 
@@ -28,12 +30,12 @@ std::uint64_t Stamp(const std::filesystem::file_time_type time)
 {
     return static_cast<std::uint64_t>(time.time_since_epoch().count());
 }
-std::string AssetType(const std::string &extension)
+std::optional<std::string> AssetType(const std::string &extension)
 {
     if (extension == ".mesh" || extension == ".gltf" || extension == ".glb")
         return "Mesh";
-    if (extension == ".ppm" || extension == ".png" || extension == ".jpg" || extension == ".jpeg" || extension == ".hdr" ||
-        extension == ".dds" || extension == ".ktx2")
+    if (extension == ".ppm" || extension == ".png" || extension == ".jpg" || extension == ".jpeg" || extension == ".bmp" ||
+        extension == ".tif" || extension == ".tiff" || extension == ".hdr" || extension == ".dds" || extension == ".ktx2")
         return "Texture";
     if (extension == ".mat")
         return "Material";
@@ -59,9 +61,43 @@ std::string AssetType(const std::string &extension)
         return "MaterialGraph";
     if (extension == ".input")
         return "Input";
-    if (extension == ".ttf" || extension == ".otf")
+    if (extension == ".vfx")
+        return "VFX";
+    if (extension == ".btgraph")
+        return "BehaviorTree";
+    if (extension == ".ttf" || extension == ".otf" || extension == ".ttc")
         return "Font";
-    return "Binary";
+    // 建模源文件和显式通用数据即使不由运行时直接加载，也属于有效资产。
+    if (extension == ".fbx" || extension == ".obj" || extension == ".dae" || extension == ".3ds" || extension == ".blend" ||
+        extension == ".mtl" || extension == ".bin")
+        return "Binary";
+    return std::nullopt;
+}
+
+std::vector<std::string> InferStructuredDependencies(const std::filesystem::path &path, const std::string &type)
+{
+    std::vector<std::string> dependencies;
+    if (type != "BlendTree" && type != "AnimationGraph")
+        return dependencies;
+    std::istringstream input(PlatformFile::ReadAllText(path));
+    std::string token;
+    while (input >> token)
+    {
+        std::string dependency;
+        if (type == "BlendTree" && token == "sample")
+        {
+            float threshold = 0.0f;
+            input >> threshold >> std::quoted(dependency);
+        }
+        else if (type == "AnimationGraph" && token == "state")
+        {
+            std::string state;
+            input >> std::quoted(state) >> std::quoted(dependency);
+        }
+        if (!dependency.empty() && std::find(dependencies.begin(), dependencies.end(), dependency) == dependencies.end())
+            dependencies.push_back(std::move(dependency));
+    }
+    return dependencies;
 }
 } // namespace
 
@@ -77,22 +113,36 @@ void AssetRegistry::Scan(const std::filesystem::path &root, const bool createMet
     {
         if (!entry.is_regular_file())
             continue;
-        if (entry.path().extension() == ".meta")
+        auto extension = entry.path().extension().string();
+        std::transform(extension.begin(), extension.end(), extension.begin(),
+                       [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+        if (extension == ".meta" || extension == ".tmp" || extension == ".bak")
+            continue;
+        const auto metaPath = entry.path().lexically_normal().generic_string() + ".meta";
+        const auto inferredType = AssetType(extension);
+        // 未知文件默认不属于资产；已有的 sidecar 元数据仍可显式启用自定义资产格式。
+        if (!inferredType && !std::filesystem::is_regular_file(metaPath))
             continue;
         AssetInfo info;
         info.path = entry.path().lexically_normal().generic_string();
-        info.extension = entry.path().extension().string();
-        std::transform(info.extension.begin(), info.extension.end(), info.extension.begin(),
-                       [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-        info.type = AssetType(info.extension);
+        info.extension = extension;
+        info.type = inferredType.value_or("Binary");
         info.byteSize = entry.file_size();
         info.modified = entry.last_write_time();
         Config meta;
-        const auto metaPath = info.path + ".meta";
+        bool migrateMetadata = false;
         if (meta.Load(metaPath))
         {
             info.id = meta.GetString("asset.id");
-            info.type = meta.GetString("asset.type", info.type);
+            const std::string storedType = meta.GetString("asset.type", info.type);
+            // 正式扩展名是类型真相来源；旧版 Binary 不能永久覆盖后来补齐的推断规则。
+            if (!inferredType || *inferredType == "Binary")
+                info.type = storedType;
+            else
+            {
+                info.type = *inferredType;
+                migrateMetadata = storedType != *inferredType;
+            }
             try
             {
                 info.importedStamp = std::stoull(meta.GetString("asset.importedStamp", "0"));
@@ -108,9 +158,18 @@ void AssetRegistry::Scan(const std::filesystem::path &root, const bool createMet
                 if (pair.first.rfind("import.", 0) == 0)
                     info.importSettings[pair.first.substr(7)] = pair.second;
         }
+        if (info.type == "BlendTree" || info.type == "AnimationGraph")
+        {
+            auto inferredDependencies = InferStructuredDependencies(info.path, info.type);
+            if (info.dependencies != inferredDependencies)
+            {
+                info.dependencies = std::move(inferredDependencies);
+                migrateMetadata = true;
+            }
+        }
         if (info.id.empty())
             info.id = NewId();
-        if (createMetadata && !std::filesystem::exists(metaPath))
+        if (createMetadata && (!std::filesystem::exists(metaPath) || migrateMetadata))
             SaveMeta(info);
         m_byId[info.id] = info.path;
         m_assets[info.path] = info;
@@ -148,6 +207,7 @@ bool AssetRegistry::SaveMeta(const AssetInfo &info) const
 {
     Config meta;
     meta.Set("asset.id", info.id);
+    meta.Set("asset.schemaVersion", "2");
     meta.Set("asset.type", info.type);
     meta.Set("asset.importedStamp", std::to_string(info.importedStamp));
     meta.Set("dependencies.count", std::to_string(info.dependencies.size()));

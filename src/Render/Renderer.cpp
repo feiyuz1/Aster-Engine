@@ -60,6 +60,9 @@ void NullRenderDevice::EndShadowPass()
 void NullRenderDevice::BeginFrame(const FrameView &)
 {
 }
+void NullRenderDevice::DrawSkybox()
+{
+}
 void NullRenderDevice::Draw(const RenderItem &)
 {
 }
@@ -243,6 +246,8 @@ void Renderer::BuildRenderQueue(World &world)
     m_frameView.cameraPosition = cameraPosition;
     m_frameView.environmentTexture =
         m_resources && !m_environmentPath.empty() ? m_resources->Load<TextureResource>(m_environmentPath) : nullptr;
+    m_frameView.environmentSky =
+        m_resources && !m_environmentSkyPath.empty() ? m_resources->Load<TextureResource>(m_environmentSkyPath) : nullptr;
     m_frameView.environmentIrradiance =
         m_resources && !m_environmentIrradiancePath.empty() ? m_resources->Load<TextureResource>(m_environmentIrradiancePath) : nullptr;
     m_frameView.environmentPrefilter = m_resources && !m_environmentPrefilterPath.empty()
@@ -452,6 +457,7 @@ void Renderer::RenderFrame(World &world)
                                }});
     m_renderGraph.AddPass({"Forward+ Scene", {shadow0, shadow1, shadow2}, {hdr, depth, velocity}, [&] {
                                m_device->BeginFrame(m_frameView);
+                               m_device->DrawSkybox();
                                for (const auto &batch : batches)
                                    if (batch.size() > 1)
                                        m_device->DrawInstanced(batch);
@@ -496,7 +502,8 @@ void Renderer::RenderFrame(World &world)
                           m_renderGraph.GetPassCount(),
                           m_renderGraph.GetPhysicalResourceCount(),
                           m_frameView.clusteredLights.lightIndices.size()};
-    if (m_logger)
+    // 首帧和周期诊断保留可观测性；禁止正常运行时每帧写磁盘日志。
+    if (m_logger && (m_frameNumber == 1 || m_frameNumber % 300 == 0))
         m_logger->Debug("RenderFrame draw calls: " + std::to_string(m_lastDrawCalls));
 }
 
@@ -550,6 +557,7 @@ void Renderer::SetCameraOverride(const bool enabled, const Vec3 &position, const
 void Renderer::SetEnvironmentPath(std::string path)
 {
     m_environmentPath = std::move(path);
+    m_environmentSkyPath = m_environmentPath;
     m_environmentIrradiancePath.clear();
     m_environmentPrefilterPath.clear();
     m_environmentBrdfPath.clear();
@@ -566,6 +574,8 @@ void Renderer::SetEnvironmentPath(std::string path)
         const std::string resolved = (root / value).lexically_normal().generic_string();
         if (token == "irradiance")
             m_environmentIrradiancePath = resolved;
+        else if (token == "sky")
+            m_environmentSkyPath = resolved;
         else if (token == "prefilter")
             m_environmentPrefilterPath = resolved;
         else if (token == "brdf")

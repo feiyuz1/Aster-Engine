@@ -68,6 +68,10 @@ class EditorApp
     void DrawBehaviorTreeEditor();
     /// @brief 绘制 `SceneTabs`。
     void DrawSceneTabs();
+    /// @brief 绘制未命名场景首次保存和另存为对话框。
+    void DrawSceneSaveDialog();
+    /// @brief 绘制脏场景标签关闭确认对话框。
+    void DrawSceneCloseDialog();
     /// @brief 记录 `Undo`。
     void RecordUndo();
     /// @brief 撤销最近一次可撤销操作。
@@ -77,6 +81,20 @@ class EditorApp
     /// @brief 保存 `CurrentScene`。
     /// @return 操作成功时返回 `true`，否则返回 `false`。
     bool SaveCurrentScene();
+    /// @brief 请求为当前场景选择新的保存路径。
+    /// @return 成功打开对话框时返回 `true`，否则返回 `false`。
+    bool RequestSaveCurrentSceneAs();
+    /// @brief 将当前 World 保存到指定场景文档及路径。
+    /// @param documentIndex 目标场景文档索引。
+    /// @param path 经过验证的场景文件绝对路径。
+    /// @return 操作成功时返回 `true`，否则返回 `false`。
+    bool SaveSceneDocumentTo(std::size_t documentIndex, const std::filesystem::path &path);
+    /// @brief 校验另存为输入并解析为资产目录内的绝对路径。
+    /// @param error 校验失败时写入面向用户的错误消息。
+    /// @return 校验成功时返回目标路径，否则返回空路径。
+    std::filesystem::path ResolveSceneSavePath(std::string &error);
+    /// @brief 在场景已成功保存后执行项目打包。
+    void PackageProject();
     /// @brief 将当前编辑状态自动保存到恢复文件。
     /// @return 操作成功时返回 `true`，否则返回 `false`。
     bool Autosave();
@@ -115,6 +133,10 @@ class EditorApp
     /// @param index 目标元素或骨骼索引。
     /// @return 操作成功时返回 `true`，否则返回 `false`。
     bool SwitchSceneDocument(std::size_t index);
+    /// @brief 关闭指定场景文档；最后一个标签关闭后创建空白文档，保持编辑器状态有效。
+    /// @param index 要关闭的场景文档索引。
+    /// @return 操作成功时返回 `true`，否则返回 `false`。
+    bool CloseSceneDocument(std::size_t index);
     // 资产放置是一个可撤销事务：根据资产类型创建或修改实体，并将场景标记为脏。
     /// @brief 放置 `AssetInScene`。
     /// @param asset 要加载、维护或放置的资产信息。
@@ -234,6 +256,20 @@ class EditorApp
     };
     std::vector<SceneDocument> m_sceneDocuments;
     std::size_t m_activeSceneDocument = 0;
+    static constexpr std::size_t InvalidSceneDocument = static_cast<std::size_t>(-1);
+    // 程序化创建/打开标签后，下一帧显式要求 ImGui 选中它，避免 UI 又切回旧文档。
+    std::size_t m_pendingSelectedSceneDocument = InvalidSceneDocument;
+    // Save As 是异步 UI 流程；记录发起保存的文档，禁止对话框期间把路径写给其他标签。
+    std::size_t m_sceneSaveDocument = InvalidSceneDocument;
+    bool m_requestSceneSavePopup = false;
+    bool m_packageAfterSceneSave = false;
+    std::array<char, 1024> m_sceneSavePath{};
+    std::string m_sceneSaveError;
+    std::filesystem::path m_sceneOverwriteTarget;
+    // 关闭脏标签是独立事务；Save As 成功后可继续完成最初的关闭请求。
+    std::size_t m_sceneCloseDocument = InvalidSceneDocument;
+    bool m_requestSceneClosePopup = false;
+    bool m_closeAfterSceneSave = false;
 #ifdef TINYENGINE_HAS_ASSIMP
     AssetImportQueue m_importQueue;
     std::uint64_t m_activeImportTask = 0;

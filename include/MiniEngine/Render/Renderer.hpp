@@ -66,6 +66,7 @@ struct FrameView
     int lightCount = 0;
     ClusteredLightGrid clusteredLights;
     std::shared_ptr<TextureResource> environmentTexture;
+    std::shared_ptr<TextureResource> environmentSky;
     std::shared_ptr<TextureResource> environmentIrradiance;
     std::shared_ptr<TextureResource> environmentPrefilter;
     std::shared_ptr<TextureResource> environmentBrdfLut;
@@ -150,6 +151,8 @@ class RenderDevice
     /// @brief 开始一帧处理并准备帧级状态。
     /// @param view 当前帧的相机与光照视图数据。
     virtual void BeginFrame(const FrameView &view) = 0;
+    /// @brief 绘制环境天空背景。
+    virtual void DrawSkybox() = 0;
     /// @brief 提交或绘制当前对象。
     /// @param item 要处理的单个元素。
     virtual void Draw(const RenderItem &item) = 0;
@@ -218,6 +221,8 @@ class NullRenderDevice final : public RenderDevice
     /// @brief 开始一帧处理并准备帧级状态。
     /// @param view 当前帧的相机与光照视图数据。
     void BeginFrame(const FrameView &view) override;
+    /// @brief 绘制环境天空背景。
+    void DrawSkybox() override;
     /// @brief 提交或绘制当前对象。
     /// @param item 要处理的单个元素。
     void Draw(const RenderItem &item) override;
@@ -358,6 +363,7 @@ class Renderer
     Vec3 m_cameraOverrideRotation{-10.0f, 0.0f, 0.0f};
     float m_cameraOverrideFov = 60.0f;
     std::string m_environmentPath;
+    std::string m_environmentSkyPath;
     std::string m_environmentIrradiancePath;
     std::string m_environmentPrefilterPath;
     std::string m_environmentBrdfPath;

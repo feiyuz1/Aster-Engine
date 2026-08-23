@@ -8,6 +8,7 @@
 #include "MiniEngine/Audio/AudioEngine.hpp"
 #include "MiniEngine/Automation/Automation.hpp"
 #include "MiniEngine/Build/AssetCompiler.hpp"
+#include "MiniEngine/Build/BuildCompatibility.hpp"
 #include "MiniEngine/Build/TargetPlatform.hpp"
 #include "MiniEngine/Cinematic/Sequencer.hpp"
 #include "MiniEngine/Core/Config.hpp"
@@ -188,6 +189,15 @@ int main()
     VersionedDocument loadedVersioned;
     CHECK(VersionedTextArchive::Deserialize(PlatformFile::ReadAllText("Saved/Test.archive"), loadedVersioned));
     CHECK(loadedVersioned.version == 2 && loadedVersioned.fields["newName"] == "value");
+    const std::filesystem::path atomicTextPath = "Saved/AtomicText.txt";
+    std::filesystem::remove(atomicTextPath);
+    std::filesystem::remove(atomicTextPath.string() + ".bak");
+    std::filesystem::remove(atomicTextPath.string() + ".tmp");
+    CHECK(PlatformFile::WriteAllTextAtomic(atomicTextPath, "before", true));
+    CHECK(PlatformFile::WriteAllTextAtomic(atomicTextPath, "after", true));
+    CHECK(PlatformFile::ReadAllText(atomicTextPath) == "after");
+    CHECK(PlatformFile::ReadAllText(atomicTextPath.string() + ".bak") == "before");
+    CHECK(!std::filesystem::exists(atomicTextPath.string() + ".tmp"));
 
     World world;
     const Entity first = world.CreateEntity("First");
@@ -229,6 +239,7 @@ int main()
     serializedAnimation.graphParameterValue = 2.5f;
     world.AddComponent(replacement, serializedAnimation);
     CHECK(SceneSerializer::Save(world, "Saved/Test.scene"));
+    CHECK(!SceneSerializer::Save(world, {}));
     World loaded;
     CHECK(SceneSerializer::Load(loaded, "Saved/Test.scene"));
     CHECK(loaded.GetEntityManager().GetAliveEntities().size() == 2);
@@ -419,6 +430,19 @@ int main()
           bakedBrdf.Load(bakedEnvironment.brdfLutPath.generic_string()) && bakedIrradiance.IsHdr() &&
           bakedIrradiance.GetWidth() == 16 * 6 && bakedIrradiance.GetHeight() == 16 && bakedPrefilter.GetWidth() == 32 * 6 &&
           bakedPrefilter.GetHeight() == 32 * 6 && bakedBrdf.GetWidth() == 128);
+    CHECK(PlatformFile::ReadAllText(bakedEnvironment.environmentPath).find("sky \"../../assets/default.ppm\"") != std::string::npos);
+    ResourceManager environmentResources;
+    environmentResources.Initialize(nullptr, bakedEnvironment.environmentPath.parent_path());
+    Renderer environmentRenderer;
+    environmentRenderer.SetResourceManager(&environmentResources);
+    environmentRenderer.SetEnvironmentPath(std::filesystem::absolute(bakedEnvironment.environmentPath).lexically_normal().generic_string());
+    CHECK(environmentRenderer.Initialize(std::make_unique<NullRenderDevice>()));
+    World environmentWorld;
+    environmentWorld.AddComponent(environmentWorld.CreateEntity("Camera"), CameraComponent{});
+    environmentRenderer.BuildRenderQueue(environmentWorld);
+    CHECK(environmentRenderer.GetFrameView().environmentSky && environmentRenderer.GetFrameView().environmentSky->IsReady());
+    environmentRenderer.Shutdown();
+    environmentResources.Shutdown();
     const std::vector<std::uint8_t> pngBytes{0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48,
                                              0x44, 0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00,
                                              0x00, 0x1f, 0x15, 0xc4, 0x89, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x44, 0x41, 0x54, 0x08,
@@ -469,6 +493,14 @@ int main()
     CHECK(skinnedMesh.Load("Saved/Skinned.mesh") && skinnedMesh.GetVertices().size() == 3);
     CHECK(std::abs(skinnedMesh.GetVertices()[1].boneWeights.x - 0.75f) < 0.001f &&
           std::abs(skinnedMesh.GetVertices()[1].boneIndices.y - 1.0f) < 0.001f);
+    CHECK(PlatformFile::WriteAllText("Saved/IndexedQuad.mesh",
+                                     "TINY_MESH 2\nv 0 0 0\nv 1 0 0\nv 1 1 0\nv 0 1 0\n"
+                                     "vt 0 0\nvt 1 0\nvt 1 1\nvt 0 1\n"
+                                     "vn 0 0 1\nvn 0 0 1\nvn 0 0 1\nvn 0 0 1\n"
+                                     "f 1/1/1 2/2/2 3/3/3\nf 1/1/1 3/3/3 4/4/4\n"));
+    MeshResource indexedQuad;
+    CHECK(indexedQuad.Load("Saved/IndexedQuad.mesh") && indexedQuad.GetVertices().size() == 4 &&
+          indexedQuad.GetIndices().size() == 6 && indexedQuad.GetIndices()[0] == indexedQuad.GetIndices()[3]);
     ShaderResource shader;
     CHECK(shader.Load("assets/shaders/default.vert"));
     CHECK(shader.GetSource().find("uShadowViewProjections") != std::string::npos &&
@@ -489,10 +521,18 @@ int main()
     const auto packedMesh = PakArchive::ReadFile("Saved/Test.tpak", "player.mesh");
     CHECK(packedMesh.has_value() && !packedMesh->empty());
     CHECK(PlatformFile::WriteAllBytes("Saved/FakeGame.exe", {0x4d, 0x5a, 0x00, 0x00}));
+    CHECK(BuildCompatibility::Save(BuildCompatibility::SidecarPath("Saved/FakeGame.exe"), BuildCompatibility::Current()));
     const auto package = ProjectPackager::Package({"TinyEngine.tinyproject", "Saved/TestPackage", "Saved/FakeGame.exe"});
-    CHECK(package.success && std::filesystem::is_regular_file(package.archive) && std::filesystem::is_regular_file(package.projectFile));
+    CHECK(package.success && std::filesystem::is_regular_file(package.archive) && std::filesystem::is_regular_file(package.projectFile) &&
+          std::filesystem::is_regular_file(package.buildInfo));
     CHECK(!PakArchive::List(package.archive).empty() &&
-          PlatformFile::ReadAllText("Saved/TestPackage/Package.manifest").find("package.version=1") != std::string::npos);
+          PlatformFile::ReadAllText("Saved/TestPackage/Package.manifest").find("package.engineAbi=1") != std::string::npos);
+    auto incompatibleBuild = BuildCompatibility::Current();
+    ++incompatibleBuild.engineAbi;
+    CHECK(BuildCompatibility::Save(BuildCompatibility::SidecarPath("Saved/FakeGame.exe"), incompatibleBuild));
+    const auto incompatiblePackage =
+        ProjectPackager::Package({"TinyEngine.tinyproject", "Saved/TestPackageRejected", "Saved/FakeGame.exe"});
+    CHECK(!incompatiblePackage.success && !incompatiblePackage.errors.empty());
     AssetRegistry registry;
     registry.Scan("assets");
     const auto meshInfo = registry.Find("assets/player.mesh");
@@ -500,6 +540,48 @@ int main()
     CHECK(registry.FindById(meshInfo->id).has_value());
     const auto shaderInfo = registry.Find("assets/shaders/default.frag");
     CHECK(shaderInfo.has_value() && shaderInfo->type == "Shader");
+    const std::filesystem::path registryMigration = "Saved/RegistryMigration";
+    std::filesystem::create_directories(registryMigration);
+    CHECK(PlatformFile::WriteAllText(registryMigration / "effect.vfx", "TINY_VFX 1\n"));
+    CHECK(PlatformFile::WriteAllText(registryMigration / "behavior.btgraph", "TINY_BTGRAPH 1\n"));
+    CHECK(PlatformFile::WriteAllText(registryMigration / "legacy.anim", "duration 1\n"));
+    CHECK(PlatformFile::WriteAllText(registryMigration / "graph.animgraph",
+                                     "TINY_ANIMGRAPH 1\nentry \"Idle\"\nstate \"Idle\" \"assets/walk.skanim\"\n"));
+    for (const auto &name : {"effect.vfx", "behavior.btgraph", "legacy.anim", "graph.animgraph"})
+        CHECK(PlatformFile::WriteAllText(registryMigration / (std::string(name) + ".meta"),
+                                         "asset.id=" + std::string(32, name[0]) +
+                                             "\nasset.type=Binary\nasset.importedStamp=0\ndependencies.count=0\n"));
+    AssetRegistry migratedRegistry;
+    migratedRegistry.Scan(registryMigration);
+    const auto migratedVfx = migratedRegistry.Find((registryMigration / "effect.vfx").generic_string());
+    const auto migratedBehavior = migratedRegistry.Find((registryMigration / "behavior.btgraph").generic_string());
+    const auto migratedAnimation = migratedRegistry.Find((registryMigration / "legacy.anim").generic_string());
+    const auto migratedGraph = migratedRegistry.Find((registryMigration / "graph.animgraph").generic_string());
+    CHECK(migratedVfx && migratedVfx->type == "VFX" && migratedBehavior && migratedBehavior->type == "BehaviorTree" &&
+          migratedAnimation && migratedAnimation->type == "Animation" && migratedGraph &&
+          migratedGraph->dependencies == std::vector<std::string>{"assets/walk.skanim"});
+    CHECK(PlatformFile::ReadAllText(registryMigration / "graph.animgraph.meta").find("asset.schemaVersion=2") != std::string::npos);
+    const std::filesystem::path registryFilter = "Saved/RegistryFilter";
+    std::filesystem::remove_all(registryFilter);
+    std::filesystem::create_directories(registryFilter);
+    CHECK(PlatformFile::WriteAllText(registryFilter / "Source.cpp", "int ignored = 0;\n"));
+    CHECK(PlatformFile::WriteAllText(registryFilter / "Header.hpp", "#pragma once\n"));
+    CHECK(PlatformFile::WriteAllText(registryFilter / "Notes.md", "not an engine asset\n"));
+    CHECK(PlatformFile::WriteAllBytes(registryFilter / "Payload.bin", {0x01, 0x02, 0x03}));
+    CHECK(PlatformFile::WriteAllText(registryFilter / "Model.obj", "v 0 0 0\n"));
+    AssetRegistry filteredRegistry;
+    filteredRegistry.Scan(registryFilter);
+    CHECK(!filteredRegistry.Find((registryFilter / "Source.cpp").generic_string()) &&
+          !filteredRegistry.Find((registryFilter / "Header.hpp").generic_string()) &&
+          !filteredRegistry.Find((registryFilter / "Notes.md").generic_string()));
+    CHECK(!std::filesystem::exists(registryFilter / "Source.cpp.meta") &&
+          !std::filesystem::exists(registryFilter / "Header.hpp.meta") &&
+          !std::filesystem::exists(registryFilter / "Notes.md.meta"));
+    const auto binaryPayload = filteredRegistry.Find((registryFilter / "Payload.bin").generic_string());
+    const auto modelSource = filteredRegistry.Find((registryFilter / "Model.obj").generic_string());
+    CHECK(binaryPayload && binaryPayload->type == "Binary" && modelSource && modelSource->type == "Binary" &&
+          std::filesystem::is_regular_file(registryFilter / "Payload.bin.meta") &&
+          std::filesystem::is_regular_file(registryFilter / "Model.obj.meta"));
     CHECK(registry.MarkImported("assets/player.mesh"));
     CHECK(!registry.NeedsReimport("assets/player.mesh"));
     AssetDependencyGraph dependencyGraph;

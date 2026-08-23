@@ -5,6 +5,7 @@
 
 #include "MiniEngine/Project/ProjectPackager.hpp"
 
+#include "MiniEngine/Build/BuildCompatibility.hpp"
 #include "MiniEngine/Core/Config.hpp"
 #include "MiniEngine/Platform/Platform.hpp"
 #include "MiniEngine/Project/Project.hpp"
@@ -105,6 +106,19 @@ PackageResult ProjectPackager::Package(const PackageOptions &options)
         result.errors.emplace_back("Game executable not found: " + options.gameExecutable.generic_string());
         return result;
     }
+    const auto sourceBuildInfo = BuildCompatibility::SidecarPath(options.gameExecutable);
+    RuntimeBuildInfo candidateBuild;
+    if (!BuildCompatibility::Load(sourceBuildInfo, candidateBuild))
+    {
+        result.errors.emplace_back("Game build metadata is missing or invalid: " + sourceBuildInfo.generic_string());
+        return result;
+    }
+    std::string compatibilityError;
+    if (!BuildCompatibility::IsCompatible(candidateBuild, &compatibilityError))
+    {
+        result.errors.emplace_back("Incompatible Game executable: " + compatibilityError);
+        return result;
+    }
     if (!IsSafeRelativePath(project.assetDirectory) || !IsSafeRelativePath(project.startupScene))
     {
         result.errors.emplace_back("Packaged asset and startup-scene paths must be relative and cannot contain '..'");
@@ -176,6 +190,9 @@ PackageResult ProjectPackager::Package(const PackageOptions &options)
     result.executable = output / executableName;
     if (!CopyFile(options.gameExecutable, result.executable, result))
         return result;
+    result.buildInfo = BuildCompatibility::SidecarPath(result.executable);
+    if (!CopyFile(sourceBuildInfo, result.buildInfo, result))
+        return result;
 
     ProjectSettings shippingProject = project;
     shippingProject.packageArchive = "Content/Game.tpak";
@@ -194,6 +211,12 @@ PackageResult ProjectPackager::Package(const PackageOptions &options)
     manifest.Set("package.projectFile", result.projectFile.filename().generic_string());
     manifest.Set("package.archive", "Content/Game.tpak");
     manifest.Set("package.startupScene", project.startupScene.generic_string());
+    manifest.Set("package.engineVersion", candidateBuild.engineVersion);
+    manifest.Set("package.engineAbi", std::to_string(candidateBuild.engineAbi));
+    manifest.Set("package.sceneFormat", std::to_string(candidateBuild.sceneFormat));
+    manifest.Set("package.buildId", candidateBuild.buildId);
+    manifest.Set("package.configuration", candidateBuild.configuration);
+    manifest.Set("package.compiler", candidateBuild.compiler);
     manifest.Set("package.stagedFiles", std::to_string(result.stagedFiles));
     manifest.Set("package.archiveBytes", std::to_string(result.archiveBytes));
     if (!manifest.Save((output / "Package.manifest").string()))

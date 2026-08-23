@@ -89,7 +89,13 @@ std::string SceneSerializer::Serialize(const World &world)
 
 bool SceneSerializer::Save(const World &world, const std::filesystem::path &path)
 {
-    return PlatformFile::WriteAllText(path, Serialize(world));
+    if (path.empty())
+        return false;
+    const std::string serialized = Serialize(world);
+    World validation;
+    if (!Deserialize(validation, serialized))
+        return false;
+    return PlatformFile::WriteAllTextAtomic(path, serialized, true);
 }
 
 bool SceneSerializer::Deserialize(World &world, const std::string &text)

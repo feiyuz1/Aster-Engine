@@ -98,10 +98,16 @@ std::string MaterialGraph::Compile(std::vector<std::string> *errors) const
     for (const auto &node : m_nodes)
         nodes[node.id] = &node;
     std::unordered_set<std::uint32_t> visiting;
+    std::unordered_set<std::uint32_t> cycleNodes;
     std::function<std::string(std::uint32_t)> expression = [&](const std::uint32_t id) -> std::string {
         const auto found = nodes.find(id);
-        if (found == nodes.end() || !visiting.insert(id).second)
+        if (found == nodes.end())
             return "vec4(1.0, 0.0, 1.0, 1.0)";
+        if (!visiting.insert(id).second)
+        {
+            cycleNodes.insert(id);
+            return "vec4(1.0, 0.0, 1.0, 1.0)";
+        }
         const MaterialNode &node = *found->second;
         std::string result;
         if (node.type == MaterialNodeType::Constant)
@@ -127,6 +133,22 @@ std::string MaterialGraph::Compile(std::vector<std::string> *errors) const
     for (const auto &link : m_links)
         if (link.toNode == output->id && link.toInput < 4)
             channels[link.toInput] = expression(link.fromNode);
+    if (!cycleNodes.empty())
+    {
+        if (errors)
+        {
+            std::ostringstream diagnostic;
+            diagnostic << "Material graph cycle detected at node" << (cycleNodes.size() == 1 ? " " : "s ");
+            bool first = true;
+            for (const auto id : cycleNodes)
+            {
+                diagnostic << (first ? "" : ", ") << id;
+                first = false;
+            }
+            errors->push_back(diagnostic.str());
+        }
+        return {};
+    }
     std::ostringstream shader;
     shader << "#version 330 core\nin vec3 vNormal; in vec3 vWorldPosition; in vec2 vUv; out vec4 outColor;\n";
     for (const auto &node : m_nodes)

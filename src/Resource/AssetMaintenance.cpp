@@ -133,7 +133,8 @@ std::vector<MissingAssetDependency> AssetMaintenance::FindMissingDependencies(co
     for (const auto &asset : assets)
         for (const auto &dependency : asset.dependencies)
         {
-            if (registry.Find(dependency) || std::filesystem::is_regular_file(dependency))
+            // Meta 依赖既可以是稳定 GUID，也可以是路径；两种形式都是正式引用。
+            if (registry.Find(dependency) || registry.FindById(dependency) || std::filesystem::is_regular_file(dependency))
                 continue;
             MissingAssetDependency issue{asset.path, dependency, {}};
             const std::filesystem::path missing = dependency;

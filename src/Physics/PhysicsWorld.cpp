@@ -148,6 +148,82 @@ bool MeshTrianglesOverlapBounds(const World &world, const Entity meshEntity, con
     }
     return false;
 }
+
+Vec3 ClosestPointOnTriangle(const Vec3 &point, const Vec3 &a, const Vec3 &b, const Vec3 &c)
+{
+    const Vec3 ab = b - a, ac = c - a, ap = point - a;
+    const float d1 = Dot(ab, ap), d2 = Dot(ac, ap);
+    if (d1 <= 0.0f && d2 <= 0.0f)
+        return a;
+    const Vec3 bp = point - b;
+    const float d3 = Dot(ab, bp), d4 = Dot(ac, bp);
+    if (d3 >= 0.0f && d4 <= d3)
+        return b;
+    const float vc = d1 * d4 - d3 * d2;
+    if (vc <= 0.0f && d1 >= 0.0f && d3 <= 0.0f)
+        return a + ab * (d1 / (d1 - d3));
+    const Vec3 cp = point - c;
+    const float d5 = Dot(ab, cp), d6 = Dot(ac, cp);
+    if (d6 >= 0.0f && d5 <= d6)
+        return c;
+    const float vb = d5 * d2 - d1 * d6;
+    if (vb <= 0.0f && d2 >= 0.0f && d6 <= 0.0f)
+        return a + ac * (d2 / (d2 - d6));
+    const float va = d3 * d6 - d5 * d4;
+    if (va <= 0.0f && d4 - d3 >= 0.0f && d5 - d6 >= 0.0f)
+        return b + (c - b) * ((d4 - d3) / ((d4 - d3) + (d5 - d6)));
+    const float denominator = 1.0f / (va + vb + vc);
+    return a + ab * (vb * denominator) + ac * (vc * denominator);
+}
+
+bool MeshSphereContact(const World &world, const Entity meshEntity, const Entity sphereEntity, Vec3 &meshToSphere,
+                       float &penetration)
+{
+    const auto *meshCollider = world.GetComponent<ColliderComponent>(meshEntity);
+    const auto *meshTransform = world.GetComponent<TransformComponent>(meshEntity);
+    const auto *sphereCollider = world.GetComponent<ColliderComponent>(sphereEntity);
+    const auto *sphereTransform = world.GetComponent<TransformComponent>(sphereEntity);
+    if (!meshCollider || !meshTransform || meshCollider->meshPath.empty() || !sphereCollider || !sphereTransform ||
+        sphereCollider->shape != ColliderShape::Sphere)
+        return false;
+    MeshResource mesh;
+    if (!mesh.Load(meshCollider->meshPath))
+        return false;
+    const Mat4 matrix = TransformMatrix(meshTransform->position, meshTransform->rotation, meshTransform->scale);
+    const float radius = sphereCollider->radius *
+                         std::max({std::abs(sphereTransform->scale.x), std::abs(sphereTransform->scale.y),
+                                   std::abs(sphereTransform->scale.z)});
+    bool found = false;
+    penetration = 0.0f;
+    for (std::size_t index = 0; index + 2 < mesh.GetIndices().size(); index += 3)
+    {
+        const auto ia = mesh.GetIndices()[index], ib = mesh.GetIndices()[index + 1], ic = mesh.GetIndices()[index + 2];
+        if (ia >= mesh.GetVertices().size() || ib >= mesh.GetVertices().size() || ic >= mesh.GetVertices().size())
+            continue;
+        const Vec3 a = TransformPoint(matrix, mesh.GetVertices()[ia].position);
+        const Vec3 b = TransformPoint(matrix, mesh.GetVertices()[ib].position);
+        const Vec3 c = TransformPoint(matrix, mesh.GetVertices()[ic].position);
+        const Vec3 closest = ClosestPointOnTriangle(sphereTransform->position, a, b, c);
+        const Vec3 delta = sphereTransform->position - closest;
+        const float distanceSquared = LengthSquared(delta);
+        if (distanceSquared > radius * radius)
+            continue;
+        const float distance = std::sqrt(std::max(0.0f, distanceSquared));
+        const float candidatePenetration = radius - distance;
+        if (!found || candidatePenetration > penetration)
+        {
+            Vec3 normal = distance > 0.00001f ? delta / distance : Normalize(Cross(b - a, c - a));
+            if (LengthSquared(normal) < 0.00001f)
+                normal = {0.0f, 1.0f, 0.0f};
+            if (Dot(normal, sphereTransform->position - a) < 0.0f)
+                normal = normal * -1.0f;
+            meshToSphere = normal;
+            penetration = candidatePenetration;
+            found = true;
+        }
+    }
+    return found;
+}
 Vec3 ShapeSupport(const World &world, const Entity entity, const Vec3 &direction)
 {
     const auto *collider = world.GetComponent<ColliderComponent>(entity);
@@ -331,7 +407,7 @@ void PhysicsWorld::Step(World &world, const float fixedDeltaTime)
     m_events.clear();
     m_debugBoxes.clear();
     world.GetComponentManager().ForEach<TransformComponent, RigidBodyComponent>(
-        [fixedDeltaTime](Entity, TransformComponent &transform, RigidBodyComponent &body) {
+        [this, &world, fixedDeltaTime](const Entity entity, TransformComponent &transform, RigidBodyComponent &body) {
             if (body.type != BodyType::Dynamic)
                 return;
             if (body.useGravity)
@@ -345,10 +421,25 @@ void PhysicsWorld::Step(World &world, const float fixedDeltaTime)
             if (body.lockRotationZ)
                 body.angularVelocity.z = 0.0f;
             transform.rotation += body.angularVelocity * fixedDeltaTime;
-            const int substeps =
-                body.continuous ? std::clamp(static_cast<int>(std::ceil(Length(body.velocity) * fixedDeltaTime / 0.1f)), 1, 16) : 1;
-            for (int step = 0; step < substeps; ++step)
-                transform.position += body.velocity * (fixedDeltaTime / static_cast<float>(substeps));
+            const Vec3 displacement = body.velocity * fixedDeltaTime;
+            const auto *collider = world.GetComponent<ColliderComponent>(entity);
+            RaycastHit hit;
+            const ShapeSweepGeometry geometry{collider ? collider->shape : ColliderShape::Box,
+                                              collider ? collider->halfExtents : Vec3{0.5f, 0.5f, 0.5f},
+                                              collider ? collider->radius : 0.5f, collider ? collider->height : 1.0f,
+                                              collider ? collider->meshPath : std::string{}};
+            if (body.continuous && collider &&
+                ShapeSweep(world, geometry, transform.position, displacement, hit, {collider->mask, false, entity}))
+            {
+                const float distance = Length(displacement);
+                const float travel = std::max(0.0f, hit.distance - 0.001f);
+                transform.position += displacement / distance * travel;
+                const float velocityAlongNormal = Dot(body.velocity, hit.normal);
+                if (velocityAlongNormal < 0.0f)
+                    body.velocity -= hit.normal * ((1.0f + body.restitution) * velocityAlongNormal);
+            }
+            else
+                transform.position += displacement;
         });
 
     struct BroadphaseEntry
@@ -385,6 +476,14 @@ void PhysicsWorld::Step(World &world, const float fixedDeltaTime)
                 continue;
             if (secondCollider->shape == ColliderShape::TriangleMesh && !MeshTrianglesOverlapBounds(world, second, firstBounds))
                 continue;
+            Vec3 meshContactNormal{};
+            float meshPenetration = 0.0f;
+            if (firstCollider->shape == ColliderShape::TriangleMesh && secondCollider->shape == ColliderShape::Sphere &&
+                !MeshSphereContact(world, first, second, meshContactNormal, meshPenetration))
+                continue;
+            if (secondCollider->shape == ColliderShape::TriangleMesh && firstCollider->shape == ColliderShape::Sphere &&
+                !MeshSphereContact(world, second, first, meshContactNormal, meshPenetration))
+                continue;
             if ((firstCollider->shape == ColliderShape::ConvexHull || secondCollider->shape == ColliderShape::ConvexHull) &&
                 !ConvexOverlap(world, first, second))
                 continue;
@@ -407,24 +506,36 @@ void PhysicsWorld::Step(World &world, const float fixedDeltaTime)
             const float inverseMassSum = firstInverseMass + secondInverseMass;
             if (inverseMassSum > 0.0f && firstTransform && secondTransform)
             {
-                const float overlapX =
-                    std::min(firstBounds.maximum.x, secondBounds.maximum.x) - std::max(firstBounds.minimum.x, secondBounds.minimum.x);
-                const float overlapY =
-                    std::min(firstBounds.maximum.y, secondBounds.maximum.y) - std::max(firstBounds.minimum.y, secondBounds.minimum.y);
-                const float overlapZ =
-                    std::min(firstBounds.maximum.z, secondBounds.maximum.z) - std::max(firstBounds.minimum.z, secondBounds.minimum.z);
                 Vec3 normal{};
-                float penetration = overlapX;
-                normal.x = firstTransform->position.x < secondTransform->position.x ? 1.0f : -1.0f;
-                if (overlapY < penetration)
+                float penetration = 0.0f;
+                bool detailedContact = false;
+                if (firstCollider->shape == ColliderShape::TriangleMesh && secondCollider->shape == ColliderShape::Sphere)
+                    detailedContact = MeshSphereContact(world, first, second, normal, penetration);
+                else if (secondCollider->shape == ColliderShape::TriangleMesh && firstCollider->shape == ColliderShape::Sphere)
                 {
-                    penetration = overlapY;
-                    normal = {0.0f, firstTransform->position.y < secondTransform->position.y ? 1.0f : -1.0f, 0.0f};
+                    detailedContact = MeshSphereContact(world, second, first, normal, penetration);
+                    normal = normal * -1.0f;
                 }
-                if (overlapZ < penetration)
+                if (!detailedContact)
                 {
-                    penetration = overlapZ;
-                    normal = {0.0f, 0.0f, firstTransform->position.z < secondTransform->position.z ? 1.0f : -1.0f};
+                    const float overlapX = std::min(firstBounds.maximum.x, secondBounds.maximum.x) -
+                                           std::max(firstBounds.minimum.x, secondBounds.minimum.x);
+                    const float overlapY = std::min(firstBounds.maximum.y, secondBounds.maximum.y) -
+                                           std::max(firstBounds.minimum.y, secondBounds.minimum.y);
+                    const float overlapZ = std::min(firstBounds.maximum.z, secondBounds.maximum.z) -
+                                           std::max(firstBounds.minimum.z, secondBounds.minimum.z);
+                    penetration = overlapX;
+                    normal.x = firstTransform->position.x < secondTransform->position.x ? 1.0f : -1.0f;
+                    if (overlapY < penetration)
+                    {
+                        penetration = overlapY;
+                        normal = {0.0f, firstTransform->position.y < secondTransform->position.y ? 1.0f : -1.0f, 0.0f};
+                    }
+                    if (overlapZ < penetration)
+                    {
+                        penetration = overlapZ;
+                        normal = {0.0f, 0.0f, firstTransform->position.z < secondTransform->position.z ? 1.0f : -1.0f};
+                    }
                 }
                 firstTransform->position -= normal * (penetration * firstInverseMass / inverseMassSum);
                 secondTransform->position += normal * (penetration * secondInverseMass / inverseMassSum);

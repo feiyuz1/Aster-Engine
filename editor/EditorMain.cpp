@@ -7,7 +7,44 @@
 #include "MiniEngine/Core/CrashReporter.hpp"
 
 #include <cstdlib>
+#include <filesystem>
 #include <string>
+
+namespace
+{
+std::filesystem::path FindProjectUpwards(std::filesystem::path directory)
+{
+    std::error_code error;
+    directory = std::filesystem::absolute(directory, error);
+    if (error)
+        return {};
+
+    while (!directory.empty())
+    {
+        const auto candidate = directory / "TinyEngine.tinyproject";
+        if (std::filesystem::is_regular_file(candidate, error) && !error)
+            return candidate;
+        error.clear();
+
+        const auto parent = directory.parent_path();
+        if (parent == directory)
+            break;
+        directory = parent;
+    }
+    return {};
+}
+
+std::filesystem::path FindDefaultProject(const char *executablePath)
+{
+    std::error_code error;
+    if (const auto fromWorkingDirectory = FindProjectUpwards(std::filesystem::current_path(error)); !fromWorkingDirectory.empty())
+        return fromWorkingDirectory;
+
+    error.clear();
+    const auto executable = std::filesystem::absolute(executablePath, error);
+    return error ? std::filesystem::path{} : FindProjectUpwards(executable.parent_path());
+}
+} // namespace
 
 int main(int argc, char **argv)
 {
@@ -23,6 +60,8 @@ int main(int argc, char **argv)
         else if (project.empty())
             project = argument;
     }
+    if (project.empty())
+        project = FindDefaultProject(argc > 0 ? argv[0] : "");
     if (!editor.Initialize(project))
         return 1;
     editor.Run(maximumFrames);

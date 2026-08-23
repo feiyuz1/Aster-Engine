@@ -15,6 +15,7 @@
 #include <filesystem>
 #include <limits>
 #include <sstream>
+#include <unordered_map>
 #include <unordered_set>
 
 #ifdef _WIN32
@@ -585,6 +586,25 @@ bool MeshResource::Load(const std::string &path)
     std::vector<Vec2> uvs;
     std::vector<Vec4> boneIndices;
     std::vector<Vec4> boneWeights;
+    struct FaceIndex
+    {
+        int position = -1, uv = -1, normal = -1;
+        bool operator==(const FaceIndex &other) const
+        {
+            return position == other.position && uv == other.uv && normal == other.normal;
+        }
+    };
+    struct FaceIndexHash
+    {
+        std::size_t operator()(const FaceIndex &value) const
+        {
+            std::size_t hash = std::hash<int>{}(value.position);
+            hash ^= std::hash<int>{}(value.uv) + 0x9e3779b9u + (hash << 6u) + (hash >> 2u);
+            hash ^= std::hash<int>{}(value.normal) + 0x9e3779b9u + (hash << 6u) + (hash >> 2u);
+            return hash;
+        }
+    };
+    std::unordered_map<FaceIndex, std::uint32_t, FaceIndexHash> vertexLookup;
     std::string line;
     m_vertices.clear();
     m_indices.clear();
@@ -640,10 +660,6 @@ bool MeshResource::Load(const std::string &path)
         }
         else if (type == "f")
         {
-            struct FaceIndex
-            {
-                int position = -1, uv = -1, normal = -1;
-            };
             std::vector<FaceIndex> face;
             std::string value;
             while (row >> value)
@@ -682,10 +698,15 @@ bool MeshResource::Load(const std::string &path)
                 const FaceIndex triangle[3] = {face[0], face[index], face[index + 1]};
                 const Vec3 a = positions[triangle[0].position], b = positions[triangle[1].position], c = positions[triangle[2].position];
                 const Vec3 faceNormal = Normalize(Cross(b - a, c - a));
-                const std::uint32_t base = static_cast<std::uint32_t>(m_vertices.size());
                 const Vec3 trianglePositions[3] = {a, b, c};
                 for (int corner = 0; corner < 3; ++corner)
                 {
+                    const auto found = triangle[corner].normal >= 0 ? vertexLookup.find(triangle[corner]) : vertexLookup.end();
+                    if (found != vertexLookup.end())
+                    {
+                        m_indices.push_back(found->second);
+                        continue;
+                    }
                     const Vec3 normal = triangle[corner].normal >= 0 ? normals[triangle[corner].normal] : faceNormal;
                     const Vec2 uv =
                         triangle[corner].uv >= 0 ? uvs[triangle[corner].uv] : Vec2{corner == 1 ? 1.0f : 0.0f, corner == 2 ? 1.0f : 0.0f};
@@ -695,10 +716,33 @@ bool MeshResource::Load(const std::string &path)
                         vertex.boneIndices = boneIndices[triangle[corner].position];
                         vertex.boneWeights = boneWeights[triangle[corner].position];
                     }
+                    const std::uint32_t vertexIndex = static_cast<std::uint32_t>(m_vertices.size());
                     m_vertices.push_back(vertex);
+                    m_indices.push_back(vertexIndex);
+                    if (triangle[corner].normal >= 0)
+                        vertexLookup.emplace(triangle[corner], vertexIndex);
                 }
-                m_indices.insert(m_indices.end(), {base, base + 1, base + 2});
             }
+        }
+    }
+    // Assimp 可能合法导入不含三角面的曲线或点图元；保留其顶点以通过注册表校验和烘焙，
+    // 三角形渲染器只会收到空索引缓冲。
+    if (m_vertices.empty() && !positions.empty())
+    {
+        m_vertices.reserve(positions.size());
+        for (std::size_t index = 0; index < positions.size(); ++index)
+        {
+            MeshVertex vertex;
+            vertex.position = positions[index];
+            vertex.normal = index < normals.size() && LengthSquared(normals[index]) > 1e-8f ? Normalize(normals[index]) : Vec3{0.0f, 1.0f, 0.0f};
+            vertex.uv = index < uvs.size() ? uvs[index] : Vec2{};
+            vertex.tangent = {1.0f, 0.0f, 0.0f};
+            if (index < boneIndices.size() && index < boneWeights.size())
+            {
+                vertex.boneIndices = boneIndices[index];
+                vertex.boneWeights = boneWeights[index];
+            }
+            m_vertices.push_back(vertex);
         }
     }
     if (m_vertices.empty())
@@ -706,24 +750,29 @@ bool MeshResource::Load(const std::string &path)
         SetState(ResourceState::Failed, "Mesh contains no valid faces: " + path);
         return false;
     }
+    std::vector<Vec3> tangentSums(m_vertices.size());
     for (std::size_t triangle = 0; triangle + 2 < m_indices.size(); triangle += 3)
     {
-        MeshVertex &first = m_vertices[m_indices[triangle]];
-        MeshVertex &second = m_vertices[m_indices[triangle + 1]];
-        MeshVertex &third = m_vertices[m_indices[triangle + 2]];
+        const MeshVertex &first = m_vertices[m_indices[triangle]];
+        const MeshVertex &second = m_vertices[m_indices[triangle + 1]];
+        const MeshVertex &third = m_vertices[m_indices[triangle + 2]];
         const Vec3 edge1 = second.position - first.position, edge2 = third.position - first.position;
         const float du1 = second.uv.x - first.uv.x, dv1 = second.uv.y - first.uv.y;
         const float du2 = third.uv.x - first.uv.x, dv2 = third.uv.y - first.uv.y;
         const float determinant = du1 * dv2 - du2 * dv1;
         const Vec3 tangent = std::abs(determinant) > 1e-8f ? (edge1 * dv2 - edge2 * dv1) / determinant : Vec3{1.0f, 0.0f, 0.0f};
-        for (MeshVertex *vertex : {&first, &second, &third})
-        {
-            const Vec3 orthogonalTangent = Normalize(tangent - vertex->normal * Dot(vertex->normal, tangent));
-            vertex->tangent =
-                LengthSquared(orthogonalTangent) > 1e-8f ? orthogonalTangent : Normalize(Cross({0.0f, 1.0f, 0.0f}, vertex->normal));
-            if (LengthSquared(vertex->tangent) < 1e-8f)
-                vertex->tangent = {1.0f, 0.0f, 0.0f};
-        }
+        tangentSums[m_indices[triangle]] += tangent;
+        tangentSums[m_indices[triangle + 1]] += tangent;
+        tangentSums[m_indices[triangle + 2]] += tangent;
+    }
+    for (std::size_t index = 0; index < m_vertices.size(); ++index)
+    {
+        MeshVertex &vertex = m_vertices[index];
+        const Vec3 orthogonalTangent = Normalize(tangentSums[index] - vertex.normal * Dot(vertex.normal, tangentSums[index]));
+        vertex.tangent =
+            LengthSquared(orthogonalTangent) > 1e-8f ? orthogonalTangent : Normalize(Cross({0.0f, 1.0f, 0.0f}, vertex.normal));
+        if (LengthSquared(vertex.tangent) < 1e-8f)
+            vertex.tangent = {1.0f, 0.0f, 0.0f};
     }
     SetState(ResourceState::Loaded);
     return true;

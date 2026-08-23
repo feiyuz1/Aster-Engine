@@ -6,6 +6,13 @@
 #include "MiniEngine/Platform/Platform.hpp"
 #include "MiniEngine/Resource/PakArchive.hpp"
 
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#endif
+
 #include <algorithm>
 #include <fstream>
 #include <iterator>
@@ -99,6 +106,92 @@ bool PlatformFile::WriteAllText(const std::filesystem::path &path, const std::st
         return false;
     stream << text;
     return stream.good();
+}
+
+bool PlatformFile::WriteAllTextAtomic(const std::filesystem::path &path, const std::string &text, const bool keepBackup)
+{
+    if (path.empty())
+        return false;
+    std::error_code error;
+    const auto target = std::filesystem::absolute(path, error).lexically_normal();
+    if (error)
+        return false;
+    if (target.has_parent_path())
+    {
+        std::filesystem::create_directories(target.parent_path(), error);
+        if (error)
+            return false;
+    }
+
+    const std::filesystem::path temporary = target.string() + ".tmp";
+    const std::filesystem::path backup = target.string() + ".bak";
+    std::filesystem::remove(temporary, error);
+    error.clear();
+    {
+        std::ofstream stream(temporary, std::ios::binary | std::ios::trunc);
+        if (!stream)
+            return false;
+        stream.write(text.data(), static_cast<std::streamsize>(text.size()));
+        stream.flush();
+        if (!stream.good())
+        {
+            stream.close();
+            std::filesystem::remove(temporary, error);
+            return false;
+        }
+        stream.close();
+        if (stream.fail())
+        {
+            std::filesystem::remove(temporary, error);
+            return false;
+        }
+    }
+
+    const auto targetStatus = std::filesystem::status(target, error);
+    if (error == std::errc::no_such_file_or_directory)
+        error.clear();
+    if (error)
+    {
+        std::filesystem::remove(temporary, error);
+        return false;
+    }
+    const bool replacing = std::filesystem::is_regular_file(targetStatus);
+    if (std::filesystem::exists(targetStatus) && !replacing)
+    {
+        std::filesystem::remove(temporary, error);
+        return false;
+    }
+    if (replacing && keepBackup)
+    {
+        std::filesystem::copy_file(target, backup, std::filesystem::copy_options::overwrite_existing, error);
+        if (error)
+        {
+            std::filesystem::remove(temporary, error);
+            return false;
+        }
+    }
+
+#ifdef _WIN32
+    if (replacing)
+    {
+        if (ReplaceFileW(target.c_str(), temporary.c_str(), nullptr, REPLACEFILE_WRITE_THROUGH, nullptr, nullptr))
+            return true;
+    }
+    else
+    {
+        std::filesystem::rename(temporary, target, error);
+        if (!error)
+            return true;
+    }
+#else
+    std::filesystem::rename(temporary, target, error);
+    if (!error)
+        return true;
+#endif
+
+    error.clear();
+    std::filesystem::remove(temporary, error);
+    return false;
 }
 
 std::filesystem::path PlatformFile::Normalize(const std::filesystem::path &path)

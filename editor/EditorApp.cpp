@@ -40,6 +40,7 @@
 #include <cmath>
 #include <cstring>
 #include <fstream>
+#include <iomanip>
 #include <limits>
 #include <optional>
 #include <set>
@@ -134,6 +135,31 @@ std::string Lowercase(std::string text)
     std::transform(text.begin(), text.end(), text.begin(),
                    [](const unsigned char value) { return static_cast<char>(std::tolower(value)); });
     return text;
+}
+
+std::string ComparablePath(const std::filesystem::path &path)
+{
+    if (path.empty())
+        return {};
+    std::error_code error;
+    auto normalized = std::filesystem::weakly_canonical(path, error);
+    if (error)
+    {
+        error.clear();
+        normalized = std::filesystem::absolute(path, error).lexically_normal();
+        if (error)
+            normalized = path.lexically_normal();
+    }
+    std::string value = normalized.generic_string();
+#ifdef _WIN32
+    value = Lowercase(std::move(value));
+#endif
+    return value;
+}
+
+bool SamePath(const std::filesystem::path &left, const std::filesystem::path &right)
+{
+    return !left.empty() && !right.empty() && ComparablePath(left) == ComparablePath(right);
 }
 
 std::string ShortAssetName(const std::filesystem::path &path, const std::size_t maximum = 18)
@@ -596,7 +622,6 @@ void EditorApp::Draw()
     ImGui_ImplSDL2_NewFrame();
     ImGui::NewFrame();
     DrawMenuBar();
-    DrawSettings();
     DrawHierarchy();
     DrawInspector();
     DrawSceneView();
@@ -607,6 +632,10 @@ void EditorApp::Draw()
     DrawMaterialGraphEditor();
     DrawEffectEditor();
     DrawBehaviorTreeEditor();
+    DrawSceneSaveDialog();
+    DrawSceneCloseDialog();
+    // 浮动设置窗口最后提交，保证它位于固定布局面板之上。
+    DrawSettings();
     ImGuiIO &io = ImGui::GetIO();
     if (!io.WantTextInput && io.KeyCtrl)
     {
@@ -615,7 +644,12 @@ void EditorApp::Draw()
         if (ImGui::IsKeyPressed(ImGuiKey_Y))
             Redo();
         if (ImGui::IsKeyPressed(ImGuiKey_S))
-            SaveCurrentScene();
+        {
+            if (io.KeyShift)
+                RequestSaveCurrentSceneAs();
+            else
+                SaveCurrentScene();
+        }
         if (ImGui::IsKeyPressed(ImGuiKey_C) && m_selected != InvalidEntity)
             Prefab::Save(*m_engine.GetContext().world, m_selected, "Saved/EditorClipboard.prefab");
         if (ImGui::IsKeyPressed(ImGuiKey_V))
@@ -641,6 +675,9 @@ void EditorApp::DrawMenuBar()
     {
         if (ImGui::MenuItem(Localize("Save Scene", "保存场景"), "Ctrl+S"))
             SaveCurrentScene();
+        if (ImGui::MenuItem(Localize("Save Scene As...", "场景另存为..."), "Ctrl+Shift+S"))
+            RequestSaveCurrentSceneAs();
+        ImGui::Separator();
         if (ImGui::MenuItem(Localize("New Scene", "新建场景")))
             NewSceneDocument();
         const auto autosavePath = GetAutosavePath();
@@ -652,24 +689,16 @@ void EditorApp::DrawMenuBar()
         ImGui::BeginDisabled(!canPackage);
         if (ImGui::MenuItem(Localize("Package Project", "打包项目")))
         {
-            SaveCurrentScene();
-            char *basePath = SDL_GetBasePath();
-            const std::filesystem::path executableDirectory = basePath ? std::filesystem::path(basePath) : std::filesystem::current_path();
-            if (basePath)
-                SDL_free(basePath);
-#ifdef _WIN32
-            const auto gameExecutable = executableDirectory / "tinyengine_game.exe";
-#else
-            const auto gameExecutable = executableDirectory / "tinyengine_game";
-#endif
-            const auto output = m_engine.GetProjectSettings().Resolve(std::filesystem::path("Dist") / m_engine.GetProjectSettings().name);
-            const auto result = ProjectPackager::Package({m_engine.GetProjectSettings().projectFile, output, gameExecutable});
-            if (result.success)
-                m_messages.emplace_back(std::string(Localize("Project packaged: ", "项目打包完成：")) +
-                                        result.outputDirectory.generic_string());
+            if (SaveCurrentScene())
+                PackageProject();
+            else if (m_sceneSaveDocument != InvalidSceneDocument)
+            {
+                m_packageAfterSceneSave = true;
+                m_messages.emplace_back(Localize("Packaging will continue after Save As succeeds.", "另存为成功后将继续打包。"));
+            }
             else
-                for (const auto &error : result.errors)
-                    m_messages.emplace_back(std::string(Localize("Package error: ", "打包错误：")) + error);
+                m_messages.emplace_back(Localize("Packaging stopped because the scene could not be saved.",
+                                                 "场景保存失败，已停止打包。"));
         }
         ImGui::EndDisabled();
         ImGui::EndMenu();
@@ -706,6 +735,26 @@ void EditorApp::DrawMenuBar()
     ImGui::SameLine();
     ImGui::TextUnformatted(m_engine.IsPlaying() ? Localize("Playing", "运行中") : Localize("Editing", "编辑中"));
     ImGui::EndMainMenuBar();
+}
+
+void EditorApp::PackageProject()
+{
+    char *basePath = SDL_GetBasePath();
+    const std::filesystem::path executableDirectory = basePath ? std::filesystem::path(basePath) : std::filesystem::current_path();
+    if (basePath)
+        SDL_free(basePath);
+#ifdef _WIN32
+    const auto gameExecutable = executableDirectory / "tinyengine_game.exe";
+#else
+    const auto gameExecutable = executableDirectory / "tinyengine_game";
+#endif
+    const auto output = m_engine.GetProjectSettings().Resolve(std::filesystem::path("Dist") / m_engine.GetProjectSettings().name);
+    const auto result = ProjectPackager::Package({m_engine.GetProjectSettings().projectFile, output, gameExecutable});
+    if (result.success)
+        m_messages.emplace_back(std::string(Localize("Project packaged: ", "项目打包完成：")) + result.outputDirectory.generic_string());
+    else
+        for (const auto &error : result.errors)
+            m_messages.emplace_back(std::string(Localize("Package error: ", "打包错误：")) + error);
 }
 
 void EditorApp::DrawSettings()
@@ -1144,60 +1193,107 @@ void EditorApp::DrawSceneView()
     ImGui::Begin(Localize("Scene View", "场景视图"), nullptr,
                  ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse);
     DrawSceneTabs();
-    if (ImGui::Button(Localize("W Translate", "W 移动")))
-        m_gizmoMode = GizmoMode::Translate;
-    ImGui::SameLine();
-    if (ImGui::Button(Localize("E Rotate", "E 旋转")))
-        m_gizmoMode = GizmoMode::Rotate;
-    ImGui::SameLine();
-    if (ImGui::Button(Localize("R Scale", "R 缩放")))
-        m_gizmoMode = GizmoMode::Scale;
-    ImGui::SameLine();
-    ImGui::Checkbox(Localize("Snap", "吸附"), &m_gizmoSnap);
-    ImGui::SameLine();
-    const char *spaceLabel = m_gizmoSpace == GizmoSpace::World ? Localize("World", "世界") : Localize("Local", "局部");
-    if (ImGui::Button(spaceLabel))
-        m_gizmoSpace = m_gizmoSpace == GizmoSpace::World ? GizmoSpace::Local : GizmoSpace::World;
-    ImGui::SameLine();
     const char *pivotNames[] = {Localize("Center", "中心"), Localize("Active", "活动项"), Localize("Individual", "各自")};
-    int pivot = static_cast<int>(m_pivotMode);
-    ImGui::SetNextItemWidth(82.0f);
-    if (ImGui::Combo("##Pivot", &pivot, pivotNames, 3))
-        m_pivotMode = static_cast<PivotMode>(pivot);
-    ImGui::SameLine();
     float *snapValue = m_gizmoMode == GizmoMode::Translate ? &m_translateSnap
                        : m_gizmoMode == GizmoMode::Rotate  ? &m_rotateSnap
                                                            : &m_scaleSnap;
-    ImGui::SetNextItemWidth(70.0f);
-    ImGui::DragFloat("##SnapValue", snapValue, 0.05f, 0.001f, 100.0f, "%.2f");
     float exposure = m_device->GetExposure();
-    ImGui::SameLine();
-    ImGui::SetNextItemWidth(70.0f);
-    if (ImGui::DragFloat(Localize("Exposure", "曝光"), &exposure, 0.02f, 0.05f, 16.0f, "%.2f"))
-        m_device->SetExposure(exposure);
     bool fxaa = m_device->IsFxaaEnabled();
-    ImGui::SameLine();
-    if (ImGui::Checkbox("FXAA", &fxaa))
-        m_device->SetFxaaEnabled(fxaa);
     bool bloom = m_device->IsBloomEnabled(), gtao = m_device->IsGtaoEnabled(), taa = m_device->IsTaaEnabled();
-    ImGui::SameLine();
-    if (ImGui::Checkbox(Localize("Bloom", "泛光"), &bloom))
-        m_device->SetBloomEnabled(bloom);
-    ImGui::SameLine();
-    if (ImGui::Checkbox("GTAO", &gtao))
-        m_device->SetGtaoEnabled(gtao);
-    ImGui::SameLine();
-    if (ImGui::Checkbox("TAA", &taa))
-        m_device->SetTaaEnabled(taa);
-    ImGui::SameLine();
-    if (ImGui::SmallButton(Localize("Reload Shaders", "重载着色器")))
-    {
+    const auto reloadShaders = [this]() {
         if (m_device->ReloadShaders())
             m_messages.emplace_back(Localize("Shaders reloaded", "着色器已重载"));
         else
             m_messages.emplace_back(
                 std::string(Localize("Shader reload failed; kept previous version: ", "着色器重载失败，已保留上一版本：")) +
                 m_device->GetLastShaderError());
+    };
+    const float toolbarWidth = ImGui::GetContentRegionAvail().x;
+    if (toolbarWidth < 520.0f)
+    {
+        // 窄窗口只保留三个模式键，其余控制集中到弹出菜单；所有功能始终可访问。
+        if (ImGui::Button("W"))
+            m_gizmoMode = GizmoMode::Translate;
+        ImGui::SameLine();
+        if (ImGui::Button("E"))
+            m_gizmoMode = GizmoMode::Rotate;
+        ImGui::SameLine();
+        if (ImGui::Button("R"))
+            m_gizmoMode = GizmoMode::Scale;
+        ImGui::SameLine();
+        if (ImGui::Button(Localize("View Options...", "视图选项...")))
+            ImGui::OpenPopup("SceneViewOptions");
+        if (ImGui::BeginPopup("SceneViewOptions"))
+        {
+            ImGui::Checkbox(Localize("Snap", "吸附"), &m_gizmoSnap);
+            if (ImGui::MenuItem(m_gizmoSpace == GizmoSpace::World ? Localize("Space: World", "空间：世界")
+                                                                   : Localize("Space: Local", "空间：局部")))
+                m_gizmoSpace = m_gizmoSpace == GizmoSpace::World ? GizmoSpace::Local : GizmoSpace::World;
+            int pivot = static_cast<int>(m_pivotMode);
+            ImGui::SetNextItemWidth(180.0f);
+            if (ImGui::Combo(Localize("Pivot", "轴心"), &pivot, pivotNames, 3))
+                m_pivotMode = static_cast<PivotMode>(pivot);
+            ImGui::SetNextItemWidth(120.0f);
+            ImGui::DragFloat(Localize("Snap Value", "吸附值"), snapValue, 0.05f, 0.001f, 100.0f, "%.2f");
+            ImGui::SetNextItemWidth(120.0f);
+            if (ImGui::DragFloat(Localize("Exposure", "曝光"), &exposure, 0.02f, 0.05f, 16.0f, "%.2f"))
+                m_device->SetExposure(exposure);
+            if (ImGui::Checkbox("FXAA", &fxaa))
+                m_device->SetFxaaEnabled(fxaa);
+            if (ImGui::Checkbox(Localize("Bloom", "泛光"), &bloom))
+                m_device->SetBloomEnabled(bloom);
+            if (ImGui::Checkbox("GTAO", &gtao))
+                m_device->SetGtaoEnabled(gtao);
+            if (ImGui::Checkbox("TAA", &taa))
+                m_device->SetTaaEnabled(taa);
+            if (ImGui::Button(Localize("Reload Shaders", "重载着色器")))
+                reloadShaders();
+            ImGui::EndPopup();
+        }
+    }
+    else
+    {
+        if (ImGui::Button(Localize("W Translate", "W 移动")))
+            m_gizmoMode = GizmoMode::Translate;
+        ImGui::SameLine();
+        if (ImGui::Button(Localize("E Rotate", "E 旋转")))
+            m_gizmoMode = GizmoMode::Rotate;
+        ImGui::SameLine();
+        if (ImGui::Button(Localize("R Scale", "R 缩放")))
+            m_gizmoMode = GizmoMode::Scale;
+        ImGui::SameLine();
+        ImGui::Checkbox(Localize("Snap", "吸附"), &m_gizmoSnap);
+        ImGui::SameLine();
+        const char *spaceLabel = m_gizmoSpace == GizmoSpace::World ? Localize("World", "世界") : Localize("Local", "局部");
+        if (ImGui::Button(spaceLabel))
+            m_gizmoSpace = m_gizmoSpace == GizmoSpace::World ? GizmoSpace::Local : GizmoSpace::World;
+        ImGui::SameLine();
+        int pivot = static_cast<int>(m_pivotMode);
+        ImGui::SetNextItemWidth(82.0f);
+        if (ImGui::Combo("##Pivot", &pivot, pivotNames, 3))
+            m_pivotMode = static_cast<PivotMode>(pivot);
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(70.0f);
+        ImGui::DragFloat("##SnapValue", snapValue, 0.05f, 0.001f, 100.0f, "%.2f");
+        // 后处理单独一行，不再依赖超宽的单行工具栏。
+        ImGui::SetNextItemWidth(90.0f);
+        if (ImGui::DragFloat(Localize("Exposure", "曝光"), &exposure, 0.02f, 0.05f, 16.0f, "%.2f"))
+            m_device->SetExposure(exposure);
+        ImGui::SameLine();
+        if (ImGui::Checkbox("FXAA", &fxaa))
+            m_device->SetFxaaEnabled(fxaa);
+        ImGui::SameLine();
+        if (ImGui::Checkbox(Localize("Bloom", "泛光"), &bloom))
+            m_device->SetBloomEnabled(bloom);
+        ImGui::SameLine();
+        if (ImGui::Checkbox("GTAO", &gtao))
+            m_device->SetGtaoEnabled(gtao);
+        ImGui::SameLine();
+        if (ImGui::Checkbox("TAA", &taa))
+            m_device->SetTaaEnabled(taa);
+        ImGui::SameLine();
+        if (ImGui::SmallButton(Localize("Reload Shaders", "重载着色器")))
+            reloadShaders();
     }
     const ImVec2 available = ImGui::GetContentRegionAvail();
     const int targetWidth = std::max(1, static_cast<int>(available.x)), targetHeight = std::max(1, static_cast<int>(available.y));
@@ -1292,11 +1388,13 @@ void EditorApp::DrawSceneView()
                         marquee.push_back(entity);
                 }
                 if (ImGui::GetIO().KeyCtrl)
+                {
                     for (const Entity entity : marquee)
                         if (std::find(m_selection.begin(), m_selection.end(), entity) == m_selection.end())
                             m_selection.push_back(entity);
-                        else
-                            m_selection = std::move(marquee);
+                }
+                else
+                    m_selection = std::move(marquee);
                 m_selected = m_selection.empty() ? InvalidEntity : m_selection.back();
             }
             m_marqueeActive = false;
@@ -1606,31 +1704,71 @@ void EditorApp::DrawAssets()
                     return path;
             }
         };
+        const auto ensureTemplateClip = [this, &createUniquePath]() -> std::optional<std::string> {
+            auto assets = m_engine.GetContext().resourceManager->GetAssetRegistry().GetAssets();
+            std::sort(assets.begin(), assets.end(), [](const AssetInfo &left, const AssetInfo &right) { return left.path < right.path; });
+            std::filesystem::path clipPath;
+            for (const auto &asset : assets)
+                if (asset.extension == ".skanim" && PlatformFile::Exists(asset.path))
+                {
+                    clipPath = asset.path;
+                    break;
+                }
+            if (clipPath.empty())
+            {
+                clipPath = createUniquePath("NewAnimationClip", ".skanim");
+                SkeletalClip clip;
+                clip.name = clipPath.stem().string();
+                clip.duration = 1.0f;
+                clip.keyframes = {{0.0f, {BonePose{}}}, {1.0f, {BonePose{}}}};
+                if (!SaveSkeletalClipAsset(clip, clipPath))
+                    return std::nullopt;
+            }
+            std::error_code error;
+            const auto relative = std::filesystem::relative(clipPath, m_engine.GetProjectSettings().projectFile.parent_path(), error);
+            return error || relative.empty() ? clipPath.lexically_normal().generic_string() : relative.lexically_normal().generic_string();
+        };
         if (ImGui::Button(Localize("+ Blend Tree", "+ 混合树")))
         {
-            BlendTree1D tree;
-            tree.samples = {{0.0f, "assets/player.skanim"}};
-            const auto path = createUniquePath("NewBlendTree", ".blendtree");
-            if (SaveBlendTreeAsset(tree, path))
+            const auto clip = ensureTemplateClip();
+            if (!clip)
+                m_messages.emplace_back(Localize("Unable to create the starter animation clip.", "无法创建初始动画片段。"));
+            else
             {
-                m_engine.GetContext().resourceManager->GetAssetRegistry().Scan(path.parent_path());
-                m_selectedAsset = path.generic_string();
-                m_selectedAssets = {m_selectedAsset};
+                BlendTree1D tree;
+                tree.samples = {{0.0f, *clip}};
+                const auto path = createUniquePath("NewBlendTree", ".blendtree");
+                if (SaveBlendTreeAsset(tree, path))
+                {
+                    auto &registry = m_engine.GetContext().resourceManager->GetAssetRegistry();
+                    registry.Scan(path.parent_path());
+                    registry.SetDependencies(path.generic_string(), {*clip});
+                    m_selectedAsset = path.generic_string();
+                    m_selectedAssets = {m_selectedAsset};
+                }
             }
         }
         ImGui::SameLine();
         if (ImGui::Button(Localize("+ Animation Graph", "+ 动画图")))
         {
-            AnimationGraph graph;
-            graph.entryState = "Idle";
-            graph.parameters = {{"Speed", 0.0f}};
-            graph.states = {{"Idle", "assets/player.skanim"}};
-            const auto path = createUniquePath("NewAnimationGraph", ".animgraph");
-            if (SaveAnimationGraphAsset(graph, path))
+            const auto clip = ensureTemplateClip();
+            if (!clip)
+                m_messages.emplace_back(Localize("Unable to create the starter animation clip.", "无法创建初始动画片段。"));
+            else
             {
-                m_engine.GetContext().resourceManager->GetAssetRegistry().Scan(path.parent_path());
-                m_selectedAsset = path.generic_string();
-                m_selectedAssets = {m_selectedAsset};
+                AnimationGraph graph;
+                graph.entryState = "Idle";
+                graph.parameters = {{"Speed", 0.0f}};
+                graph.states = {{"Idle", *clip}};
+                const auto path = createUniquePath("NewAnimationGraph", ".animgraph");
+                if (SaveAnimationGraphAsset(graph, path))
+                {
+                    auto &registry = m_engine.GetContext().resourceManager->GetAssetRegistry();
+                    registry.Scan(path.parent_path());
+                    registry.SetDependencies(path.generic_string(), {*clip});
+                    m_selectedAsset = path.generic_string();
+                    m_selectedAssets = {m_selectedAsset};
+                }
             }
         }
         ImGui::SameLine();
@@ -2340,14 +2478,22 @@ void EditorApp::DrawAnimationEditor()
             m_editBlendTree.samples.erase(m_editBlendTree.samples.begin() + remove);
         if (ImGui::Button(Localize("+ Sample", "+ 采样点")))
             m_editBlendTree.samples.push_back(
-                {m_editBlendTree.samples.empty() ? 0.0f : m_editBlendTree.samples.back().threshold + 1.0f, "assets/player.skanim"});
+                {m_editBlendTree.samples.empty() ? 0.0f : m_editBlendTree.samples.back().threshold + 1.0f, {}});
         ImGui::SameLine();
         if (ImGui::Button(Localize("Save Blend Tree", "保存混合树")))
         {
             std::sort(m_editBlendTree.samples.begin(), m_editBlendTree.samples.end(),
                       [](const BlendTreeSample &left, const BlendTreeSample &right) { return left.threshold < right.threshold; });
             if (SaveBlendTreeAsset(m_editBlendTree, m_openAnimationAsset))
+            {
+                std::vector<std::string> dependencies;
+                dependencies.reserve(m_editBlendTree.samples.size());
+                for (const auto &sample : m_editBlendTree.samples)
+                    if (std::find(dependencies.begin(), dependencies.end(), sample.clipPath) == dependencies.end())
+                        dependencies.push_back(sample.clipPath);
+                m_engine.GetContext().resourceManager->GetAssetRegistry().SetDependencies(m_openAnimationAsset, std::move(dependencies));
                 m_messages.emplace_back(std::string(Localize("Blend tree saved: ", "混合树已保存：")) + m_openAnimationAsset);
+            }
             else
                 m_messages.emplace_back(Localize("Blend tree requires unique thresholds and valid animation clip paths.",
                                                  "混合树需要互不重复的阈值和有效的动画片段路径"));
@@ -2429,7 +2575,7 @@ void EditorApp::DrawAnimationEditor()
         if (removeState >= 0)
             m_editAnimationGraph.states.erase(m_editAnimationGraph.states.begin() + removeState);
         if (ImGui::Button(Localize("+ State", "+ 状态")))
-            m_editAnimationGraph.states.push_back({"State" + std::to_string(m_editAnimationGraph.states.size()), "assets/player.skanim"});
+            m_editAnimationGraph.states.push_back({"State" + std::to_string(m_editAnimationGraph.states.size()), {}});
 
         ImGui::SeparatorText(Localize("Transitions", "过渡"));
         static const char *comparisonNames[] = {"<", "<=", ">", ">=", "==", "!="};
@@ -2473,7 +2619,15 @@ void EditorApp::DrawAnimationEditor()
         if (ImGui::Button(Localize("Save Animation Graph", "保存动画图")))
         {
             if (SaveAnimationGraphAsset(m_editAnimationGraph, m_openAnimationAsset))
+            {
+                std::vector<std::string> dependencies;
+                dependencies.reserve(m_editAnimationGraph.states.size());
+                for (const auto &state : m_editAnimationGraph.states)
+                    if (std::find(dependencies.begin(), dependencies.end(), state.motionPath) == dependencies.end())
+                        dependencies.push_back(state.motionPath);
+                m_engine.GetContext().resourceManager->GetAssetRegistry().SetDependencies(m_openAnimationAsset, std::move(dependencies));
                 m_messages.emplace_back(std::string(Localize("Animation graph saved: ", "动画图已保存：")) + m_openAnimationAsset);
+            }
             else
                 m_messages.emplace_back(Localize("Animation graph contains an invalid state, parameter, entry, or transition.",
                                                  "动画图包含无效状态、参数、入口或过渡"));
@@ -2779,20 +2933,39 @@ void EditorApp::DrawConsole()
                              ImGuiCond_Always);
     ImGui::Begin(Localize("Console / Stats", "控制台 / 统计"));
     const Renderer *renderer = m_engine.GetContext().renderer;
-    ImGui::Text(
-        Localize("Draw Calls: %zu | Culled: %zu | LOD: %zu | GPU: %.2f ms", "绘制调用：%zu | 已剔除：%zu | LOD：%zu | GPU：%.2f ms"),
-        renderer->GetLastDrawCallCount(), renderer->GetLastCulledCount(), renderer->GetLastLodSwitchCount(),
-        m_device->GetLastGpuFrameMilliseconds());
+    if (ImGui::BeginTable("RendererStats", 2, ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_RowBg))
+    {
+        const auto stat = [](const char *label, const std::string &value) {
+            ImGui::TableNextRow();
+            ImGui::TableSetColumnIndex(0);
+            ImGui::TextUnformatted(label);
+            ImGui::TableSetColumnIndex(1);
+            ImGui::TextWrapped("%s", value.c_str());
+        };
+        stat(Localize("Draw Calls", "绘制调用"), std::to_string(renderer->GetLastDrawCallCount()));
+        stat(Localize("Culled / LOD", "剔除 / LOD"),
+             std::to_string(renderer->GetLastCulledCount()) + " / " + std::to_string(renderer->GetLastLodSwitchCount()));
+        std::ostringstream gpu;
+        gpu << std::fixed << std::setprecision(2) << m_device->GetLastGpuFrameMilliseconds() << " ms";
+        stat("GPU", gpu.str());
     const auto &profile = renderer->GetLastFrameProfile();
-    ImGui::Text(Localize("CPU: %.2f ms (Queue %.2f | Shadow %.2f | Scene/UI %.2f)", "CPU：%.2f ms（队列 %.2f | 阴影 %.2f | 场景/UI %.2f）"),
-                profile.totalMilliseconds, profile.queueMilliseconds, profile.shadowMilliseconds, profile.sceneMilliseconds);
-    ImGui::Text(Localize("Render Graph: %zu Passes / %zu Physical Resources | Cluster Refs: %zu | HZB: %zu Levels | GPU Driven: %s",
-                         "渲染图：%zu 个 Pass / %zu 个物理资源 | 光簇引用：%zu | HZB：%zu 级 | GPU 驱动：%s"),
-                profile.graphPasses, profile.graphPhysicalResources, profile.clusteredLightReferences, m_device->GetHzbLevelCount(),
-                m_device->IsGpuDrivenCullingSupported()
-                    ? "Compute + Indirect"
-                    : (m_device->IsIndirectDrawSupported() ? Localize("CPU Culling + Indirect Draw", "CPU 剔除 + 间接绘制")
-                                                           : Localize("Fallback Path", "回退路径")));
+        std::ostringstream cpu;
+        cpu << std::fixed << std::setprecision(2) << profile.totalMilliseconds << " ms (" << Localize("Queue", "队列") << ' '
+            << profile.queueMilliseconds << " | " << Localize("Shadow", "阴影") << ' ' << profile.shadowMilliseconds << " | "
+            << Localize("Scene/UI", "场景/UI") << ' ' << profile.sceneMilliseconds << ')';
+        stat("CPU", cpu.str());
+        stat(Localize("Render Graph", "渲染图"), std::to_string(profile.graphPasses) + Localize(" passes / ", " 个 Pass / ") +
+                                                       std::to_string(profile.graphPhysicalResources) +
+                                                       Localize(" physical resources", " 个物理资源"));
+        stat(Localize("Cluster References", "光簇引用"), std::to_string(profile.clusteredLightReferences));
+        stat("HZB", std::to_string(m_device->GetHzbLevelCount()) + Localize(" levels", " 级"));
+        stat(Localize("GPU Driven", "GPU 驱动"),
+             m_device->IsGpuDrivenCullingSupported()
+                 ? "Compute + Indirect"
+                 : (m_device->IsIndirectDrawSupported() ? Localize("CPU Culling + Indirect Draw", "CPU 剔除 + 间接绘制")
+                                                        : Localize("Fallback Path", "回退路径")));
+        ImGui::EndTable();
+    }
     ImGui::SetNextItemWidth(-1.0f);
     if (ImGui::InputText("##ConsoleCommand", m_consoleInput.data(), m_consoleInput.size(), ImGuiInputTextFlags_EnterReturnsTrue))
     {
@@ -2816,6 +2989,7 @@ void EditorApp::DrawSceneTabs()
 {
     if (!ImGui::BeginTabBar("SceneDocuments"))
         return;
+    std::size_t requestedClose = InvalidSceneDocument;
     for (std::size_t index = 0; index < m_sceneDocuments.size(); ++index)
     {
         const auto &document = m_sceneDocuments[index];
@@ -2823,14 +2997,71 @@ void EditorApp::DrawSceneTabs()
                                   std::to_string(index);
         ImGuiTabItemFlags flags =
             (index == m_activeSceneDocument ? m_sceneDirty : document.dirty) ? ImGuiTabItemFlags_UnsavedDocument : ImGuiTabItemFlags_None;
-        if (ImGui::BeginTabItem(label.c_str(), nullptr, flags))
+        if (index == m_pendingSelectedSceneDocument)
+            flags |= ImGuiTabItemFlags_SetSelected;
+        bool open = true;
+        if (ImGui::BeginTabItem(label.c_str(), &open, flags))
         {
             if (index != m_activeSceneDocument)
                 SwitchSceneDocument(index);
+            if (index == m_pendingSelectedSceneDocument)
+                m_pendingSelectedSceneDocument = InvalidSceneDocument;
             ImGui::EndTabItem();
         }
+        if (!open)
+            requestedClose = index;
     }
     ImGui::EndTabBar();
+    if (requestedClose != InvalidSceneDocument)
+    {
+        if (requestedClose == m_activeSceneDocument)
+        {
+            m_sceneDocuments[requestedClose].snapshot = m_engine.GetSceneManager().CreateSnapshot();
+            m_sceneDocuments[requestedClose].dirty = m_sceneDirty;
+        }
+        if (m_sceneDocuments[requestedClose].dirty)
+        {
+            m_sceneCloseDocument = requestedClose;
+            m_requestSceneClosePopup = true;
+        }
+        else
+            CloseSceneDocument(requestedClose);
+    }
+}
+
+bool EditorApp::CloseSceneDocument(const std::size_t index)
+{
+    if (m_engine.IsPlaying() || index >= m_sceneDocuments.size())
+        return false;
+    const bool closingActive = index == m_activeSceneDocument;
+    m_sceneDocuments.erase(m_sceneDocuments.begin() + static_cast<std::ptrdiff_t>(index));
+    if (m_sceneDocuments.empty())
+    {
+        m_engine.GetSceneManager().NewScene();
+        m_sceneDocuments.push_back({{}, m_engine.GetSceneManager().CreateSnapshot(), false});
+        m_activeSceneDocument = 0;
+        m_pendingSelectedSceneDocument = 0;
+        m_sceneDirty = false;
+    }
+    else
+    {
+        if (index < m_activeSceneDocument)
+            --m_activeSceneDocument;
+        else if (closingActive)
+            m_activeSceneDocument = std::min(index, m_sceneDocuments.size() - 1);
+        if (closingActive)
+        {
+            if (!m_engine.GetSceneManager().RestoreSnapshot(m_sceneDocuments[m_activeSceneDocument].snapshot))
+                return false;
+            m_sceneDirty = m_sceneDocuments[m_activeSceneDocument].dirty;
+            m_pendingSelectedSceneDocument = m_activeSceneDocument;
+        }
+    }
+    m_selected = InvalidEntity;
+    m_selection.clear();
+    m_undo.clear();
+    m_redo.clear();
+    return true;
 }
 
 bool EditorApp::SwitchSceneDocument(const std::size_t index)
@@ -2854,8 +3085,13 @@ bool EditorApp::OpenSceneDocument(const std::filesystem::path &path)
 {
     const auto normalized = std::filesystem::path(path).lexically_normal();
     for (std::size_t index = 0; index < m_sceneDocuments.size(); ++index)
-        if (m_sceneDocuments[index].path.lexically_normal() == normalized)
-            return index == m_activeSceneDocument || SwitchSceneDocument(index);
+        if (SamePath(m_sceneDocuments[index].path, normalized))
+        {
+            if (index != m_activeSceneDocument && !SwitchSceneDocument(index))
+                return false;
+            m_pendingSelectedSceneDocument = index;
+            return true;
+        }
     auto &current = m_sceneDocuments[m_activeSceneDocument];
     current.snapshot = m_engine.GetSceneManager().CreateSnapshot();
     current.dirty = m_sceneDirty;
@@ -2867,6 +3103,7 @@ bool EditorApp::OpenSceneDocument(const std::filesystem::path &path)
     }
     m_sceneDocuments.push_back({normalized, m_engine.GetSceneManager().CreateSnapshot(), false});
     m_activeSceneDocument = m_sceneDocuments.size() - 1;
+    m_pendingSelectedSceneDocument = m_activeSceneDocument;
     m_sceneDirty = false;
     m_selected = InvalidEntity;
     m_undo.clear();
@@ -2885,6 +3122,7 @@ void EditorApp::NewSceneDocument()
     m_engine.GetSceneManager().NewScene();
     m_sceneDocuments.push_back({{}, m_engine.GetSceneManager().CreateSnapshot(), true});
     m_activeSceneDocument = m_sceneDocuments.size() - 1;
+    m_pendingSelectedSceneDocument = m_activeSceneDocument;
     m_sceneDirty = true;
     m_selected = InvalidEntity;
     m_undo.clear();
@@ -2924,28 +3162,305 @@ void EditorApp::Redo()
 }
 bool EditorApp::SaveCurrentScene()
 {
-    auto path = m_activeSceneDocument < m_sceneDocuments.size() ? m_sceneDocuments[m_activeSceneDocument].path : std::filesystem::path{};
-    if (path.empty())
-        path = m_engine.GetSceneManager().GetCurrentScene();
-    if (path.empty())
-        path = m_engine.GetProjectSettings().Resolve(m_engine.GetProjectSettings().startupScene);
-    const bool saved = m_engine.SaveScene(path);
+    if (m_engine.IsPlaying() || m_activeSceneDocument >= m_sceneDocuments.size())
+        return false;
+    const auto &document = m_sceneDocuments[m_activeSceneDocument];
+    if (document.path.empty())
+    {
+        if (RequestSaveCurrentSceneAs())
+            m_messages.emplace_back(Localize("Choose a path before saving this untitled scene.",
+                                             "未命名场景必须先选择保存路径。"));
+        return false;
+    }
+    return SaveSceneDocumentTo(m_activeSceneDocument, document.path);
+}
+
+bool EditorApp::RequestSaveCurrentSceneAs()
+{
+    if (m_engine.IsPlaying() || m_activeSceneDocument >= m_sceneDocuments.size())
+        return false;
+    if (m_sceneSaveDocument != InvalidSceneDocument)
+        return true;
+
+    const auto &project = m_engine.GetProjectSettings();
+    std::filesystem::path suggested = m_sceneDocuments[m_activeSceneDocument].path;
+    if (suggested.empty())
+    {
+        const auto assetRoot = project.Resolve(project.assetDirectory);
+        suggested = assetRoot / "Untitled.scene";
+        for (std::size_t suffix = 2; std::filesystem::exists(suggested); ++suffix)
+            suggested = assetRoot / ("Untitled" + std::to_string(suffix) + ".scene");
+    }
+
+    std::error_code error;
+    const auto projectRoot = project.projectFile.parent_path();
+    const auto relative = std::filesystem::relative(suggested, projectRoot, error);
+    const std::string displayPath = !error && !relative.empty() ? relative.generic_string() : suggested.generic_string();
+    m_sceneSavePath.fill('\0');
+    std::strncpy(m_sceneSavePath.data(), displayPath.c_str(), m_sceneSavePath.size() - 1);
+    m_sceneSaveDocument = m_activeSceneDocument;
+    m_requestSceneSavePopup = true;
+    m_packageAfterSceneSave = false;
+    m_sceneSaveError.clear();
+    m_sceneOverwriteTarget.clear();
+    return true;
+}
+
+std::filesystem::path EditorApp::ResolveSceneSavePath(std::string &error)
+{
+    error.clear();
+    std::string input = m_sceneSavePath.data();
+    const auto first = input.find_first_not_of(" \t\r\n");
+    const auto last = input.find_last_not_of(" \t\r\n");
+    if (first == std::string::npos)
+    {
+        error = Localize("Enter a project-relative scene path.", "请输入项目相对场景路径。");
+        return {};
+    }
+    input = input.substr(first, last - first + 1);
+
+    std::filesystem::path requested = std::filesystem::u8path(input);
+    if (!requested.has_extension())
+        requested.replace_extension(".scene");
+    if (Lowercase(requested.extension().string()) != ".scene")
+    {
+        error = Localize("Scene files must use the .scene extension.", "场景文件必须使用 .scene 扩展名。");
+        return {};
+    }
+
+    const auto &project = m_engine.GetProjectSettings();
+    if (project.projectFile.empty())
+    {
+        error = Localize("Open a project before saving a scene.", "保存场景前必须先打开项目。");
+        return {};
+    }
+    std::filesystem::path target = requested.is_absolute() ? requested : project.Resolve(requested);
+    std::error_code pathError;
+    target = std::filesystem::weakly_canonical(target, pathError);
+    if (pathError)
+    {
+        error = Localize("The scene path could not be resolved.", "无法解析场景保存路径。");
+        return {};
+    }
+    const auto assetRoot = std::filesystem::weakly_canonical(project.Resolve(project.assetDirectory), pathError);
+    if (pathError)
+    {
+        error = Localize("The project asset directory is unavailable.", "项目资产目录不可用。");
+        return {};
+    }
+    const auto assetRelative = std::filesystem::relative(target, assetRoot, pathError);
+    bool outsideAssets = pathError || assetRelative.empty() || assetRelative.is_absolute();
+    if (!outsideAssets)
+        for (const auto &component : assetRelative)
+            if (component == "..")
+            {
+                outsideAssets = true;
+                break;
+            }
+    if (outsideAssets)
+    {
+        error = Localize("Save scenes inside the project's asset directory.", "场景必须保存在项目资产目录内。");
+        return {};
+    }
+    if (std::filesystem::exists(target, pathError) && !std::filesystem::is_regular_file(target, pathError))
+    {
+        error = Localize("The selected scene path is not a regular file.", "所选场景路径不是普通文件。");
+        return {};
+    }
+    for (std::size_t index = 0; index < m_sceneDocuments.size(); ++index)
+        if (index != m_sceneSaveDocument && SamePath(m_sceneDocuments[index].path, target))
+        {
+            error = Localize("Another open scene tab already uses this path.", "另一个已打开的场景标签正在使用此路径。");
+            return {};
+        }
+    return target;
+}
+
+bool EditorApp::SaveSceneDocumentTo(const std::size_t documentIndex, const std::filesystem::path &path)
+{
+    if (m_engine.IsPlaying() || documentIndex >= m_sceneDocuments.size() || documentIndex != m_activeSceneDocument || path.empty())
+        return false;
+    const auto normalized = path.lexically_normal();
+    const bool saved = m_engine.SaveScene(normalized);
     if (saved)
     {
         m_sceneDirty = false;
-        if (m_activeSceneDocument < m_sceneDocuments.size())
-        {
-            auto &document = m_sceneDocuments[m_activeSceneDocument];
-            document.path = path;
-            document.snapshot = m_engine.GetSceneManager().CreateSnapshot();
-            document.dirty = false;
-        }
+        auto &document = m_sceneDocuments[documentIndex];
+        document.path = normalized;
+        document.snapshot = m_engine.GetSceneManager().CreateSnapshot();
+        document.dirty = false;
         std::error_code error;
         std::filesystem::remove(GetAutosavePath(), error);
+        m_engine.GetContext().resourceManager->GetAssetRegistry().Scan(
+            m_engine.GetProjectSettings().Resolve(m_engine.GetProjectSettings().assetDirectory));
     }
-    m_messages.emplace_back(saved ? std::string(Localize("Scene saved: ", "场景已保存：")) + path.generic_string()
+    m_messages.emplace_back(saved ? std::string(Localize("Scene saved: ", "场景已保存：")) + normalized.generic_string()
                                   : Localize("Failed to save scene", "场景保存失败"));
     return saved;
+}
+
+void EditorApp::DrawSceneSaveDialog()
+{
+    const ImGuiViewport *viewport = ImGui::GetMainViewport();
+    ImGui::SetNextWindowPos(viewport->WorkPos, ImGuiCond_Always);
+    ImGui::SetNextWindowSize({1.0f, 1.0f}, ImGuiCond_Always);
+    ImGui::Begin("##SceneSaveDialogHost", nullptr,
+                 ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing |
+                     ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoBackground);
+    const char *popupName = Localize("Save Scene As###SceneSaveDialog", "场景另存为###SceneSaveDialog");
+    if (m_requestSceneSavePopup)
+    {
+        ImGui::OpenPopup(popupName);
+        m_requestSceneSavePopup = false;
+    }
+
+    bool packageNow = false;
+    std::size_t closeAfterSave = InvalidSceneDocument;
+    if (!ImGui::BeginPopupModal(popupName, nullptr, ImGuiWindowFlags_AlwaysAutoResize))
+    {
+        ImGui::End();
+        return;
+    }
+
+    ImGui::TextUnformatted(Localize("Project-relative path inside the asset directory:", "请输入资产目录内的项目相对路径："));
+    ImGui::SetNextItemWidth(520.0f);
+    if (ImGui::InputText("##SceneSavePath", m_sceneSavePath.data(), m_sceneSavePath.size()))
+    {
+        m_sceneSaveError.clear();
+        m_sceneOverwriteTarget.clear();
+    }
+    ImGui::TextDisabled("%s", Localize("Example: assets/Scenes/Level01.scene", "示例：assets/Scenes/Level01.scene"));
+
+    const auto resetDialog = [this]() {
+        m_sceneSaveDocument = InvalidSceneDocument;
+        m_sceneSaveError.clear();
+        m_sceneOverwriteTarget.clear();
+        m_packageAfterSceneSave = false;
+        m_closeAfterSceneSave = false;
+    };
+    const auto completeSave = [this, &packageNow, &closeAfterSave, &resetDialog]() {
+        packageNow = m_packageAfterSceneSave;
+        closeAfterSave = m_closeAfterSceneSave ? m_sceneSaveDocument : InvalidSceneDocument;
+        resetDialog();
+        ImGui::CloseCurrentPopup();
+    };
+
+    if (!m_sceneSaveError.empty())
+        ImGui::TextColored({1.0f, 0.35f, 0.3f, 1.0f}, "%s", m_sceneSaveError.c_str());
+    if (!m_sceneOverwriteTarget.empty())
+    {
+        ImGui::Separator();
+        ImGui::TextWrapped("%s", Localize("This file already exists. Overwriting keeps the previous contents in a .bak file.",
+                                          "该文件已存在。覆盖前会把旧内容保存在 .bak 文件中。"));
+        if (ImGui::Button(Localize("Overwrite", "确认覆盖")))
+        {
+            std::string validationError;
+            const auto currentTarget = ResolveSceneSavePath(validationError);
+            if (validationError.empty() && SamePath(currentTarget, m_sceneOverwriteTarget) &&
+                SaveSceneDocumentTo(m_sceneSaveDocument, currentTarget))
+                completeSave();
+            else
+                m_sceneSaveError = validationError.empty() ? Localize("The scene could not be saved.", "场景保存失败。") : validationError;
+        }
+        ImGui::SameLine();
+    }
+    else if (ImGui::Button(Localize("Save", "保存")))
+    {
+        const auto target = ResolveSceneSavePath(m_sceneSaveError);
+        if (!target.empty())
+        {
+            const auto currentPath = m_sceneSaveDocument < m_sceneDocuments.size() ? m_sceneDocuments[m_sceneSaveDocument].path
+                                                                                   : std::filesystem::path{};
+            if (std::filesystem::is_regular_file(target) && !SamePath(currentPath, target))
+                m_sceneOverwriteTarget = target;
+            else if (SaveSceneDocumentTo(m_sceneSaveDocument, target))
+                completeSave();
+            else
+                m_sceneSaveError = Localize("The scene could not be saved.", "场景保存失败。");
+        }
+    }
+    ImGui::SameLine();
+    if (ImGui::Button(Localize("Cancel", "取消")))
+    {
+        if (m_packageAfterSceneSave)
+            m_messages.emplace_back(Localize("Packaging canceled because Save As was canceled.", "已取消另存为，因此没有执行打包。"));
+        resetDialog();
+        ImGui::CloseCurrentPopup();
+    }
+    ImGui::EndPopup();
+    ImGui::End();
+
+    if (packageNow)
+        PackageProject();
+    if (closeAfterSave != InvalidSceneDocument)
+        CloseSceneDocument(closeAfterSave);
+}
+
+void EditorApp::DrawSceneCloseDialog()
+{
+    const ImGuiViewport *viewport = ImGui::GetMainViewport();
+    ImGui::SetNextWindowPos(viewport->WorkPos, ImGuiCond_Always);
+    ImGui::SetNextWindowSize({1.0f, 1.0f}, ImGuiCond_Always);
+    ImGui::Begin("##SceneCloseDialogHost", nullptr,
+                 ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing |
+                     ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoBackground);
+    const char *popupName = Localize("Save changes before closing?###SceneCloseDialog", "关闭前保存更改？###SceneCloseDialog");
+    if (m_requestSceneClosePopup)
+    {
+        ImGui::OpenPopup(popupName);
+        m_requestSceneClosePopup = false;
+    }
+    if (!ImGui::BeginPopupModal(popupName, nullptr, ImGuiWindowFlags_AlwaysAutoResize))
+    {
+        ImGui::End();
+        return;
+    }
+
+    if (m_sceneCloseDocument >= m_sceneDocuments.size())
+    {
+        m_sceneCloseDocument = InvalidSceneDocument;
+        ImGui::CloseCurrentPopup();
+    }
+    else
+    {
+        const auto &document = m_sceneDocuments[m_sceneCloseDocument];
+        const std::string name = document.path.empty() ? Localize("Untitled", "未命名") : document.path.filename().string();
+        ImGui::TextWrapped(Localize("Save changes to '%s' before closing it?", "关闭“%s”前要保存更改吗？"), name.c_str());
+        if (ImGui::Button(Localize("Save", "保存")))
+        {
+            const std::size_t target = m_sceneCloseDocument;
+            if (target != m_activeSceneDocument && !SwitchSceneDocument(target))
+                m_messages.emplace_back(Localize("Unable to activate the scene before saving.", "保存前无法切换到该场景。"));
+            else if (m_sceneDocuments[target].path.empty())
+            {
+                if (RequestSaveCurrentSceneAs())
+                    m_closeAfterSceneSave = true;
+                m_sceneCloseDocument = InvalidSceneDocument;
+                ImGui::CloseCurrentPopup();
+            }
+            else if (SaveSceneDocumentTo(target, m_sceneDocuments[target].path))
+            {
+                CloseSceneDocument(target);
+                m_sceneCloseDocument = InvalidSceneDocument;
+                ImGui::CloseCurrentPopup();
+            }
+        }
+        ImGui::SameLine();
+        if (ImGui::Button(Localize("Discard", "不保存")))
+        {
+            CloseSceneDocument(m_sceneCloseDocument);
+            m_sceneCloseDocument = InvalidSceneDocument;
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button(Localize("Cancel", "取消")))
+        {
+            m_sceneCloseDocument = InvalidSceneDocument;
+            ImGui::CloseCurrentPopup();
+        }
+    }
+    ImGui::EndPopup();
+    ImGui::End();
 }
 
 std::filesystem::path EditorApp::GetAutosavePath()
