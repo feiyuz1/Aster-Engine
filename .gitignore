@@ -19,6 +19,7 @@ CTestTestfile.cmake
 
 # Compiled outputs
 *.obj
+!/tests/fixtures/Import/*.obj
 *.o
 *.lib
 *.dll
@@ -41,3 +42,7 @@ Thumbs.db
 /Cache/
 /Crashes/
 /Dist/
+
+# Local model-import outputs and optional large samples.
+# Keep deterministic import fixtures under tests/fixtures/Import instead.
+/assets/Imported/

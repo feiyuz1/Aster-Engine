@@ -1,0 +1,9 @@
+# TinyEngine 自有的最小 Assimp 导入回归模型。
+o RegressionTriangle
+v 0 0 0
+v 2 0 0
+v 0 2 0
+vt 0 0
+vt 1 0
+vt 0 1
+f 1/1 2/2 3/3

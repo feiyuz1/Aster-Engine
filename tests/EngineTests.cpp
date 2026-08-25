@@ -389,11 +389,12 @@ int main()
     const auto supportedModelExtensions = AssimpImporter::GetSupportedExtensions();
     CHECK(std::find(supportedModelExtensions.begin(), supportedModelExtensions.end(), ".fbx") != supportedModelExtensions.end());
     CHECK(std::find(supportedModelExtensions.begin(), supportedModelExtensions.end(), ".obj") != supportedModelExtensions.end());
-    CHECK(PlatformFile::WriteAllText("Saved/ImportTriangle.obj",
-                                     "o Triangle\nv 0 0 0\nv 2 0 0\nv 0 2 0\nvt 0 0\nvt 1 0\nvt 0 1\nf 1/1 2/2 3/3\n"));
+    // 仓库只保留这一份极小源模型，确保导入回归使用真实文件，而不是依赖开发机上的大型样例。
+    const std::filesystem::path importFixture = "tests/fixtures/Import/triangle.obj";
+    CHECK(std::filesystem::is_regular_file(importFixture));
     ModelImportOptions importOptions;
     importOptions.resourcePrefix = "assets/ImportedTest";
-    const auto imported = AssimpImporter::ImportModel("Saved/ImportTriangle.obj", "Saved/ImportedTest", importOptions);
+    const auto imported = AssimpImporter::ImportModel(importFixture, "Saved/ImportedTest", importOptions);
     CHECK(imported.success && !imported.prefabPath.empty());
     const auto importedMesh =
         std::find_if(imported.assets.begin(), imported.assets.end(), [](const ImportedAsset &asset) { return asset.type == "Mesh"; });
@@ -411,7 +412,7 @@ int main()
     CHECK(std::filesystem::file_size("Saved/ImportedPrefabThumbnail.ppm") > 1024);
     AssetImportQueue importQueue;
     importQueue.Initialize(nullptr);
-    const auto queuedImport = importQueue.Submit("Saved/ImportTriangle.obj", "Saved/QueuedImport", importOptions);
+    const auto queuedImport = importQueue.Submit(importFixture, "Saved/QueuedImport", importOptions);
     const auto queuedSnapshot = importQueue.Get(queuedImport);
     CHECK(queuedSnapshot.status == AssetImportStatus::Completed && queuedSnapshot.result.success);
     importQueue.ClearFinished();
