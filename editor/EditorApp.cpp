@@ -20,6 +20,8 @@
 #include "MiniEngine/Platform/Platform.hpp"
 #include "MiniEngine/Project/Project.hpp"
 #include "MiniEngine/Project/ProjectPackager.hpp"
+#include "MiniEngine/Project/ProjectScaffolder.hpp"
+#include "MiniEngine/Project/SolutionGenerator.hpp"
 #include "MiniEngine/Render/SdlGlRenderDevice.hpp"
 #include "MiniEngine/Render/ShaderPipeline.hpp"
 #include "MiniEngine/Resource/AssetMaintenance.hpp"
@@ -38,9 +40,11 @@
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <chrono>
 #include <cstring>
 #include <cstdio>
 #include <fstream>
+#include <future>
 #include <iomanip>
 #include <limits>
 #include <optional>
@@ -390,6 +394,45 @@ NativeFileDialogResult OpenModelFileDialog(const HWND owner, const std::filesyst
 #endif
 #endif
 
+#ifdef _WIN32
+std::optional<std::filesystem::path> OpenTinyProjectDialog(const HWND owner)
+{
+    const HRESULT initialized = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
+    const bool uninitialize = SUCCEEDED(initialized);
+    if (FAILED(initialized) && initialized != RPC_E_CHANGED_MODE)
+        return {};
+    IFileOpenDialog *dialog = nullptr;
+    std::optional<std::filesystem::path> selected;
+    if (SUCCEEDED(CoCreateInstance(CLSID_FileOpenDialog, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&dialog))) && dialog)
+    {
+        DWORD options = 0;
+        dialog->GetOptions(&options);
+        dialog->SetOptions(options | FOS_FORCEFILESYSTEM | FOS_FILEMUSTEXIST | FOS_PATHMUSTEXIST);
+        dialog->SetTitle(L"选择 TinyEngine 项目");
+        const COMDLG_FILTERSPEC filters[] = {{L"TinyEngine 项目", L"*.tinyproject"}};
+        dialog->SetFileTypes(1, filters);
+        if (SUCCEEDED(dialog->Show(owner)))
+        {
+            IShellItem *item = nullptr;
+            if (SUCCEEDED(dialog->GetResult(&item)) && item)
+            {
+                PWSTR path = nullptr;
+                if (SUCCEEDED(item->GetDisplayName(SIGDN_FILESYSPATH, &path)) && path)
+                {
+                    selected = std::filesystem::path(path);
+                    CoTaskMemFree(path);
+                }
+                item->Release();
+            }
+        }
+        dialog->Release();
+    }
+    if (uninitialize)
+        CoUninitialize();
+    return selected;
+}
+#endif
+
 bool LoadChineseEditorFont(ImGuiIO &io)
 {
     static constexpr const char *fontCandidates[] = {
@@ -634,6 +677,13 @@ bool EditorApp::SaveEditorSettings()
 // 编辑器复用 Engine 的 World 与服务，但以编辑态启动，并把 ImGui 回调挂到场景渲染之后。
 bool EditorApp::Initialize(const std::filesystem::path &projectFile)
 {
+    m_projectLauncherMode = projectFile.empty();
+    m_requestedProject.clear();
+    if (m_projectLauncherMode)
+    {
+        const auto parent = std::filesystem::current_path().u8string();
+        std::snprintf(m_newProjectParent.data(), m_newProjectParent.size(), "%s", parent.c_str());
+    }
     if (!m_engine.Initialize(projectFile, false))
         return false;
     LoadEditorSettings();
@@ -719,6 +769,8 @@ void EditorApp::Shutdown()
         return;
     if (m_sceneDirty && !m_engine.IsPlaying())
         Autosave();
+    if (m_solutionFuture.valid())
+        m_solutionFuture.wait();
     m_engine.GetContext().renderer->SetOverlayCallback({});
     m_device->SetEventCallback({});
     m_device->SetCloseRequestCallback({});
@@ -730,15 +782,28 @@ void EditorApp::Shutdown()
     m_initialized = false;
 }
 
+std::filesystem::path EditorApp::TakeRequestedProject()
+{
+    return std::move(m_requestedProject);
+}
+
 void EditorApp::Draw()
 {
     ImGui_ImplOpenGL3_NewFrame();
     ImGui_ImplSDL2_NewFrame();
     ImGui::NewFrame();
+    if (m_projectLauncherMode)
+    {
+        DrawProjectLauncher();
+        ImGui::Render();
+        ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+        return;
+    }
     m_sceneCommandsFocused = false;
     m_inspectorFocused = false;
     m_shaderFocused = false;
     DrawMenuBar();
+    DrawSolutionStatus();
     if (!m_sceneMaximized) DrawHierarchy();
     if (!m_sceneMaximized) DrawInspector();
     DrawSceneView();
@@ -765,6 +830,131 @@ void EditorApp::Draw()
     UpdateWindowTitle();
     ImGui::Render();
     ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+}
+
+void EditorApp::DrawProjectLauncher()
+{
+    const ImGuiViewport *viewport = ImGui::GetMainViewport();
+    ImGui::SetNextWindowPos(viewport->WorkPos);
+    ImGui::SetNextWindowSize(viewport->WorkSize);
+    if (!ImGui::Begin("项目启动###ProjectLauncher", nullptr,
+                      ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize))
+    {
+        ImGui::End();
+        return;
+    }
+
+    const float width = std::min(760.0f, std::max(320.0f, ImGui::GetContentRegionAvail().x - 40.0f));
+    ImGui::SetCursorPosX(std::max(20.0f, (ImGui::GetWindowSize().x - width) * 0.5f));
+    ImGui::BeginChild("启动内容", {width, 0}, false);
+    ImGui::Dummy({0, 24});
+    ImGui::SetWindowFontScale(1.5f);
+    ImGui::TextUnformatted(Localize("TinyEngine Projects", "TinyEngine 项目"));
+    ImGui::SetWindowFontScale(1.0f);
+    ImGui::TextDisabled("%s", Localize("Create a project or open an existing one.", "新建项目，或打开已有项目。"));
+    ImGui::Dummy({0, 18});
+
+    ImGui::SeparatorText(Localize("Create Project", "新建项目"));
+    ImGui::TextUnformatted(Localize("Project Name", "项目名称"));
+    ImGui::SetNextItemWidth(-1);
+    ImGui::InputText("##ProjectName", m_newProjectName.data(), m_newProjectName.size());
+    ImGui::TextUnformatted(Localize("Parent Folder", "保存到目录"));
+    ImGui::SetNextItemWidth(-1);
+    ImGui::InputText("##ProjectParent", m_newProjectParent.data(), m_newProjectParent.size());
+    ImGui::TextDisabled("%s", Localize("The folder must exist. The project folder is created inside it.",
+                                           "此目录需已存在；项目文件夹会自动建在其中。"));
+    if (ImGui::Button(Localize("Create and Open", "创建并打开")))
+    {
+#ifdef TINYENGINE_SOURCE_ROOT
+        const std::filesystem::path engineRoot = std::filesystem::u8path(TINYENGINE_SOURCE_ROOT);
+#else
+        const std::filesystem::path engineRoot = std::filesystem::current_path();
+#endif
+        const auto result = ProjectScaffolder::Create(
+            {m_newProjectName.data(), std::filesystem::u8path(m_newProjectParent.data()), engineRoot});
+        if (result.success)
+        {
+            m_requestedProject = result.projectFile;
+            m_engine.RequestExit();
+        }
+        else
+            m_projectLauncherError = result.error;
+    }
+
+    ImGui::Dummy({0, 18});
+    ImGui::SeparatorText(Localize("Open Project", "打开项目"));
+    ImGui::TextUnformatted(Localize("Project File", "项目文件"));
+    ImGui::SetNextItemWidth(-1);
+    ImGui::InputText("##ExistingProject", m_existingProjectPath.data(), m_existingProjectPath.size());
+    if (ImGui::Button(Localize("Browse...", "浏览...")))
+    {
+#ifdef _WIN32
+        SDL_SysWMinfo windowInfo{};
+        SDL_VERSION(&windowInfo.version);
+        const HWND owner = SDL_GetWindowWMInfo(static_cast<SDL_Window *>(m_device->GetNativeWindow()), &windowInfo) == SDL_TRUE
+                               ? windowInfo.info.win.window : nullptr;
+        const auto selected = OpenTinyProjectDialog(owner);
+        if (selected)
+            std::snprintf(m_existingProjectPath.data(), m_existingProjectPath.size(), "%s", selected->u8string().c_str());
+#endif
+    }
+    ImGui::SameLine();
+    if (ImGui::Button(Localize("Open", "打开")))
+    {
+        const auto result = ProjectScaffolder::ValidateExisting(std::filesystem::u8path(m_existingProjectPath.data()));
+        if (result.success)
+        {
+            m_requestedProject = result.projectFile;
+            m_engine.RequestExit();
+        }
+        else
+            m_projectLauncherError = result.error;
+    }
+    if (!m_projectLauncherError.empty())
+    {
+        ImGui::Dummy({0, 10});
+        ImGui::TextColored({1.0f, 0.45f, 0.4f, 1.0f}, "%s", m_projectLauncherError.c_str());
+    }
+    ImGui::EndChild();
+    ImGui::End();
+}
+
+void EditorApp::StartSolutionGeneration()
+{
+    const auto projectFile = m_engine.GetProjectSettings().projectFile;
+    if (projectFile.empty())
+    {
+        m_solutionStatus = Localize("Open a project first.", "请先打开项目。");
+        return;
+    }
+    const auto directory = projectFile.parent_path();
+    m_solutionStatus = Localize("Generating Visual Studio solution...", "正在生成 Visual Studio 解决方案...");
+    m_solutionFuture = std::async(std::launch::async, [directory]() { return SolutionGenerator::Generate(directory); });
+}
+
+void EditorApp::DrawSolutionStatus()
+{
+    if (m_solutionFuture.valid() && m_solutionFuture.wait_for(std::chrono::seconds(0)) == std::future_status::ready)
+    {
+        const auto result = m_solutionFuture.get();
+        m_solutionStatus = result.success ?
+            std::string(Localize("Solution generated: ", "解决方案生成完成：")) + result.solutionFile.u8string() :
+            std::string(Localize("Solution generation failed:\n", "解决方案生成失败：\n")) + result.output;
+        m_messages.emplace_back(m_solutionStatus);
+    }
+    if (m_solutionStatus.empty())
+        return;
+    ImGui::SetNextWindowSize({640, 180}, ImGuiCond_FirstUseEver);
+    if (ImGui::Begin(Localize("Visual Studio Solution###SolutionStatus", "Visual Studio 解决方案###SolutionStatus")))
+    {
+        ImGui::TextWrapped("%s", m_solutionStatus.c_str());
+        if (!m_solutionFuture.valid())
+        {
+            if (ImGui::Button(Localize("Close", "关闭")))
+                m_solutionStatus.clear();
+        }
+    }
+    ImGui::End();
 }
 
 void EditorApp::HandleShortcuts()
@@ -982,6 +1172,10 @@ void EditorApp::DrawMenuBar()
                 m_messages.emplace_back(Localize("Packaging stopped because the scene could not be saved.",
                                                  "场景保存失败，已停止打包。"));
         }
+        ImGui::EndDisabled();
+        ImGui::BeginDisabled(m_solutionFuture.valid() || m_engine.GetProjectSettings().projectFile.empty());
+        if (ImGui::MenuItem(Localize("Generate Visual Studio Solution", "生成 Visual Studio 解决方案")))
+            StartSolutionGeneration();
         ImGui::EndDisabled();
         ImGui::Separator();
         if (ImGui::MenuItem(Localize("Exit", "退出"), "Alt+F4"))
@@ -4456,6 +4650,13 @@ void EditorApp::UpdateWindowTitle()
 {
     if (!m_device || (m_titleInitialized && m_lastTitleDirty == m_sceneDirty))
         return;
+    if (m_projectLauncherMode)
+    {
+        SDL_SetWindowTitle(static_cast<SDL_Window *>(m_device->GetNativeWindow()),
+                           Localize("TinyEngine Projects", "TinyEngine 项目"));
+        m_titleInitialized = true;
+        return;
+    }
     const std::string title = std::string(Localize("TinyEngine Editor - ", "TinyEngine 编辑器 - ")) + m_engine.GetProjectSettings().name +
                               (m_sceneDirty ? " *" : "");
     SDL_SetWindowTitle(static_cast<SDL_Window *>(m_device->GetNativeWindow()), title.c_str());

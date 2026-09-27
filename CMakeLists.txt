@@ -121,6 +121,8 @@ add_library(tinyengine STATIC
     src/Localization/Localization.cpp
     src/Gameplay/Gameplay.cpp
     src/Project/Project.cpp
+    src/Project/ProjectScaffolder.cpp
+    src/Project/SolutionGenerator.cpp
     src/Project/ProjectPackager.cpp
     src/Plugin/PluginManager.cpp
     src/Build/TargetPlatform.cpp
@@ -229,6 +231,7 @@ if(TINYENGINE_BUILD_EDITOR)
     add_executable(tinyengine_editor editor/EditorMain.cpp editor/EditorApp.cpp)
     target_include_directories(tinyengine_editor PRIVATE editor)
     target_link_libraries(tinyengine_editor PRIVATE tinyengine tinyengine_imgui)
+    target_compile_definitions(tinyengine_editor PRIVATE TINYENGINE_SOURCE_ROOT="${CMAKE_CURRENT_SOURCE_DIR}")
     if(TINYENGINE_BUILD_IMPORTERS)
         target_link_libraries(tinyengine_editor PRIVATE tinyengine_importers)
         target_compile_definitions(tinyengine_editor PRIVATE TINYENGINE_HAS_ASSIMP=1)

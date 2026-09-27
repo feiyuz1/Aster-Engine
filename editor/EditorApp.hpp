@@ -9,6 +9,7 @@
 #include "MiniEngine/Animation/SkeletalAnimation.hpp"
 #include "MiniEngine/Render/MaterialGraph.hpp"
 #include "MiniEngine/Runtime/Engine.hpp"
+#include "MiniEngine/Project/SolutionGenerator.hpp"
 #include "MiniEngine/VFX/ParticleSystem.hpp"
 #ifdef TINYENGINE_HAS_ASSIMP
 #include "MiniEngine/Import/AssimpImporter.hpp"
@@ -16,6 +17,7 @@
 
 #include <array>
 #include <filesystem>
+#include <future>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -38,6 +40,7 @@ class EditorApp
     void Run(std::uint32_t maximumFrames = 0);
     /// @brief 停止服务并释放对象持有的资源。
     void Shutdown();
+    std::filesystem::path TakeRequestedProject();
 
   private:
 #ifdef TINYENGINE_TEST_HOOKS
@@ -52,6 +55,9 @@ class EditorApp
     void Draw();
     /// @brief 绘制 `MenuBar`。
     void DrawMenuBar();
+    void DrawProjectLauncher();
+    void DrawSolutionStatus();
+    void StartSolutionGeneration();
     /// @brief 绘制 `Settings`。
     void DrawSettings();
     /// @brief 绘制 `Hierarchy`。
@@ -237,6 +243,14 @@ class EditorApp
     };
 
     Engine m_engine;
+    bool m_projectLauncherMode = false;
+    std::filesystem::path m_requestedProject;
+    std::array<char, 128> m_newProjectName{};
+    std::array<char, 1024> m_newProjectParent{};
+    std::array<char, 1024> m_existingProjectPath{};
+    std::string m_projectLauncherError;
+    std::future<SolutionResult> m_solutionFuture;
+    std::string m_solutionStatus;
     SdlGlRenderDevice *m_device = nullptr;
     Entity m_selected = InvalidEntity;
     std::vector<Entity> m_selection;

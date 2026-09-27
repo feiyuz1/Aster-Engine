@@ -4,7 +4,7 @@ TinyEngine 是参考 Unreal Engine 5.3.2 模块职责、以 C++17 实现的轻�
 
 当前版本：0.27.0（完成 Render Graph、GPU HZB、Motion Vector TAA、独立 Bloom/GTAO、Forward+ Clustered Lighting 与 GPU Driven Indirect Draw）。
 
-文档入口：[文档中心](docs/文档中心.md) · [构建指南](docs/构建指南.md) · [使用指南](docs/使用指南.md) · [技术设计](设计.md) · [项目架构](docs/项目架构.md) · [工具参考](docs/工具参考.md)
+文档入口：[文档中心](docs/文档中心.md) · [构建指南](docs/构建指南.md) · [使用指南](docs/使用指南.md) · [项目工作流](docs/项目工作流.md) · [技术设计](设计.md) · [项目架构](docs/项目架构.md) · [工具参考](docs/工具参考.md)
 
 本文中的“已实现”表示功能进入可编译、可测试、可运行的代码路径，不等同于 UE 同名系统的商业级规模。具体算法和质量边界记录在对应专题文档中。
 
@@ -42,8 +42,10 @@ cmake -S . -B build `
   -DTINYENGINE_ASSIMP_DIR=D:\OpenSourceProject\assimp-master `
   -DTINYENGINE_IMGUI_DIR=D:\OpenSourceProject\imgui-master
 cmake --build build --config Debug -j 8
-.\build\Debug\tinyengine_editor.exe TinyEngine.tinyproject
+.\build\Debug\tinyengine_editor.exe
 ```
+
+不带项目参数会打开项目启动页。新建项目会生成可运行的场景、基础素材、`src/Game.cpp` 和项目 `CMakeLists.txt`。在编辑器“文件 → 生成 Visual Studio 解决方案”中生成 `.sln`，然后在 VS 2022 编译项目游戏程序。已有项目仍可把 `.tinyproject` 路径作为编辑器参数直接打开。详细步骤见[项目工作流](docs/项目工作流.md)。
 
 生成并运行独立游戏包：
 
