@@ -46,3 +46,15 @@ Thumbs.db
 # Local model-import outputs and optional large samples.
 # Keep deterministic import fixtures under tests/fixtures/Import instead.
 /assets/Imported/
+
+.codex_tmp/
+
+# 本地保留的规划、报告和文档图片，不再纳入 Git。
+/docs/版本完成记录.md
+/docs/实现日志.md
+/docs/后续工作.md
+/docs/编辑器需求清单.md
+/docs/导入兼容性报告.md
+/docs/综合回归测试报告_2026-07-18.md
+/docs/编辑器UI测试与故障清单_2026-07-17.md
+/docs/images/
