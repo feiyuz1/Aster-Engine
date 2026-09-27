@@ -32,7 +32,7 @@ std::string CurrentTimeString()
     oss << std::put_time(&localTime, "%H:%M:%S");
     return oss.str();
 }
-} // namespace
+} // 结束匿名命名空间
 
 const char *Logger::ToString(const LogLevel level)
 {
@@ -101,4 +101,4 @@ void Logger::SetStructuredOutput(std::filesystem::path path)
     std::lock_guard<std::mutex> lock(m_mutex);
     m_structuredOutput = std::move(path);
 }
-} // namespace MiniEngine
+} // 结束 MiniEngine 命名空间

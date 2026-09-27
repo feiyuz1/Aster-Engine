@@ -19,7 +19,7 @@ bool CompatibleForAliasing(const RenderGraphResourceDesc &left, const RenderGrap
     return left.transient && right.transient && !left.external && !right.external && left.type == right.type && left.width == right.width &&
            left.height == right.height && left.depth == right.depth && left.format == right.format;
 }
-} // namespace
+} // 结束匿名命名空间
 
 RenderGraphResourceHandle RenderGraph::CreateResource(RenderGraphResourceDesc desc)
 {
@@ -230,4 +230,4 @@ bool RenderGraph::IsValid(const RenderGraphResourceHandle handle) const
 {
     return handle.id > 0 && handle.id <= m_resources.size();
 }
-} // namespace MiniEngine
+} // 结束 MiniEngine 命名空间

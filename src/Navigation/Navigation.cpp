@@ -212,7 +212,7 @@ bool PointInPolygonXZ(const Vec3 &point, const NavPolygon &polygon)
     }
     return inside;
 }
-} // namespace
+} // 结束匿名命名空间
 
 bool PolygonNavMesh::Build(const std::vector<Vec3> &vertices, const std::vector<std::uint32_t> &triangleIndices,
                            const float maximumSlopeDegrees)
@@ -496,4 +496,4 @@ std::vector<EnvironmentQueryItem> EnvironmentQuery::Execute(const std::size_t ma
         result.resize(maximumResults);
     return result;
 }
-} // namespace MiniEngine
+} // 结束 MiniEngine 命名空间

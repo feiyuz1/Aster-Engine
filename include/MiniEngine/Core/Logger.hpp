@@ -50,4 +50,4 @@ class Logger
     std::mutex m_mutex;
     std::filesystem::path m_structuredOutput;
 };
-} // namespace MiniEngine
+} // 结束 MiniEngine 命名空间

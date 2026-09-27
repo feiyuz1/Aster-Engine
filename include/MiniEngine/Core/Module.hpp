@@ -62,4 +62,4 @@ class ModuleManager
     std::vector<std::string> m_registrationOrder;
     std::vector<IModule *> m_started;
 };
-} // namespace MiniEngine
+} // 结束 MiniEngine 命名空间

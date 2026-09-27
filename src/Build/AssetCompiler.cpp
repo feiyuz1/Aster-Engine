@@ -34,7 +34,7 @@ bool Copy(const std::filesystem::path &source, const std::filesystem::path &dest
     message = error.message();
     return false;
 }
-} // namespace
+} // 结束匿名命名空间
 
 // 根据目标平台选择纹理压缩与资源布局；相同输入和平台配置必须生成字节一致的输出。
 AssetCompileResult PlatformAssetCompiler::Compile(const std::filesystem::path &source, const std::filesystem::path &destination)
@@ -129,4 +129,4 @@ bool PlatformAssetCompiler::IsMesh(const std::filesystem::path &path)
 {
     return Extension(path) == ".mesh";
 }
-} // namespace MiniEngine
+} // 结束 MiniEngine 命名空间

@@ -37,4 +37,4 @@ class BuildCompatibility
     /// @brief 比较当前引擎与候选 Game 的 ABI、场景格式、构建 ID、配置和编译器。
     static bool IsCompatible(const RuntimeBuildInfo &candidate, std::string *reason = nullptr);
 };
-} // namespace MiniEngine
+} // 结束 MiniEngine 命名空间

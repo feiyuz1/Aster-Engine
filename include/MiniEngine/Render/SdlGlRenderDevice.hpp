@@ -213,4 +213,4 @@ class SdlGlRenderDevice final : public RenderDevice
     std::function<void(const void *)> m_eventCallback;
     std::function<void()> m_closeRequestCallback;
 };
-} // MiniEngine 命名空间
+} // 结束 MiniEngine 命名空间

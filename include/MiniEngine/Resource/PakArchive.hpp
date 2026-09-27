@@ -37,4 +37,4 @@ class PakArchive
     /// @return 返回查询或处理得到的结果集合。
     static std::optional<std::vector<std::uint8_t>> ReadFile(const std::filesystem::path &archive, const std::string &path);
 };
-} // namespace MiniEngine
+} // 结束 MiniEngine 命名空间

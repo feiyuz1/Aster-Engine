@@ -49,7 +49,7 @@ bool ReadState(BinaryReader &reader, ReplicatedEntityState &state)
            reader.ReadFloat(state.rotation.z) && reader.ReadFloat(state.velocity.x) && reader.ReadFloat(state.velocity.y) &&
            reader.ReadFloat(state.velocity.z);
 }
-} // namespace
+} // 结束匿名命名空间
 
 std::vector<std::uint8_t> SnapshotCodec::Encode(const NetworkSnapshot &snapshot)
 {
@@ -243,7 +243,7 @@ bool ReadU32(const std::vector<std::uint8_t> &bytes, std::size_t &offset, std::u
         value |= static_cast<std::uint32_t>(bytes[offset++]) << shift;
     return true;
 }
-} // namespace
+} // 结束匿名命名空间
 
 UdpSocket::UdpSocket()
 {
@@ -571,4 +571,4 @@ std::size_t ClientPrediction::PendingInputCount() const
 {
     return m_inputs.size();
 }
-} // namespace MiniEngine
+} // 结束 MiniEngine 命名空间

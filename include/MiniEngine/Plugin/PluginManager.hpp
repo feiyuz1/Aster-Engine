@@ -75,4 +75,4 @@ class PluginManager
     std::vector<LoadedPlugin> m_plugins;
     std::string m_lastError;
 };
-} // namespace MiniEngine
+} // 结束 MiniEngine 命名空间

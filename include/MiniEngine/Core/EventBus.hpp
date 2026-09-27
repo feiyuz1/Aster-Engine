@@ -59,4 +59,4 @@ class EventBus
     std::unordered_map<std::type_index, std::vector<BaseHandler>> m_handlers;
     std::mutex m_mutex;
 };
-} // namespace MiniEngine
+} // 结束 MiniEngine 命名空间

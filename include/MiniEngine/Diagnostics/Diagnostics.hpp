@@ -141,4 +141,4 @@ class DiagnosticsService
     StatRegistry m_stats;
     bool m_initialized = false;
 };
-} // namespace MiniEngine
+} // 结束 MiniEngine 命名空间

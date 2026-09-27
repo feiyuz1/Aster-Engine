@@ -66,4 +66,4 @@ class ShaderPipeline
     /// @return 返回查询或处理得到的结果集合。
     static std::vector<ShaderParameterInfo> ReflectParameters(const std::filesystem::path &path);
 };
-} // namespace MiniEngine
+} // 结束 MiniEngine 命名空间

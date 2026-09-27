@@ -127,4 +127,4 @@ void SequencePlayer::Dispatch(const float from, const float to)
         if (event.time > from && event.time <= to)
             m_callback(event.name);
 }
-} // namespace MiniEngine
+} // 结束 MiniEngine 命名空间

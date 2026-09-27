@@ -78,4 +78,4 @@ class AssetRegistry
     std::unordered_map<std::string, AssetInfo> m_assets;
     std::unordered_map<std::string, std::string> m_byId;
 };
-} // MiniEngine 命名空间
+} // 结束 MiniEngine 命名空间

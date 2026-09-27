@@ -129,7 +129,7 @@ bool Compare(const float value, const AnimationGraphComparison comparison, const
     }
     return false;
 }
-} // namespace
+} // 结束匿名命名空间
 
 bool Skeleton::IsValid() const
 {
@@ -991,4 +991,4 @@ const std::string &AnimationStateMachine::GetState() const
 {
     return m_state;
 }
-} // namespace MiniEngine
+} // 结束 MiniEngine 命名空间

@@ -24,7 +24,7 @@ std::uint32_t ClampTile(const float normalized, const std::uint32_t count)
     return static_cast<std::uint32_t>(
         std::clamp(static_cast<int>(std::floor(normalized * static_cast<float>(count))), 0, static_cast<int>(count) - 1));
 }
-} // namespace
+} // 结束匿名命名空间
 
 std::size_t ClusteredLightGrid::GetClusterCount() const
 {
@@ -108,4 +108,4 @@ ClusteredLightGrid ClusteredLightBuilder::Build(const std::vector<RenderLight> &
     (void)viewportHeight;
     return result;
 }
-} // namespace MiniEngine
+} // 结束 MiniEngine 命名空间

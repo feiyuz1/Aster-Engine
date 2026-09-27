@@ -596,4 +596,4 @@ void Renderer::SetEnvironmentPath(std::string path)
     }
     m_environmentPath.clear();
 }
-} // MiniEngine 命名空间
+} // 结束 MiniEngine 命名空间

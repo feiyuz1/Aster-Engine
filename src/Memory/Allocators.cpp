@@ -16,7 +16,7 @@ std::uintptr_t AlignForward(const std::uintptr_t address, const std::size_t alig
     const std::size_t mask = alignment - 1;
     return (address + mask) & ~mask;
 }
-} // namespace
+} // 结束匿名命名空间
 
 LinearAllocator::LinearAllocator(const std::size_t sizeBytes)
     : m_storage(std::make_unique<std::uint8_t[]>(sizeBytes)), m_begin(m_storage.get()), m_current(m_storage.get()), m_size(sizeBytes)
@@ -129,4 +129,4 @@ void MemoryManager::ResetFrame()
         m_frameAllocator->Reset();
     }
 }
-} // namespace MiniEngine
+} // 结束 MiniEngine 命名空间

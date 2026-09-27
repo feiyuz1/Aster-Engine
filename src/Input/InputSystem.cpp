@@ -183,4 +183,4 @@ bool InputSystem::Rumble(const float lowFrequency, const float highFrequency, co
     return m_hapticCallback &&
            m_hapticCallback(std::clamp(lowFrequency, 0.0f, 1.0f), std::clamp(highFrequency, 0.0f, 1.0f), durationMilliseconds);
 }
-} // namespace MiniEngine
+} // 结束 MiniEngine 命名空间

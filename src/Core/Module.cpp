@@ -87,4 +87,4 @@ std::vector<std::string> ModuleManager::GetRegisteredNames() const
 {
     return m_registrationOrder;
 }
-} // namespace MiniEngine
+} // 结束 MiniEngine 命名空间

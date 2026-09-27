@@ -273,4 +273,4 @@ bool AssetRegistry::MarkImported(const std::string &path)
     found->second.importedStamp = Stamp(found->second.modified);
     return SaveMeta(found->second);
 }
-} // MiniEngine 命名空间
+} // 结束 MiniEngine 命名空间

@@ -286,4 +286,4 @@ class MaterialResource final : public Resource
     std::string m_packedTexturePath;
     std::string m_packedTextureLayout = "ORM";
 };
-} // namespace MiniEngine
+} // 结束 MiniEngine 命名空间

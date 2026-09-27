@@ -63,7 +63,7 @@ struct Handle
         return index == rhs.index && generation == rhs.generation;
     }
 };
-} // MiniEngine 命名空间
+} // 结束 MiniEngine 命名空间
 
 namespace std
 {
@@ -78,4 +78,4 @@ struct hash<MiniEngine::Handle>
         return (static_cast<size_t>(value.generation) << 32u) ^ value.index;
     }
 };
-} // std 命名空间
+} // 结束 std 命名空间

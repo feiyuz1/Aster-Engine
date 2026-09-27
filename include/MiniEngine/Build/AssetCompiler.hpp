@@ -43,4 +43,4 @@ class PlatformAssetCompiler
     /// @return 条件成立时返回 `true`，否则返回 `false`。
     static bool IsMesh(const std::filesystem::path &path);
 };
-} // namespace MiniEngine
+} // 结束 MiniEngine 命名空间

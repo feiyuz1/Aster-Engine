@@ -48,7 +48,7 @@ bool ParseColor(const std::string &value, Vec4 &color)
              static_cast<float>(rgb & 255u) / 255.0f, color.w};
     return true;
 }
-} // namespace
+} // 结束匿名命名空间
 
 // 无效 UTF-8 序列替换为 U+FFFD 并至少前进一个字节，既保留后续文本也避免死循环。
 std::vector<std::uint32_t> TextLayout::DecodeUtf8(const std::string &text)
@@ -233,4 +233,4 @@ TextLayoutResult TextLayout::Shape(const std::string &source, const float maximu
     result.height = y + lineHeight;
     return result;
 }
-} // namespace MiniEngine
+} // 结束 MiniEngine 命名空间

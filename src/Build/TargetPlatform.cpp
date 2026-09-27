@@ -48,7 +48,7 @@ bool IsSafeRelativePath(const std::filesystem::path &path)
             return false;
     return true;
 }
-} // namespace
+} // 结束匿名命名空间
 
 TargetPlatformRegistry::TargetPlatformRegistry()
 {
@@ -224,4 +224,4 @@ const char *TargetPlatformCooker::ToString(const BuildConfiguration configuratio
     }
     return "Development";
 }
-} // namespace MiniEngine
+} // 结束 MiniEngine 命名空间

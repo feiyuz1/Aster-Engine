@@ -47,7 +47,7 @@ bool ParseBool(std::string value, bool &result)
     }
     return false;
 }
-} // namespace
+} // 结束匿名命名空间
 
 bool ConsoleManager::RegisterVariable(std::string name, ConsoleValue defaultValue, std::string description, const bool readOnly,
                                       Changed changed)
@@ -263,4 +263,4 @@ bool DiagnosticsService::IsInitialized() const
 {
     return m_initialized;
 }
-} // namespace MiniEngine
+} // 结束 MiniEngine 命名空间

@@ -97,7 +97,7 @@ void Store(std::vector<float> &pixels, const int width, const int x, const int y
     pixels[offset + 2] = color.z;
     pixels[offset + 3] = alpha;
 }
-} // namespace
+} // 结束匿名命名空间
 
 // 使用确定性的低差异采样离线积分；运行时只读取结果，避免每次启动重复昂贵卷积。
 EnvironmentBakeResult EnvironmentBaker::Bake(const std::filesystem::path &source, const std::filesystem::path &outputDirectory,
@@ -221,4 +221,4 @@ EnvironmentBakeResult EnvironmentBaker::Bake(const std::filesystem::path &source
         result.error = "Cannot write environment manifest";
     return result;
 }
-} // namespace MiniEngine
+} // 结束 MiniEngine 命名空间

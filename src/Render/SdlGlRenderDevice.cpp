@@ -2914,4 +2914,4 @@ bool SdlGlRenderDevice::IsControllerConnected() const
 {
     return m_impl && m_impl->controller && SDL_GameControllerGetAttached(m_impl->controller) == SDL_TRUE;
 }
-} // MiniEngine 命名空间
+} // 结束 MiniEngine 命名空间

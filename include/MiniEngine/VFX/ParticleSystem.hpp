@@ -171,4 +171,4 @@ bool SaveParticleEffectAsset(const ParticleEmitterSettings &settings, const std:
 /// @param settings 控制系统或操作行为的设置。
 /// @return 操作成功时返回 `true`，否则返回 `false`。
 bool LoadParticleEffectAsset(const std::filesystem::path &path, ParticleEmitterSettings &settings);
-} // namespace MiniEngine
+} // 结束 MiniEngine 命名空间

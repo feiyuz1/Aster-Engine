@@ -72,7 +72,7 @@ class AudioEngine
     bool IsInitialized() const;
 
 #ifdef TINYENGINE_TEST_HOOKS
-    // TEST HOOK: exposes deterministic mixer state only to automated test builds.
+    // 混音状态仅在测试构建中开放，供自动化用例检查。
     std::size_t TestGetVoiceCount() const;
     std::vector<std::int16_t> TestMixFrames(std::size_t frameCount);
 #endif
@@ -121,4 +121,4 @@ class AudioEngine
     std::unordered_map<Entity, std::uint64_t> m_entityVoices;
     std::uint64_t m_nextVoiceId = 1;
 };
-} // namespace MiniEngine
+} // 结束 MiniEngine 命名空间

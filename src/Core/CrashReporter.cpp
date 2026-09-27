@@ -14,7 +14,8 @@
 #include <vector>
 #ifdef _WIN32
 #define NOMINMAX
-// clang-format off: DbgHelp requires Windows types to be declared first.
+// DbgHelp 依赖 Windows 类型，必须后包含。
+// clang-format off
 #include <Windows.h>
 
 #include <DbgHelp.h>
@@ -116,7 +117,7 @@ LONG WINAPI Unhandled(EXCEPTION_POINTERS *exception)
     return EXCEPTION_EXECUTE_HANDLER;
 }
 #endif
-} // namespace
+} // 结束匿名命名空间
 
 void CrashReporter::Install(std::string applicationName, std::filesystem::path outputDirectory)
 {
@@ -142,4 +143,4 @@ std::filesystem::path CrashReporter::WriteReport(const std::string &reason, cons
 #endif
     return PlatformFile::WriteAllText(path, report.str()) ? path : std::filesystem::path{};
 }
-} // namespace MiniEngine
+} // 结束 MiniEngine 命名空间

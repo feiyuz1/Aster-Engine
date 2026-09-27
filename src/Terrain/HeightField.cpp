@@ -81,4 +81,4 @@ float HeightField::At(const int x, const int z) const
 {
     return m_heights[static_cast<std::size_t>(z) * m_width + x];
 }
-} // namespace MiniEngine
+} // 结束 MiniEngine 命名空间

@@ -23,7 +23,7 @@ std::filesystem::path FindProject(const std::filesystem::path &executableDirecto
             return entry.path();
     return {};
 }
-} // namespace
+} // 结束匿名命名空间
 
 int main(int argc, char **argv)
 {

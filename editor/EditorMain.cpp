@@ -44,7 +44,7 @@ std::filesystem::path FindDefaultProject(const char *executablePath)
     const auto executable = std::filesystem::absolute(executablePath, error);
     return error ? std::filesystem::path{} : FindProjectUpwards(executable.parent_path());
 }
-} // namespace
+} // 结束匿名命名空间
 
 int main(int argc, char **argv)
 {

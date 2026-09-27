@@ -87,4 +87,4 @@ bool ImageSequencePlayer::IsPlaying() const
 {
     return m_playing;
 }
-} // namespace MiniEngine
+} // 结束 MiniEngine 命名空间

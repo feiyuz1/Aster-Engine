@@ -44,4 +44,4 @@ class AssetCooker
     static CookResult Cook(const std::filesystem::path &assetDirectory, const std::filesystem::path &cookedDirectory,
                            const std::filesystem::path &outputPak, const CookOptions &options = {});
 };
-} // namespace MiniEngine
+} // 结束 MiniEngine 命名空间

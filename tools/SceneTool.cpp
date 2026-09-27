@@ -21,7 +21,7 @@ std::vector<MiniEngine::Entity> SortedEntities(const MiniEngine::World &world)
     std::sort(result.begin(), result.end());
     return result;
 }
-} // namespace
+} // 结束匿名命名空间
 
 int main(int argc, char **argv)
 {

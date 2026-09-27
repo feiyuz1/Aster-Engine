@@ -372,7 +372,7 @@ bool ConvexOverlap(const World &world, const Entity first, const Entity second)
     }
     return false;
 }
-} // namespace
+} // 结束匿名命名空间
 
 Aabb PhysicsWorld::ComputeBounds(const World &world, const Entity entity)
 {
@@ -847,4 +847,4 @@ bool PhysicsWorld::IsBackendAvailable(const PhysicsBackend backend)
     return false;
 #endif
 }
-} // namespace MiniEngine
+} // 结束 MiniEngine 命名空间

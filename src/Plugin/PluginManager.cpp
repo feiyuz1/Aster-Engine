@@ -31,7 +31,7 @@ void CloseLibrary(void *library)
     dlclose(library);
 #endif
 }
-} // namespace
+} // 结束匿名命名空间
 
 PluginManager::~PluginManager()
 {
@@ -156,4 +156,4 @@ void TINY_PLUGIN_CALL PluginManager::DeallocateBridge(void *, void *memory, cons
     std::free(memory);
 #endif
 }
-} // namespace MiniEngine
+} // 结束 MiniEngine 命名空间

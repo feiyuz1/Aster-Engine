@@ -16,7 +16,7 @@ std::string Normalize(const std::string &path)
 {
     return std::filesystem::path(path).lexically_normal().generic_string();
 }
-} // namespace
+} // 结束匿名命名空间
 
 void AssetDependencyGraph::Build(const AssetRegistry &registry)
 {
@@ -187,4 +187,4 @@ void AssetStreamingManager::RebuildDependencyGraph()
     if (m_resources)
         m_graph.Build(m_resources->GetAssetRegistry());
 }
-} // namespace MiniEngine
+} // 结束 MiniEngine 命名空间

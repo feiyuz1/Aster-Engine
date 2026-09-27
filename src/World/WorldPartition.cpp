@@ -97,4 +97,4 @@ float WorldPartition::DistanceToBoundsXZ(const Vec3 &point, const Aabb &bounds)
     const float dz = std::max({bounds.minimum.z - point.z, 0.0f, point.z - bounds.maximum.z});
     return std::sqrt(dx * dx + dz * dz);
 }
-} // namespace MiniEngine
+} // 结束 MiniEngine 命名空间

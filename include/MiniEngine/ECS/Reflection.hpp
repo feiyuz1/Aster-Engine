@@ -69,4 +69,4 @@ class ReflectionRegistry
     ReflectionRegistry();
     std::vector<ReflectedComponent> m_components;
 };
-} // namespace MiniEngine
+} // 结束 MiniEngine 命名空间

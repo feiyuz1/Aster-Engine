@@ -264,7 +264,7 @@ Vec3 QuaternionToEulerDegrees(const aiQuaternion &value)
     const float cosZ = 1.0f - 2.0f * (value.y * value.y + value.z * value.z);
     return {std::atan2(sinX, cosX) * 180.0f / Pi, std::asin(sinY) * 180.0f / Pi, std::atan2(sinZ, cosZ) * 180.0f / Pi};
 }
-} // namespace
+} // 结束匿名命名空间
 
 bool AssimpImporter::CanImport(const std::filesystem::path &source)
 {
@@ -662,4 +662,4 @@ void AssetImportQueue::ClearFinished()
             ++iterator;
     }
 }
-} // namespace MiniEngine
+} // 结束 MiniEngine 命名空间

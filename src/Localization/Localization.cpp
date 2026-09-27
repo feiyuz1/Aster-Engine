@@ -280,4 +280,4 @@ std::string StringTable::Format(const std::string &locale, const std::string &ke
     }
     return result;
 }
-} // namespace MiniEngine
+} // 结束 MiniEngine 命名空间

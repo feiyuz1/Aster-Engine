@@ -252,4 +252,4 @@ class EnvironmentQuery
     std::vector<Vec3> m_points;
     std::vector<WeightedTest> m_tests;
 };
-} // namespace MiniEngine
+} // 结束 MiniEngine 命名空间

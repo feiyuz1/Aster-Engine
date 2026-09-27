@@ -159,4 +159,4 @@ class MigrationRegistry
     };
     std::unordered_map<Key, Migration, KeyHash> m_migrations;
 };
-} // namespace MiniEngine
+} // 结束 MiniEngine 命名空间

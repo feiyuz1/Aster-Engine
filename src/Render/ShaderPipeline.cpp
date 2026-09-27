@@ -78,7 +78,7 @@ bool Expand(const std::filesystem::path &path, std::set<std::string> &stack, std
     stack.erase(key);
     return true;
 }
-} // namespace
+} // 结束匿名命名空间
 
 ShaderPreprocessResult ShaderPipeline::Preprocess(const std::filesystem::path &path,
                                                   const std::unordered_map<std::string, std::string> &defines)
@@ -241,4 +241,4 @@ std::vector<ShaderParameterInfo> ShaderPipeline::ReflectParameters(const std::fi
     }
     return result;
 }
-} // namespace MiniEngine
+} // 结束 MiniEngine 命名空间

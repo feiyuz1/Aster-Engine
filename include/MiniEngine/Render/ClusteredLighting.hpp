@@ -72,4 +72,4 @@ class ClusteredLightBuilder
                                     std::uint32_t tilesX = 16, std::uint32_t tilesY = 9, std::uint32_t slicesZ = 24,
                                     std::uint32_t maximumLightsPerCluster = 64);
 };
-} // namespace MiniEngine
+} // 结束 MiniEngine 命名空间

@@ -23,4 +23,4 @@ class CrashReporter
     /// @return 返回对应的文本或路径。
     static std::filesystem::path WriteReport(const std::string &reason, const std::filesystem::path &outputDirectory = {});
 };
-} // namespace MiniEngine
+} // 结束 MiniEngine 命名空间

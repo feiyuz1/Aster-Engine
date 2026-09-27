@@ -62,7 +62,7 @@ ReflectedProperty &Range(ReflectedProperty &property, const float minimum, const
     property.speed = speed;
     return property;
 }
-} // namespace
+} // 结束匿名命名空间
 
 ReflectionRegistry::ReflectionRegistry()
 {
@@ -272,4 +272,4 @@ const ReflectedComponent *ReflectionRegistry::FindComponent(const std::string &n
             return &component;
     return nullptr;
 }
-} // namespace MiniEngine
+} // 结束 MiniEngine 命名空间

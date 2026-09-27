@@ -42,4 +42,4 @@ class ProjectPackager
     /// @return 返回接口计算或查询得到的结果。
     static PackageResult Package(const PackageOptions &options);
 };
-} // namespace MiniEngine
+} // 结束 MiniEngine 命名空间

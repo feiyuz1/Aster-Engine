@@ -298,7 +298,7 @@ bool LoadRadianceHdr(const std::vector<std::uint8_t> &bytes, int &width, int &he
     }
     return true;
 }
-} // namespace
+} // 结束匿名命名空间
 
 const std::string &Resource::GetPath() const
 {
@@ -1119,4 +1119,4 @@ const std::string &MaterialResource::GetPackedTextureLayout() const
 {
     return m_packedTextureLayout;
 }
-} // namespace MiniEngine
+} // 结束 MiniEngine 命名空间

@@ -69,4 +69,4 @@ class TextLayout
     static TextLayoutResult Shape(const std::string &text, float maximumWidth, const TextStyle &style = {},
                                   TextDirection direction = TextDirection::Auto, bool richText = true);
 };
-} // namespace MiniEngine
+} // 结束 MiniEngine 命名空间

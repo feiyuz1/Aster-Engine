@@ -102,4 +102,4 @@ class MemoryManager
     std::unique_ptr<LinearAllocator> m_frameAllocator;
     std::unique_ptr<PoolAllocator> m_smallObjectAllocator;
 };
-} // namespace MiniEngine
+} // 结束 MiniEngine 命名空间

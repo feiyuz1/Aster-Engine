@@ -21,7 +21,7 @@ std::string Trim(std::string value)
     const auto last = std::find_if_not(value.rbegin(), value.rend(), [](unsigned char c) { return std::isspace(c) != 0; }).base();
     return first < last ? std::string(first, last) : std::string{};
 }
-} // namespace
+} // 结束匿名命名空间
 
 bool Config::Load(const std::string &path)
 {
@@ -97,4 +97,4 @@ const std::unordered_map<std::string, std::string> &Config::GetValues() const
 {
     return m_values;
 }
-} // namespace MiniEngine
+} // 结束 MiniEngine 命名空间

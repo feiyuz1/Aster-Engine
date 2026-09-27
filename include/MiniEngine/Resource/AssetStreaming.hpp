@@ -177,4 +177,4 @@ class AssetStreamingManager
     std::size_t m_budget = 256 * 1024 * 1024;
     std::uint64_t m_tick = 0;
 };
-} // namespace MiniEngine
+} // 结束 MiniEngine 命名空间

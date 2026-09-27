@@ -198,7 +198,7 @@ void AudioEngine::UpdateWorld(const World &world)
                 continue;
             m_entityVoices.erase(indexed);
         }
-        // Starting a voice loads data, so do it outside the callback lock.
+        // 启动音频会读取数据，这一步放到回调锁外执行，避免长时间占用锁。
     }
     for (const Entity entity : world.GetEntityManager().GetAliveEntities())
     {
@@ -341,7 +341,7 @@ bool AudioEngine::IsInitialized() const
 }
 
 #ifdef TINYENGINE_TEST_HOOKS
-// TEST HOOK: the public audio device is locked so the SDL callback cannot race deterministic mixer assertions.
+// 测试读取接口会锁住音频设备，避免 SDL 回调干扰混音结果的校验。
 std::size_t AudioEngine::TestGetVoiceCount() const
 {
     std::lock_guard<std::mutex> lock(m_mutex);
@@ -359,4 +359,4 @@ std::vector<std::int16_t> AudioEngine::TestMixFrames(const std::size_t frameCoun
     return samples;
 }
 #endif
-} // namespace MiniEngine
+} // 结束 MiniEngine 命名空间

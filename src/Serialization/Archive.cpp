@@ -21,7 +21,7 @@ void SetError(std::string *error, std::string message)
     if (error)
         *error = std::move(message);
 }
-} // namespace
+} // 结束匿名命名空间
 
 void BinaryWriter::WriteBool(const bool value)
 {
@@ -244,4 +244,4 @@ bool MigrationRegistry::Migrate(VersionedDocument &document, const std::uint32_t
     }
     return true;
 }
-} // namespace MiniEngine
+} // 结束 MiniEngine 命名空间

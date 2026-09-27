@@ -88,4 +88,4 @@ class TargetPlatformCooker
     /// @return 返回目标对象指针；对象不存在时返回 `nullptr`。
     static const char *ToString(BuildConfiguration configuration);
 };
-} // namespace MiniEngine
+} // 结束 MiniEngine 命名空间

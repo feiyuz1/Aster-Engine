@@ -90,7 +90,7 @@ bool CopyAssetTree(const std::filesystem::path &sourceRoot, const std::filesyste
         result.errors.push_back("Cannot enumerate assets: " + error.message());
     return !error;
 }
-} // namespace
+} // 结束匿名命名空间
 
 PackageResult ProjectPackager::Package(const PackageOptions &options)
 {
@@ -238,4 +238,4 @@ PackageResult ProjectPackager::Package(const PackageOptions &options)
     result.success = result.errors.empty();
     return result;
 }
-} // namespace MiniEngine
+} // 结束 MiniEngine 命名空间

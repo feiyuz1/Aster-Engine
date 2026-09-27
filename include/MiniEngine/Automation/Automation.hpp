@@ -51,4 +51,4 @@ class CommandletRegistry
 /// @brief 注册 `BuiltInCommandlets`。
 /// @param registry 要查询或更新的资产注册表。
 void RegisterBuiltInCommandlets(CommandletRegistry &registry);
-} // namespace MiniEngine
+} // 结束 MiniEngine 命名空间

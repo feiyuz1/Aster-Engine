@@ -58,4 +58,4 @@ class HeightField
     float m_spacing = 1.0f;
     std::vector<float> m_heights;
 };
-} // namespace MiniEngine
+} // 结束 MiniEngine 命名空间

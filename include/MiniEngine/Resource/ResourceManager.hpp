@@ -163,4 +163,4 @@ class ResourceManager
     std::filesystem::path m_assetRoot;
     AssetRegistry m_registry;
 };
-} // namespace MiniEngine
+} // 结束 MiniEngine 命名空间

@@ -206,4 +206,4 @@ struct AudioSourceComponent
     float maximumDistance = 25.0f;
     std::string bus = "SFX";
 };
-} // namespace MiniEngine
+} // 结束 MiniEngine 命名空间

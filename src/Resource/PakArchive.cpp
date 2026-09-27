@@ -27,7 +27,7 @@ bool ReadHeader(std::ifstream &stream, std::uint32_t &count)
     stream.read(reinterpret_cast<char *>(&count), sizeof(count));
     return stream && std::equal(std::begin(magic), std::end(magic), std::begin(Magic)) && version == Version;
 }
-} // namespace
+} // 结束匿名命名空间
 
 bool PakArchive::PackDirectory(const std::filesystem::path &inputDirectory, const std::filesystem::path &outputFile)
 {
@@ -113,4 +113,4 @@ std::optional<std::vector<std::uint8_t>> PakArchive::ReadFile(const std::filesys
     }
     return std::nullopt;
 }
-} // namespace MiniEngine
+} // 结束 MiniEngine 命名空间
