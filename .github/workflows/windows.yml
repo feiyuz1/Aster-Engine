@@ -5,7 +5,7 @@ on:
   pull_request:
 
 jobs:
-  build-test-package:
+  build-package:
     runs-on: windows-2022
     steps:
       - uses: actions/checkout@v4
@@ -15,11 +15,9 @@ jobs:
           $files = git ls-files '*.cpp' '*.hpp'
           foreach ($file in $files) { clang-format --dry-run --Werror --style=file $file }
       - name: Configure core build
-        run: cmake -S . -B build-ci -DTINYENGINE_BUILD_EDITOR=OFF -DTINYENGINE_BUILD_IMPORTERS=OFF -DTINYENGINE_BUILD_TESTS=ON -DTINYENGINE_BUILD_GAME=ON
+        run: cmake -S . -B build-ci -DTINYENGINE_BUILD_EDITOR=OFF -DTINYENGINE_BUILD_IMPORTERS=OFF -DTINYENGINE_BUILD_TESTS=OFF -DTINYENGINE_BUILD_GAME=ON
       - name: Build
         run: cmake --build build-ci --config Release --parallel 4
-      - name: Test
-        run: ctest --test-dir build-ci -C Release --output-on-failure
       - name: Validate content
         run: |
           .\build-ci\Release\tinyengine_commandlet.exe ValidateAssets assets

@@ -1,60 +1,60 @@
-# CMake build trees
-/build/
-/build-*/
-/out/
-/cmake-build-*/
-CMakeCache.txt
-CMakeFiles/
-cmake_install.cmake
-CTestTestfile.cmake
+# 默认不纳入 Git，只开放需要提交的项目内容。
+/*
 
-# Visual Studio
-.vs/
-*.sln
-*.vcxproj
-*.vcxproj.filters
-*.vcxproj.user
-*.VC.db
-*.VC.opendb
+# 仓库配置与构建入口
+!/.gitignore
+!/.gitattributes
+!/.clang-format
+!/.github/
+/.github/*
+!/.github/workflows/
+/.github/workflows/*
+!/.github/workflows/windows.yml
+!/CMakeLists.txt
+!/Doxyfile
+!/README.md
+!/TinyEngine.tinyproject
+!/设计.md
+!/第三方依赖与许可.md
 
-# Compiled outputs
-*.obj
-!/tests/fixtures/Import/*.obj
-*.o
-*.lib
-*.dll
-*.exe
-*.pdb
-*.ilk
+# 引擎、编辑器与工具源码
+!/cmake/
+!/editor/
+!/include/
+!/src/
+!/tools/
 
-# Editors and OS
-.vscode/
-.idea/
-*.user
-*.suo
-.DS_Store
-Thumbs.db
-/imgui.ini
+# 技术说明文档
+!/docs/
+/docs/*
+!/docs/使用指南.md
+!/docs/原生插件API.md
+!/docs/工具参考.md
+!/docs/文档中心.md
+!/docs/构建指南.md
+!/docs/源码阅读与注释规范.md
+!/docs/联网指南.md
+!/docs/资产与数据格式.md
+!/docs/项目架构.md
 
-# Runtime/generated data
-/Saved/
-/Logs/
-/Cache/
-/Crashes/
-/Dist/
-
-# Local model-import outputs and optional large samples.
-# Keep deterministic import fixtures under tests/fixtures/Import instead.
-/assets/Imported/
-
-.codex_tmp/
-
-# 本地保留的规划、报告和文档图片，不再纳入 Git。
-/docs/版本完成记录.md
-/docs/实现日志.md
-/docs/后续工作.md
-/docs/编辑器需求清单.md
-/docs/导入兼容性报告.md
-/docs/综合回归测试报告_2026-07-18.md
-/docs/编辑器UI测试与故障清单_2026-07-17.md
-/docs/images/
+# 引擎基础素材
+!/assets/
+/assets/*
+!/assets/Demo.scene
+!/assets/Demo.scene.meta
+!/assets/default.input
+!/assets/default.input.meta
+!/assets/default.mat
+!/assets/default.mat.meta
+!/assets/default.ppm
+!/assets/default.ppm.meta
+!/assets/player.anim
+!/assets/player.anim.meta
+!/assets/player.mesh
+!/assets/player.mesh.meta
+!/assets/shaders/
+/assets/shaders/*
+!/assets/shaders/default.frag
+!/assets/shaders/default.frag.meta
+!/assets/shaders/default.vert
+!/assets/shaders/default.vert.meta

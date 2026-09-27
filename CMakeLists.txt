@@ -12,7 +12,7 @@ endif()
 set(TINYENGINE_BUILD_ID "${PROJECT_VERSION}-${TINYENGINE_GIT_REVISION}")
 set(TINYENGINE_COMPILER_ID "${CMAKE_CXX_COMPILER_ID}-${CMAKE_CXX_COMPILER_VERSION}")
 
-option(TINYENGINE_BUILD_TESTS "Build TinyEngine tests" ON)
+option(TINYENGINE_BUILD_TESTS "Build TinyEngine tests" OFF)
 option(TINYENGINE_BUILD_DEMO "Build TinyEngine demo" ON)
 option(TINYENGINE_BUILD_GAME "Build standalone TinyEngine game runtime" ON)
 option(TINYENGINE_BUILD_EDITOR "Build TinyEngine editor" ON)

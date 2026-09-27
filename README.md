@@ -4,7 +4,7 @@ TinyEngine 是参考 Unreal Engine 5.3.2 模块职责、以 C++17 实现的轻�
 
 当前版本：0.27.0（完成 Render Graph、GPU HZB、Motion Vector TAA、独立 Bloom/GTAO、Forward+ Clustered Lighting 与 GPU Driven Indirect Draw）。
 
-文档入口：[文档中心](docs/文档中心.md) · [构建指南](docs/构建指南.md) · [使用指南](docs/使用指南.md) · [技术设计](设计.md) · [项目架构](docs/项目架构.md) · [工具参考](docs/工具参考.md) · [后续工作](docs/后续工作.md)
+文档入口：[文档中心](docs/文档中心.md) · [构建指南](docs/构建指南.md) · [使用指南](docs/使用指南.md) · [技术设计](设计.md) · [项目架构](docs/项目架构.md) · [工具参考](docs/工具参考.md)
 
 本文中的“已实现”表示功能进入可编译、可测试、可运行的代码路径，不等同于 UE 同名系统的商业级规模。具体算法和质量边界记录在对应专题文档中。
 
@@ -28,7 +28,7 @@ TinyEngine 是参考 Unreal Engine 5.3.2 模块职责、以 C++17 实现的轻�
 - Shader：`#include`、`#pragma variant`、宏组合、依赖热重载、预处理磁盘缓存和完整编译/链接错误；失败时保留上一份有效程序。
 - 分析：CPU Queue/Shadow/Scene 分段耗时、OpenGL `GL_TIME_ELAPSED` GPU 帧耗时、Draw/Cull/LOD 计数在编辑器实时展示。
 - Runtime UI：动态 Unicode Glyph Atlas、Windows GDI/非 Windows FreeType、BiDi Run、连字、自动断行、富文本，以及 Panel/Label/Button/Image/InputField/List/Dropdown/ProgressBar、布局、裁剪、滚动、DPI 与导航。
-- 工程化：Git、CTest、CPack、AssetTool、SceneTool、PackageTool、Editor 一键打包、Windows CI、JSONL 结构化日志、Windows MiniDump/文本崩溃报告、第三方许可清单和发布包冒烟脚本。
+- 工程化：Git、CPack、AssetTool、SceneTool、PackageTool、Editor 一键打包、Windows CI、JSONL 结构化日志、Windows MiniDump/文本崩溃报告、第三方许可清单和发布包冒烟脚本。
 - 可维护性基础：稳定 C 原生插件 ABI、通用 Archive/迁移、异步 AssetHandle、依赖闭包、资源预算、Gameplay、CVar/Stat、无头 Commandlet 和 Windows/Linux Cook Profile。
 
 ## 快速开始
@@ -42,7 +42,6 @@ cmake -S . -B build `
   -DTINYENGINE_ASSIMP_DIR=D:\OpenSourceProject\assimp-master `
   -DTINYENGINE_IMGUI_DIR=D:\OpenSourceProject\imgui-master
 cmake --build build --config Debug -j 8
-ctest --test-dir build -C Debug --output-on-failure
 .\build\Debug\tinyengine_editor.exe TinyEngine.tinyproject
 ```
 
