@@ -116,6 +116,28 @@ std::string MainSource()
 #include <memory>
 #include <string>
 
+// 双击构建目录中的程序时，从程序位置向上查找同名项目文件。
+std::filesystem::path FindProject(const std::filesystem::path &executable)
+{
+    std::error_code error;
+    auto directory = std::filesystem::absolute(executable, error).parent_path();
+    if (error)
+        return {};
+    const auto projectName = executable.stem().wstring() + L".tinyproject";
+    while (!directory.empty())
+    {
+        const auto candidate = directory / projectName;
+        if (std::filesystem::is_regular_file(candidate, error) && !error)
+            return candidate;
+        error.clear();
+        const auto parent = directory.parent_path();
+        if (parent == directory)
+            break;
+        directory = parent;
+    }
+    return {};
+}
+
 int main(int argc, char **argv)
 {
     MiniEngine::CrashReporter::Install("TinyEngineProject");
@@ -134,8 +156,10 @@ int main(int argc, char **argv)
             projectFile = argument;
     }
     if (projectFile.empty())
+        projectFile = FindProject(argv[0]);
+    if (projectFile.empty())
     {
-        std::cerr << "Pass the .tinyproject path as the first argument.\n";
+        std::cerr << "Project file not found. Pass a .tinyproject path as the first argument.\n";
         return 2;
     }
     MiniEngine::Engine engine;
@@ -186,7 +210,8 @@ std::string ReadmeSource(const std::string &name)
            "项目代码在 `src/Game.cpp`：`OnInitialize` 找到 Player，`OnUpdate` 读取输入并移动它。\n\n"
            "修改代码后，在生成的 Visual Studio 解决方案中构建并运行 `" + name + "`。"
            "当前编辑器的 Play 不加载项目 C++ 代码。\n\n"
-           "命令行运行：`build/Release/" + name + ".exe " + name + ".tinyproject`。\n";
+           "双击 `build/Release/" + name + ".exe` 可运行；也可以显式传入项目文件："
+           "`build/Release/" + name + ".exe " + name + ".tinyproject`。\n";
 }
 
 bool CopyStarterAsset(const fs::path &engineRoot, const fs::path &projectRoot, const fs::path &relative)
