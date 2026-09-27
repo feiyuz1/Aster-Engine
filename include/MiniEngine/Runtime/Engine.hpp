@@ -118,6 +118,8 @@ class Engine : private WorldListener
     /// @brief 获取 `PluginManager`。
     /// @return 返回对应对象的引用；有效期不超过其所属对象。
     PluginManager &GetPluginManager();
+    /// @brief 请求退出主循环；下一帧检查点结束 Run。
+    void RequestExit();
 
   private:
     // Tick 只处理一帧编排；帧率相关更新和固定步长更新在此处明确分流。
@@ -167,4 +169,4 @@ class Engine : private WorldListener
     bool m_projectPakMounted = false;
     std::string m_editSnapshot;
 };
-} // namespace MiniEngine
+} // MiniEngine 命名空间

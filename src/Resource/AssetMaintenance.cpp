@@ -124,7 +124,7 @@ void RenderThumbnailVertices(const std::vector<ThumbnailVertex> &vertices, std::
         PutPixel(pixels, size, x, y + 1, Dot(vertex.position, forward), depth, vertex.normal, vertex.color);
     }
 }
-} // namespace
+} // 匿名命名空间
 
 std::vector<MissingAssetDependency> AssetMaintenance::FindMissingDependencies(const AssetRegistry &registry)
 {
@@ -171,36 +171,51 @@ bool AssetMaintenance::RepairDependency(AssetRegistry &registry, const std::stri
     return registry.SetDependencies(owner, std::move(dependencies));
 }
 
-// 资产、meta 和文本引用作为一个维护事务更新；任何文件操作失败都返回可定位信息，不伪报成功。
+// 先验证资产与 meta 的目标路径；meta 迁移失败时恢复源资产。
 bool AssetMaintenance::MoveAsset(AssetRegistry &registry, const std::filesystem::path &source, const std::filesystem::path &destination,
                                  std::string *error)
 {
-    if (!std::filesystem::is_regular_file(source) || std::filesystem::exists(destination))
+    const std::filesystem::path oldMeta = source.string() + ".meta", newMeta = destination.string() + ".meta";
+    if (!std::filesystem::is_regular_file(source) || std::filesystem::exists(destination) || std::filesystem::exists(newMeta) ||
+        (std::filesystem::exists(oldMeta) && !std::filesystem::is_regular_file(oldMeta)))
     {
         if (error)
-            *error = "Source is missing or destination already exists";
+            *error = "Source is missing, source metadata is invalid, or destination asset/metadata already exists";
         return false;
     }
     std::error_code code;
-    std::filesystem::create_directories(destination.parent_path(), code);
-    std::filesystem::rename(source, destination, code);
+    if (!destination.parent_path().empty())
+        std::filesystem::create_directories(destination.parent_path(), code);
+    if (!code)
+        std::filesystem::rename(source, destination, code);
     if (code)
     {
         if (error)
             *error = code.message();
         return false;
     }
-    const std::filesystem::path oldMeta = source.string() + ".meta", newMeta = destination.string() + ".meta";
     if (std::filesystem::is_regular_file(oldMeta))
+    {
         std::filesystem::rename(oldMeta, newMeta, code);
+        if (code)
+        {
+            const auto metadataError = code.message();
+            std::filesystem::rename(destination, source, code);
+            if (error)
+                *error = "Could not move metadata: " + metadataError +
+                         (code ? "; could not restore source asset: " + code.message() : "");
+            return false;
+        }
+    }
     const std::string oldPath = NormalizePath(source), newPath = NormalizePath(destination);
+    std::vector<std::filesystem::path> rewrittenAssets;
     for (const auto &asset : registry.GetAssets())
     {
         if (asset.path == oldPath)
             continue;
         std::string text = PlatformFile::ReadAllText(asset.path);
-        if (!text.empty() && ReplaceAll(text, oldPath, newPath))
-            PlatformFile::WriteAllText(asset.path, text);
+        if (!text.empty() && ReplaceAll(text, oldPath, newPath) && PlatformFile::WriteAllText(asset.path, text))
+            rewrittenAssets.emplace_back(asset.path);
         auto dependencies = asset.dependencies;
         bool changed = false;
         for (auto &dependency : dependencies)
@@ -212,9 +227,7 @@ bool AssetMaintenance::MoveAsset(AssetRegistry &registry, const std::filesystem:
         if (changed)
             registry.SetDependencies(asset.path, std::move(dependencies));
     }
-    const std::filesystem::path root = source.parent_path().empty() ? "." : source.parent_path();
-    registry.Scan(root, true);
-    registry.Scan(destination.parent_path(), true);
+    registry.UpdateMovedAsset(source, destination, rewrittenAssets);
     return true;
 }
 
@@ -397,4 +410,4 @@ std::size_t ChunkedAssetStream::GetChunkSize() const
 {
     return m_chunkSize;
 }
-} // namespace MiniEngine
+} // MiniEngine 命名空间

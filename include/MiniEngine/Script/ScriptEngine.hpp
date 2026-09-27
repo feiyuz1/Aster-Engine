@@ -119,6 +119,10 @@ class ScriptEngine
         Entity entity = InvalidEntity;
         World *world = nullptr;
         std::unique_ptr<ScriptInstance> instance;
+        bool pendingDestroy = false;
+        bool pendingReload = false;
+        bool reloading = false;
+        bool destroyNotified = false;
     };
     /// @brief 实例化资产并重建内部实体引用。
     /// @param className 脚本类或类型名称。
@@ -126,10 +130,16 @@ class ScriptEngine
     /// @param world 要读取或修改的 World。
     /// @return 返回接口计算或查询得到的结果。
     std::unique_ptr<ScriptInstance> Instantiate(const std::string &className, Entity entity, World *world) const;
+    void InvokeCallback(const std::function<void()> &callback);
+    void DrainDeferred();
     Logger *m_logger = nullptr;
     ScriptBinding m_binding;
     std::unordered_map<std::string, Factory> m_factories;
-    std::vector<Record> m_instances;
+    // 回调增删脚本期间使用快照，避免遍历中的记录失效。
+    std::vector<std::shared_ptr<Record>> m_instances;
+    std::size_t m_callbackDepth = 0;
+    bool m_draining = false;
+    bool m_clearing = false;
 };
 
 class HotReloadManager
@@ -155,4 +165,4 @@ class HotReloadManager
     };
     std::vector<Watched> m_watched;
 };
-} // namespace MiniEngine
+} // MiniEngine 命名空间

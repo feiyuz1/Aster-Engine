@@ -14,6 +14,7 @@
 #endif
 
 #include <algorithm>
+#include <atomic>
 #include <fstream>
 #include <iterator>
 #include <mutex>
@@ -31,6 +32,7 @@ struct Mount
 };
 std::vector<Mount> mounts;
 std::mutex mountMutex;
+std::atomic<PlatformFile::ReadPolicy> readPolicy{PlatformFile::ReadPolicy::LooseFirst};
 
 std::optional<std::vector<std::uint8_t>> ReadMounted(const std::filesystem::path &path)
 {
@@ -55,10 +57,22 @@ std::optional<std::vector<std::uint8_t>> ReadMounted(const std::filesystem::path
     }
     return std::nullopt;
 }
-} // namespace
+} // 匿名命名空间
+
+void PlatformFile::SetReadPolicy(const ReadPolicy policy)
+{
+    readPolicy.store(policy);
+}
+
+PlatformFile::ReadPolicy PlatformFile::GetReadPolicy()
+{
+    return readPolicy.load();
+}
 
 bool PlatformFile::Exists(const std::filesystem::path &path)
 {
+    if (!path.is_absolute() && GetReadPolicy() == ReadPolicy::MountedOnly)
+        return ReadMounted(path).has_value();
     if (std::filesystem::exists(path))
         return true;
     return ReadMounted(path).has_value();
@@ -66,6 +80,11 @@ bool PlatformFile::Exists(const std::filesystem::path &path)
 
 std::vector<std::uint8_t> PlatformFile::ReadAllBytes(const std::filesystem::path &path)
 {
+    if (!path.is_absolute() && GetReadPolicy() == ReadPolicy::MountedOnly)
+    {
+        auto mounted = ReadMounted(path);
+        return mounted ? std::move(*mounted) : std::vector<std::uint8_t>{};
+    }
     std::ifstream stream(path, std::ios::binary);
     if (!stream)
     {
@@ -77,6 +96,11 @@ std::vector<std::uint8_t> PlatformFile::ReadAllBytes(const std::filesystem::path
 
 std::string PlatformFile::ReadAllText(const std::filesystem::path &path)
 {
+    if (!path.is_absolute() && GetReadPolicy() == ReadPolicy::MountedOnly)
+    {
+        auto mounted = ReadMounted(path);
+        return mounted ? std::string(mounted->begin(), mounted->end()) : std::string{};
+    }
     std::ifstream stream(path, std::ios::binary);
     if (!stream)
     {
@@ -222,6 +246,7 @@ void PlatformFile::ClearMounts()
 {
     std::lock_guard<std::mutex> lock(mountMutex);
     mounts.clear();
+    readPolicy.store(ReadPolicy::LooseFirst);
 }
 
 void EngineClock::Reset()
@@ -258,4 +283,4 @@ bool FileWatcher::HasChanged(const std::filesystem::path &path)
     m_lastWrite = current;
     return true;
 }
-} // namespace MiniEngine
+} // MiniEngine 命名空间

@@ -16,6 +16,13 @@ namespace MiniEngine
 class PlatformFile
 {
   public:
+    enum class ReadPolicy
+    {
+        LooseFirst,
+        MountedOnly // 相对资源路径只能通过显式挂载解析。
+    };
+    static void SetReadPolicy(ReadPolicy policy);
+    static ReadPolicy GetReadPolicy();
     /// @brief 判断指定文件或目录是否存在。
     /// @param path 文件、资源或目录路径。
     /// @return 操作成功时返回 `true`，否则返回 `false`。
@@ -57,7 +64,7 @@ class PlatformFile
     /// @param priority 任务或资源请求优先级。
     /// @return 操作成功时返回 `true`，否则返回 `false`。
     static bool MountPak(const std::filesystem::path &archive, int priority = 0);
-    /// @brief 清空 `Mounts`。
+    /// @brief 清空挂载并恢复 LooseFirst 读取策略。
     static void ClearMounts();
 };
 
@@ -91,4 +98,4 @@ class FileWatcher
     std::filesystem::file_time_type m_lastWrite{};
     bool m_initialized = false;
 };
-} // namespace MiniEngine
+} // MiniEngine 命名空间

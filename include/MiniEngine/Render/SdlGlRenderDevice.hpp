@@ -97,6 +97,8 @@ class SdlGlRenderDevice final : public RenderDevice
     /// @brief 设置 `EventCallback`。
     /// @param callback 满足条件时调用的回调函数。
     void SetEventCallback(std::function<void(const void *)> callback);
+    /// @brief 设置窗口关闭请求处理器；未设置时保持运行时直接退出行为。
+    void SetCloseRequestCallback(std::function<void()> callback);
     /// @brief 启用 `SceneRenderTarget`。
     /// @param enabled 是否启用对应功能。
     /// @param width 目标宽度。
@@ -167,6 +169,7 @@ class SdlGlRenderDevice final : public RenderDevice
     /// @brief 判断是否满足 `TaaEnabled` 条件。
     /// @return 条件成立时返回 `true`，否则返回 `false`。
     bool IsTaaEnabled() const;
+    bool UsesTemporalJitter() const override { return IsTaaEnabled(); }
     /// @brief 获取 `LastGpuFrameMilliseconds`。
     /// @return 返回计算得到的数值、数量或索引。
     float GetLastGpuFrameMilliseconds() const;
@@ -188,6 +191,12 @@ class SdlGlRenderDevice final : public RenderDevice
     /// @brief 判断是否满足 `ControllerConnected` 条件。
     /// @return 条件成立时返回 `true`，否则返回 `false`。
     bool IsControllerConnected() const;
+    /// @brief 设置是否允许 ESC 键退出主循环。
+    /// @param enabled 是否启用对应行为。
+    void SetEscapeQuits(bool enabled);
+    /// @brief 获取 `DpiScale`。
+    /// @return 返回当前显示 DPI 相对 96 的缩放比例。
+    float GetDpiScale() const;
 
   private:
     struct Impl;
@@ -198,7 +207,10 @@ class SdlGlRenderDevice final : public RenderDevice
     int m_height;
     std::string m_title;
     float m_aspect = 16.0f / 9.0f;
+    float m_dpiScale = 1.0f;
+    bool m_escapeQuits = true;
     InputState m_inputState;
     std::function<void(const void *)> m_eventCallback;
+    std::function<void()> m_closeRequestCallback;
 };
-} // namespace MiniEngine
+} // MiniEngine 命名空间

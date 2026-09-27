@@ -62,7 +62,14 @@ void EntityManager::Reset()
 {
     m_aliveEntities.clear();
     m_freeIndices.clear();
-    m_generations.assign(1, 0);
+    // 保留已分配槽位的代数历史，防止替换场景后旧句柄重新生效。
+    for (std::size_t index = m_generations.size(); index > 1; --index)
+    {
+        auto &generation = m_generations[index - 1];
+        if (++generation == 0)
+            generation = 1;
+        m_freeIndices.push_back(static_cast<u32>(index - 1));
+    }
 }
 
 void ComponentManager::RemoveAll(const Entity entity)
@@ -259,4 +266,4 @@ void World::Shutdown()
     Clear();
     m_initialized = false;
 }
-} // namespace MiniEngine
+} // MiniEngine 命名空间

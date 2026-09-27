@@ -120,6 +120,9 @@ std::string ResourceManager::ResolvePath(const std::string &path) const
     const std::filesystem::path logical(path);
     if (logical.is_absolute())
         return logical.lexically_normal().generic_string();
+    // 已发布的相对引用必须继续从包内读取，不能转成项目目录中的散文件。
+    if (PlatformFile::GetReadPolicy() == PlatformFile::ReadPolicy::MountedOnly)
+        return logical.lexically_normal().generic_string();
     const auto root = std::filesystem::absolute(m_assetRoot).lexically_normal();
     std::filesystem::path candidate = root / logical;
     const auto first = logical.begin();
@@ -147,4 +150,4 @@ std::shared_ptr<Resource> ResourceManager::LoadWithRegisteredLoaders(const std::
             return loader->Load(ResolvePath(path));
     return nullptr;
 }
-} // namespace MiniEngine
+} // MiniEngine 命名空间

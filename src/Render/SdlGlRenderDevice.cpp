@@ -553,7 +553,7 @@ constexpr const char *GpuParticleFragmentShaderSource = R"GLSL(
                 outColor = vec4(vParticleColor.rgb, vParticleColor.a * smoothstep(0.5, 0.35, distanceToCenter));
             }
         )GLSL";
-} // namespace
+} // 匿名命名空间
 
 // OpenGL 细节隐藏在 PImpl 中，避免公开头文件暴露 SDL/OpenGL 类型并缩短上层重编译范围。
 // 该对象与创建它的线程绑定；缓存中的 GLuint 只允许在上下文仍有效时销毁。
@@ -1614,11 +1614,18 @@ bool SdlGlRenderDevice::Initialize()
     SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
     SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 24);
     m_impl->window = SDL_CreateWindow(m_title.c_str(), SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, m_width, m_height,
-                                      SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE | SDL_WINDOW_SHOWN);
+                                      SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE | SDL_WINDOW_SHOWN | SDL_WINDOW_ALLOW_HIGHDPI);
     if (!m_impl->window)
     {
         SDL_Quit();
         return false;
+    }
+    // 以窗口所在显示器的 DPI 推导缩放比例，供编辑器按像素缩放手写布局与字号。
+    {
+        float displayDpi = 0.0f;
+        const int displayIndex = SDL_GetWindowDisplayIndex(m_impl->window);
+        if (displayIndex >= 0 && SDL_GetDisplayDPI(displayIndex, &displayDpi, nullptr, nullptr) == 0 && displayDpi > 0.0f)
+            m_dpiScale = std::clamp(displayDpi / 96.0f, 1.0f, 4.0f);
     }
     m_impl->context = SDL_GL_CreateContext(m_impl->window);
     if (!m_impl->context || !m_impl->LoadFunctions())
@@ -1828,16 +1835,27 @@ bool SdlGlRenderDevice::PumpEvents()
     m_impl->input.mouseX = m_impl->input.mouseY = 0.0f;
     m_impl->input.textInput.clear();
     m_impl->input.uiBackspace = false;
+    bool mousePressed = false;
+    int pressX = 0, pressY = 0;
     SDL_Event event{};
     while (SDL_PollEvent(&event))
     {
         if (m_eventCallback)
             m_eventCallback(&event);
         if (event.type == SDL_QUIT)
-            return false;
+        {
+            if (m_closeRequestCallback)
+                m_closeRequestCallback();
+            else
+                return false;
+        }
         if (event.type == SDL_WINDOWEVENT && event.window.event == SDL_WINDOWEVENT_SIZE_CHANGED)
         {
-            glViewport(0, 0, event.window.data1, event.window.data2);
+            // 高 DPI 窗口的可绘制尺寸与逻辑尺寸不同；视口必须用前者，否则画面只填满左下子区域。
+            int drawableWidth = event.window.data1, drawableHeight = event.window.data2;
+            if (m_impl->window)
+                SDL_GL_GetDrawableSize(m_impl->window, &drawableWidth, &drawableHeight);
+            glViewport(0, 0, drawableWidth, drawableHeight);
             if (event.window.data2 > 0)
                 m_aspect = static_cast<float>(event.window.data1) / static_cast<float>(event.window.data2);
         }
@@ -1845,6 +1863,12 @@ bool SdlGlRenderDevice::PumpEvents()
         {
             m_impl->input.mouseX += static_cast<float>(event.motion.xrel);
             m_impl->input.mouseY += static_cast<float>(event.motion.yrel);
+        }
+        if (event.type == SDL_MOUSEBUTTONDOWN && event.button.button == SDL_BUTTON_LEFT)
+        {
+            mousePressed = true;
+            pressX = event.button.x;
+            pressY = event.button.y;
         }
         if (event.type == SDL_TEXTINPUT)
             m_impl->input.textInput += event.text.text;
@@ -1872,12 +1896,21 @@ bool SdlGlRenderDevice::PumpEvents()
     m_impl->input.scale = axis(SDL_SCANCODE_X, SDL_SCANCODE_Z);
     m_impl->input.sprint = keys[SDL_SCANCODE_LSHIFT] || keys[SDL_SCANCODE_RSHIFT];
     m_impl->input.jump = keys[SDL_SCANCODE_SPACE] != 0;
-    m_impl->input.primaryAction = (SDL_GetMouseState(nullptr, nullptr) & SDL_BUTTON(SDL_BUTTON_LEFT)) != 0;
+    m_impl->input.primaryAction = mousePressed || (SDL_GetMouseState(nullptr, nullptr) & SDL_BUTTON(SDL_BUTTON_LEFT)) != 0;
     int cursorX = 0, cursorY = 0;
     SDL_GetMouseState(&cursorX, &cursorY);
-    m_impl->input.cursorX = static_cast<float>(cursorX);
-    m_impl->input.cursorY = static_cast<float>(cursorY);
-    m_impl->input.quitRequested = keys[SDL_SCANCODE_ESCAPE] != 0;
+    if (mousePressed)
+    {
+        cursorX = pressX;
+        cursorY = pressY;
+    }
+    int windowWidth = 0, windowHeight = 0;
+    SDL_GetWindowSize(m_impl->window, &windowWidth, &windowHeight);
+    const Vec2 uiViewport = GetViewportSize();
+    m_impl->input.cursorX = static_cast<float>(cursorX) * uiViewport.x / static_cast<float>(std::max(1, windowWidth));
+    m_impl->input.cursorY = static_cast<float>(cursorY) * uiViewport.y / static_cast<float>(std::max(1, windowHeight));
+    // 编辑器通过 SetEscapeQuits(false) 关闭平台层 ESC→退出，改由 ImGui 侧处理 ESC（清空选择/关闭弹窗）。
+    m_impl->input.quitRequested = (m_escapeQuits && keys[SDL_SCANCODE_ESCAPE] != 0);
     if (!m_impl->controller)
         for (int index = 0; index < SDL_NumJoysticks(); ++index)
             if (SDL_IsGameController(index))
@@ -1938,6 +1971,14 @@ Vec2 SdlGlRenderDevice::GetViewportSize() const
     if (m_impl && m_impl->window)
         SDL_GL_GetDrawableSize(m_impl->window, &width, &height);
     return {static_cast<float>(width), static_cast<float>(height)};
+}
+void SdlGlRenderDevice::SetEscapeQuits(const bool enabled)
+{
+    m_escapeQuits = enabled;
+}
+float SdlGlRenderDevice::GetDpiScale() const
+{
+    return m_dpiScale;
 }
 
 void SdlGlRenderDevice::BeginShadowPass(const FrameView &view, const std::size_t cascadeIndex)
@@ -2602,6 +2643,8 @@ void SdlGlRenderDevice::DrawUi(const std::vector<UIDrawCommand> &commands)
     else
         SDL_GL_GetDrawableSize(m_impl->window, &width, &height);
     glDisable(GL_DEPTH_TEST);
+    // UI 坐标向下递增，三角形朝向与 3D 剔除约定相反，因此绘制时关闭背面剔除。
+    glDisable(GL_CULL_FACE);
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
     glEnable(GL_SCISSOR_TEST);
@@ -2675,6 +2718,7 @@ void SdlGlRenderDevice::DrawUi(const std::vector<UIDrawCommand> &commands)
     }
     glDisable(GL_SCISSOR_TEST);
     glDisable(GL_BLEND);
+    glEnable(GL_CULL_FACE);
     glEnable(GL_DEPTH_TEST);
 }
 void SdlGlRenderDevice::Present()
@@ -2711,6 +2755,11 @@ void *SdlGlRenderDevice::GetGlContext() const
 void SdlGlRenderDevice::SetEventCallback(std::function<void(const void *)> callback)
 {
     m_eventCallback = std::move(callback);
+}
+
+void SdlGlRenderDevice::SetCloseRequestCallback(std::function<void()> callback)
+{
+    m_closeRequestCallback = std::move(callback);
 }
 bool SdlGlRenderDevice::EnableSceneRenderTarget(const bool enabled, const int width, const int height)
 {
@@ -2865,4 +2914,4 @@ bool SdlGlRenderDevice::IsControllerConnected() const
 {
     return m_impl && m_impl->controller && SDL_GameControllerGetAttached(m_impl->controller) == SDL_TRUE;
 }
-} // namespace MiniEngine
+} // MiniEngine 命名空间

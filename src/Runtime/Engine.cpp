@@ -35,6 +35,7 @@ bool Engine::Initialize(const std::filesystem::path &projectFile, const bool sta
             m_logger.Error("Cannot mount project package: " + m_projectSettings.packageArchive.generic_string());
             return false;
         }
+        PlatformFile::SetReadPolicy(PlatformFile::ReadPolicy::MountedOnly);
     }
     m_memoryManager.Initialize();
     const auto hardwareCount = std::thread::hardware_concurrency();
@@ -304,6 +305,12 @@ PluginManager &Engine::GetPluginManager()
     return m_pluginManager;
 }
 
+// 编辑器退出确认与场景另存为流程通过它请求结束主循环，避免直接触达私有 m_running。
+void Engine::RequestExit()
+{
+    m_running = false;
+}
+
 // 可变步长驱动表现层，物理通过累加器以固定步长追帧，避免不同刷新率得到不同结果。
 void Engine::Tick(const float rawDeltaTime)
 {
@@ -424,4 +431,4 @@ void Engine::OnWorldCleared(World &)
     m_audioEngine.ClearWorldState();
     m_playerEntity = InvalidEntity;
 }
-} // namespace MiniEngine
+} // MiniEngine 命名空间

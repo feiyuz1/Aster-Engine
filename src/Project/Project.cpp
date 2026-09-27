@@ -124,6 +124,8 @@ Entity CopyEntity(const World &source, Entity from, World &destination, std::uno
     CopyComponent<CameraComponent>(source, from, destination, to);
     CopyComponent<LightComponent>(source, from, destination, to);
     CopyComponent<ScriptComponent>(source, from, destination, to);
+    CopyComponent<PawnComponent>(source, from, destination, to);
+    CopyComponent<CharacterControllerComponent>(source, from, destination, to);
     CopyComponent<RigidBodyComponent>(source, from, destination, to);
     CopyComponent<ColliderComponent>(source, from, destination, to);
     CopyComponent<JointComponent>(source, from, destination, to);
@@ -131,7 +133,7 @@ Entity CopyEntity(const World &source, Entity from, World &destination, std::uno
     CopyComponent<AudioSourceComponent>(source, from, destination, to);
     return to;
 }
-} // namespace
+} // 匿名命名空间
 
 bool Prefab::Save(const World &world, const Entity root, const std::filesystem::path &path)
 {
@@ -216,4 +218,4 @@ bool SaveGame::Load(const std::filesystem::path &path)
 {
     return m_data.Load(path.string());
 }
-} // namespace MiniEngine
+} // MiniEngine 命名空间

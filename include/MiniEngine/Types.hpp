@@ -63,11 +63,12 @@ struct Handle
         return index == rhs.index && generation == rhs.generation;
     }
 };
-} // namespace MiniEngine
+} // MiniEngine 命名空间
 
 namespace std
 {
-template <> struct hash<MiniEngine::Handle>
+template <>
+struct hash<MiniEngine::Handle>
 {
     /// @brief 实现 `()` 运算符语义。
     /// @param value 要写入、比较或计算的值。
@@ -77,4 +78,4 @@ template <> struct hash<MiniEngine::Handle>
         return (static_cast<size_t>(value.generation) << 32u) ^ value.index;
     }
 };
-} // namespace std
+} // std 命名空间

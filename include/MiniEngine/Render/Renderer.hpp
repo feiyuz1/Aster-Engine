@@ -136,6 +136,7 @@ class RenderDevice
     /// @brief 获取 `ViewportSize`。
     /// @return 返回接口计算或查询得到的结果。
     virtual Vec2 GetViewportSize() const = 0;
+    virtual bool UsesTemporalJitter() const { return false; }
     /// @brief 开始 `ShadowPass`。
     /// @param view 当前帧的相机与光照视图数据。
     /// @param cascadeIndex 目标阴影级联索引。
@@ -374,4 +375,4 @@ class Renderer
     std::unordered_map<Entity, Mat4> m_previousModels;
     std::uint64_t m_frameNumber = 0;
 };
-} // namespace MiniEngine
+} // MiniEngine 命名空间

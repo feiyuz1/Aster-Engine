@@ -40,6 +40,14 @@ class EditorApp
     void Shutdown();
 
   private:
+#ifdef TINYENGINE_TEST_HOOKS
+    friend struct EditorInteractionTests;
+#endif
+    void HandleShortcuts();
+    void RequestEditorExit(bool continueExit = false);
+    void ResetSceneInteraction();
+    void RecordPropertyUndo();
+    bool RestoreSceneSnapshot(const std::string &snapshot);
     /// @brief 提交或绘制当前对象。
     void Draw();
     /// @brief 绘制 `MenuBar`。
@@ -52,6 +60,13 @@ class EditorApp
     void DrawInspector();
     /// @brief 绘制 `SceneView`。
     void DrawSceneView();
+    struct WorkspaceLayout { float left, right, upper, assets; };
+    WorkspaceLayout GetWorkspaceLayout(float width, float height) const;
+    void DrawWorkspaceSplitters();
+    void UpdateSceneCamera(bool hovered, bool focused);
+    void FocusSceneEntity(Entity entity);
+    void RequestOpenScene();
+    void DrawSceneOpenDialog();
     /// @brief 绘制 `Assets`。
     void DrawAssets();
     /// @brief 绘制 `Console`。
@@ -60,6 +75,15 @@ class EditorApp
     void DrawAnimationEditor();
     /// @brief 绘制 `ShaderEditor`。
     void DrawShaderEditor();
+    void DrawShaderCloseDialog();
+    bool OpenShaderDocument(const std::string &path);
+    bool IsShaderDirty() const;
+    bool SaveShaderDocument();
+    enum class ShaderAction { None, Open, Close, Exit };
+    enum class ShaderDecision { Save, Discard, Cancel };
+    void RequestShaderAction(ShaderAction action, const std::string &path = {});
+    bool ResolveShaderAction(ShaderDecision decision);
+    void CompleteShaderAction();
     /// @brief 绘制 `MaterialGraphEditor`。
     void DrawMaterialGraphEditor();
     /// @brief 绘制 `EffectEditor`。
@@ -72,6 +96,11 @@ class EditorApp
     void DrawSceneSaveDialog();
     /// @brief 绘制脏场景标签关闭确认对话框。
     void DrawSceneCloseDialog();
+    /// @brief 绘制退出编辑器确认对话框。
+    void DrawExitDialog();
+    /// @brief 将已创建的快照提交为撤销记录并标记场景脏。
+    /// @param snapshot 变更前创建的场景快照；仅在确认变更发生时提交。
+    void CommitUndoSnapshot(std::string snapshot);
     /// @brief 记录 `Undo`。
     void RecordUndo();
     /// @brief 撤销最近一次可撤销操作。
@@ -161,13 +190,23 @@ class EditorApp
     /// @param normalizedY 接口所需的输入参数。
     /// @return 返回实体句柄；失败时返回 `InvalidEntity`。
     Entity PickEntity(float normalizedX, float normalizedY) const;
+    /// @brief 收集射线上按距离排序的全部命中实体，用于重叠对象循环选择。
+    /// @param normalizedX 归一化视口横坐标。
+    /// @param normalizedY 归一化视口纵坐标。
+    /// @return 返回按命中距离升序（同距按包围盒更小优先）排列的实体列表。
+    std::vector<Entity> PickEntityHits(float normalizedX, float normalizedY) const;
+    /// @brief 按编辑器 DPI 缩放以像素为单位的手写布局常量。
+    /// @param value 96 DPI 下的逻辑像素值。
+    /// @return 返回当前 DPI 下应使用的像素值。
+    float Scaled(float value) const;
     /// @brief 绘制 `Gizmo`。
     /// @param minimumX 目标尺寸、数量、索引或限制值。
     /// @param minimumY 目标尺寸、数量、索引或限制值。
     /// @param width 目标宽度。
     /// @param height 目标高度。
+    /// @param sceneHovered 鼠标是否位于未被遮挡的场景图像上；用于阻止命中穿透浮动窗口。
     /// @return 操作成功时返回 `true`，否则返回 `false`。
-    bool DrawGizmo(float minimumX, float minimumY, float width, float height);
+    bool DrawGizmo(float minimumX, float minimumY, float width, float height, bool sceneHovered);
 
     enum class GizmoMode
     {
@@ -203,7 +242,11 @@ class EditorApp
     std::vector<Entity> m_selection;
     std::vector<std::string> m_undo;
     std::vector<std::string> m_redo;
+    bool m_sceneCommandsFocused = false;
+    bool m_inspectorFocused = false;
+    std::uint32_t m_inspectorEditId = 0;
     std::vector<std::string> m_messages;
+    std::size_t m_consoleRenderedMessageCount = 0;
     std::array<char, 256> m_consoleInput{};
     bool m_initialized = false;
     InterfaceLanguage m_interfaceLanguage = InterfaceLanguage::SimplifiedChinese;
@@ -211,6 +254,7 @@ class EditorApp
     Vec3 m_editorCameraPosition{0.0f, 2.5f, 7.0f};
     Vec3 m_editorCameraRotation{-10.0f, 0.0f, 0.0f};
     float m_editorCameraFov = 60.0f;
+    float m_dpiScale = 1.0f;
     GizmoMode m_gizmoMode = GizmoMode::Translate;
     GizmoSpace m_gizmoSpace = GizmoSpace::World;
     PivotMode m_pivotMode = PivotMode::Center;
@@ -221,8 +265,22 @@ class EditorApp
     float m_scaleSnap = 0.1f;
     float m_gizmoAccumulatedMotion = 0.0f;
     float m_gizmoAppliedMotion = 0.0f;
+    bool m_gizmoUndoRecorded = false;
+    float m_leftPanelRatio = 0.18f;
+    float m_rightPanelRatio = 0.24f;
+    float m_upperPanelRatio = 0.66f;
+    float m_assetsPanelRatio = 0.62f;
+    bool m_sceneMaximized = false;
+    std::array<char, 128> m_hierarchySearch{};
+    // 右键轨道采用“按下即捕获”语义：拖拽期间光标滑出场景视图不中断旋转。
+    bool m_sceneOrbitActive = false;
     bool m_marqueeActive = false;
     Vec2 m_marqueeStart{};
+    // 重叠命中循环：同一位置连续点击可在多个命中实体间轮换选择。
+    Vec2 m_lastPickScreen{};
+    bool m_lastPickValid = false;
+    std::vector<Entity> m_lastPickHits;
+    std::size_t m_lastPickIndex = 0;
     std::string m_selectedAsset;
     std::vector<std::string> m_selectedAssets;
     AssetViewMode m_assetViewMode = AssetViewMode::Grid;
@@ -232,7 +290,27 @@ class EditorApp
     std::filesystem::path m_assetFolder;
     std::unordered_map<std::string, JobHandle> m_thumbnailJobs;
     std::string m_openShaderAsset;
+    bool m_shaderEditorHidden = false;
     std::vector<char> m_shaderSource;
+    std::string m_savedShaderSource;
+    bool m_requestSceneOpenPopup = false;
+    std::array<char, 1024> m_sceneOpenPath{};
+    std::string m_sceneOpenError;
+    std::vector<std::filesystem::path> m_sceneOpenFiles;
+    Vec2 m_gizmoScreenDirection{};
+    float m_gizmoScreenLength = 1.0f;
+    Vec3 m_gizmoDragAxis{};
+    Vec3 m_gizmoDragOrigin{};
+    float m_gizmoDragHandleLength = 1.0f;
+    FrameView m_gizmoDragView;
+    Vec3 m_gizmoRotationVector{};
+    int m_shaderDocumentRevision = 0;
+    std::string m_shaderError;
+    std::string m_shaderCompileError;
+    ShaderAction m_shaderAction = ShaderAction::None;
+    std::string m_pendingShaderPath;
+    bool m_requestShaderPopup = false;
+    bool m_shaderFocused = false;
     std::string m_openMaterialGraphAsset;
     MaterialGraph m_materialGraph;
     std::string m_openAnimationAsset;
@@ -247,12 +325,14 @@ class EditorApp
     double m_lastAutosaveTime = 0.0;
     bool m_lastTitleDirty = false;
     bool m_titleInitialized = false;
-    // 每个标签页保存自己的序列化快照；切换前先回写当前 World，切换后再恢复目标快照。
+    // 每个标签页保存场景快照和独立的撤销/重做历史；切换前回写，切换后恢复。
     struct SceneDocument
     {
         std::filesystem::path path;
         std::string snapshot;
         bool dirty = false;
+        std::vector<std::string> undo;
+        std::vector<std::string> redo;
     };
     std::vector<SceneDocument> m_sceneDocuments;
     std::size_t m_activeSceneDocument = 0;
@@ -270,6 +350,11 @@ class EditorApp
     std::size_t m_sceneCloseDocument = InvalidSceneDocument;
     bool m_requestSceneClosePopup = false;
     bool m_closeAfterSceneSave = false;
+    // 菜单与系统关闭共用退出事务；所有脏文档逐一确认，另存为后继续检查剩余文档。
+    bool m_requestExitPopup = false;
+    bool m_exitAfterSceneSave = false;
+    bool m_exitInProgress = false;
+    std::vector<std::size_t> m_exitDiscardedDocuments;
 #ifdef TINYENGINE_HAS_ASSIMP
     AssetImportQueue m_importQueue;
     std::uint64_t m_activeImportTask = 0;
@@ -285,4 +370,4 @@ class EditorApp
     float m_importScaleTolerance = 0.001f;
 #endif
 };
-} // namespace MiniEngine
+} // MiniEngine 命名空间

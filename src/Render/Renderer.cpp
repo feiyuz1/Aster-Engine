@@ -172,7 +172,7 @@ float Halton(std::uint64_t index, const std::uint32_t base)
     }
     return result;
 }
-} // namespace
+} // 匿名命名空间
 
 void Renderer::SetLogger(Logger *logger)
 {
@@ -260,8 +260,11 @@ void Renderer::BuildRenderQueue(World &world)
         Perspective(camera.fov, m_device ? m_device->GetAspectRatio() : 16.0f / 9.0f, camera.nearPlane, camera.farPlane);
     const Vec2 viewport = m_device ? m_device->GetViewportSize() : Vec2{1280.0f, 720.0f};
     const std::uint64_t jitterIndex = m_frameNumber % 8 + 1;
-    m_frameView.temporalJitter = {(Halton(jitterIndex, 2) - 0.5f) / std::max(1.0f, viewport.x),
-                                  (Halton(jitterIndex, 3) - 0.5f) / std::max(1.0f, viewport.y)};
+    // 编辑和点选需要稳定投影；关闭 TAA 时不得继续抖动画面。
+    m_frameView.temporalJitter = {};
+    if (!m_cameraOverrideEnabled && m_device && m_device->UsesTemporalJitter())
+        m_frameView.temporalJitter = {(Halton(jitterIndex, 2) - 0.5f) / std::max(1.0f, viewport.x),
+                                    (Halton(jitterIndex, 3) - 0.5f) / std::max(1.0f, viewport.y)};
     m_frameView.projection.At(0, 2) += m_frameView.temporalJitter.x * 2.0f;
     m_frameView.projection.At(1, 2) += m_frameView.temporalJitter.y * 2.0f;
     const Mat4 currentViewProjection = m_frameView.projection * m_frameView.view;
@@ -465,11 +468,6 @@ void Renderer::RenderFrame(World &world)
                                        m_device->Draw(batch.front());
                                m_device->DrawParticles(particles);
                                m_device->DrawGpuParticles(gpuEmitters);
-                               if (m_uiSystem)
-                               {
-                                   m_uiSystem->SetViewportSize(viewport.x, viewport.y);
-                                   m_device->DrawUi(m_uiSystem->BuildDrawList());
-                               }
                            }});
     m_renderGraph.AddPass({"GPU HZB", {depth}, {hzb}, [&] { m_device->ExecutePostProcess(PostProcessPass::HierarchicalDepth); }});
     m_renderGraph.AddPass({"GTAO", {depth, hzb}, {gtao}, [&] { m_device->ExecutePostProcess(PostProcessPass::Gtao); }});
@@ -478,15 +476,30 @@ void Renderer::RenderFrame(World &world)
                                m_device->ExecutePostProcess(PostProcessPass::TemporalResolve);
                            }});
     m_renderGraph.AddPass({"Tone Map", {resolved}, {output}, [&] { m_device->ExecutePostProcess(PostProcessPass::ToneMap); }, true});
+    const auto drawRuntimeUi = [&] {
+        if (m_uiSystem)
+        {
+            m_uiSystem->SetViewportSize(viewport.x, viewport.y);
+            m_device->DrawUi(m_uiSystem->BuildDrawList());
+        }
+    };
     std::string graphError;
     if (!m_renderGraph.Compile(&graphError) || !m_renderGraph.Execute(&graphError))
     {
         if (m_logger)
             m_logger->Error(graphError);
+        // 失败帧也必须完成 ImGui 帧和 Present：跳过会让按键/点击的边沿状态跨帧丢失，出现丢键与粘滞。
+        // EndFrame 会把目标切回窗口默认帧缓冲并清屏，编辑器 overlay 在其上绘制控制台错误信息。
+        m_device->EndFrame();
+        drawRuntimeUi();
+        if (m_overlayCallback)
+            m_overlayCallback();
+        m_device->Present();
         return;
     }
     const auto shadowEnd = std::chrono::steady_clock::now();
     m_device->EndFrame();
+    drawRuntimeUi();
     if (m_overlayCallback)
         m_overlayCallback();
     m_device->Present();
@@ -583,4 +596,4 @@ void Renderer::SetEnvironmentPath(std::string path)
     }
     m_environmentPath.clear();
 }
-} // namespace MiniEngine
+} // MiniEngine 命名空间

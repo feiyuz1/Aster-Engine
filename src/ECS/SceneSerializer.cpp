@@ -17,10 +17,18 @@
 
 namespace MiniEngine
 {
+namespace
+{
+bool DeserializeScene(World &world, const std::string &text);
+}
+
 std::string SceneSerializer::Serialize(const World &world)
 {
     std::vector<Entity> entities(world.GetEntityManager().GetAliveEntities().begin(), world.GetEntityManager().GetAliveEntities().end());
-    std::sort(entities.begin(), entities.end());
+    // 稳定的场景 ID 取决于槽位顺序，与单个槽位复用次数无关。
+    std::sort(entities.begin(), entities.end(), [](const Entity left, const Entity right) {
+        return EntityIndex(left) < EntityIndex(right);
+    });
     std::unordered_map<Entity, std::size_t> ids;
     for (std::size_t index = 0; index < entities.size(); ++index)
         ids[entities[index]] = index + 1;
@@ -41,6 +49,8 @@ std::string SceneSerializer::Serialize(const World &world)
         if (const auto *v = world.GetComponent<TransformComponent>(entity))
             out << "transform " << v->position.x << ' ' << v->position.y << ' ' << v->position.z << ' ' << v->rotation.x << ' '
                 << v->rotation.y << ' ' << v->rotation.z << ' ' << v->scale.x << ' ' << v->scale.y << ' ' << v->scale.z << '\n';
+        if (const auto *v = world.GetComponent<VelocityComponent>(entity))
+            out << "velocity " << v->linear.x << ' ' << v->linear.y << ' ' << v->linear.z << '\n';
         if (const auto *v = world.GetComponent<MeshComponent>(entity))
             out << "mesh " << std::quoted(v->meshPath) << ' ' << std::quoted(v->materialPath) << '\n';
         if (const auto *v = world.GetComponent<LodComponent>(entity))
@@ -93,12 +103,14 @@ bool SceneSerializer::Save(const World &world, const std::filesystem::path &path
         return false;
     const std::string serialized = Serialize(world);
     World validation;
-    if (!Deserialize(validation, serialized))
+    if (!DeserializeScene(validation, serialized))
         return false;
     return PlatformFile::WriteAllTextAtomic(path, serialized, true);
 }
 
-bool SceneSerializer::Deserialize(World &world, const std::string &text)
+namespace
+{
+bool DeserializeScene(World &world, const std::string &text)
 {
     std::istringstream in(text);
     std::string token;
@@ -116,7 +128,7 @@ bool SceneSerializer::Deserialize(World &world, const std::string &text)
         {
             std::size_t id = 0, parent = 0;
             std::string name;
-            if (!(in >> id >> parent >> std::quoted(name)))
+            if (current != InvalidEntity || !(in >> id >> parent >> std::quoted(name)) || id == 0 || ids.count(id))
                 return false;
             current = world.CreateEntity(name);
             ids[id] = current;
@@ -148,6 +160,13 @@ bool SceneSerializer::Deserialize(World &world, const std::string &text)
             if (!v || !(in >> v->position.x >> v->position.y >> v->position.z >> v->rotation.x >> v->rotation.y >> v->rotation.z >>
                         v->scale.x >> v->scale.y >> v->scale.z))
                 return false;
+        }
+        else if (token == "velocity")
+        {
+            VelocityComponent v;
+            if (!(in >> v.linear.x >> v.linear.y >> v.linear.z))
+                return false;
+            world.AddComponent(current, v);
         }
         else if (token == "mesh")
         {
@@ -184,7 +203,7 @@ bool SceneSerializer::Deserialize(World &world, const std::string &text)
         else if (token == "rigidbody")
         {
             RigidBodyComponent v;
-            int type;
+            int type = 0;
             in >> type >> v.mass >> v.velocity.x >> v.velocity.y >> v.velocity.z >> v.useGravity;
             if (version >= 5)
                 in >> v.linearDamping >> v.restitution >> v.continuous;
@@ -197,7 +216,7 @@ bool SceneSerializer::Deserialize(World &world, const std::string &text)
         else if (token == "collider")
         {
             ColliderComponent v;
-            int shape;
+            int shape = 0;
             in >> shape >> v.halfExtents.x >> v.halfExtents.y >> v.halfExtents.z >> v.radius >> v.trigger >> v.layer >> v.mask;
             if (version >= 3)
                 in >> v.height;
@@ -209,7 +228,7 @@ bool SceneSerializer::Deserialize(World &world, const std::string &text)
         else if (token == "joint")
         {
             JointComponent v;
-            int type;
+            int type = 0;
             std::size_t target = 0;
             in >> type >> target >> v.restLength >> v.stiffness >> v.fixedOffset.x >> v.fixedOffset.y >> v.fixedOffset.z >>
                 v.collideConnected;
@@ -266,17 +285,37 @@ bool SceneSerializer::Deserialize(World &world, const std::string &text)
         if (!in)
             return false;
     }
+    if (current != InvalidEntity)
+        return false;
     for (const auto &pair : parents)
-        if (pair.second != 0 && ids.count(pair.second))
-            world.SetParent(pair.first, ids[pair.second]);
+    {
+        if (pair.second == 0)
+            continue;
+        const auto parent = ids.find(pair.second);
+        if (parent == ids.end() || !world.SetParent(pair.first, parent->second))
+            return false;
+    }
     for (auto &pending : joints)
     {
         auto &joint = std::get<2>(pending);
         const auto target = std::get<1>(pending);
-        joint.connectedEntity = ids.count(target) ? ids[target] : InvalidEntity;
+        const auto connected = ids.find(target);
+        if (target != 0 && connected == ids.end())
+            return false;
+        joint.connectedEntity = connected != ids.end() ? connected->second : InvalidEntity;
         world.AddComponent(std::get<0>(pending), joint);
     }
     return true;
+}
+} // 匿名命名空间
+
+bool SceneSerializer::Deserialize(World &world, const std::string &text)
+{
+    // 清空当前实体或通知监听器之前，先校验整个场景。
+    World validation;
+    if (!DeserializeScene(validation, text))
+        return false;
+    return DeserializeScene(world, text);
 }
 
 bool SceneSerializer::Load(World &world, const std::filesystem::path &path)
@@ -284,4 +323,4 @@ bool SceneSerializer::Load(World &world, const std::filesystem::path &path)
     const std::string text = PlatformFile::ReadAllText(path);
     return !text.empty() && Deserialize(world, text);
 }
-} // namespace MiniEngine
+} // MiniEngine 命名空间

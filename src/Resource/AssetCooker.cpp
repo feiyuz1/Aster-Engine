@@ -62,7 +62,7 @@ bool Cancelled(const CookOptions &options)
 {
     return options.cancel && options.cancel->load();
 }
-} // namespace
+} // 匿名命名空间
 
 CookResult AssetCooker::Cook(const std::filesystem::path &assetDirectory, const std::filesystem::path &cookedDirectory,
                              const std::filesystem::path &outputPak, const CookOptions &options)
@@ -110,12 +110,23 @@ CookResult AssetCooker::Cook(const std::filesystem::path &assetDirectory, const 
         {
             std::filesystem::create_directories(destination.parent_path(), error);
             std::string transformError;
-            const bool transformed = options.transform ? options.transform(sources[index], destination, transformError) : false;
-            if (!options.transform)
+            const bool transformed = !error && options.transform ? options.transform(sources[index], destination, transformError) : false;
+            if (!error && !options.transform)
                 std::filesystem::copy_file(sources[index], destination, std::filesystem::copy_options::overwrite_existing, error);
             if ((options.transform && !transformed) || error)
             {
                 result.errors.push_back(key + ": " + (transformError.empty() ? error.message() : transformError));
+                error.clear();
+                // 即使源文件时间戳未变，重试也不能接受上次遗留的不完整文件。
+                std::filesystem::remove(destination, error);
+                if (error)
+                {
+                    result.errors.push_back(key + ": Failed to remove incomplete output: " + error.message());
+                    // 输出文件被占用时可能清理失败；下次尝试前必须使缓存失效。
+                    std::filesystem::remove(manifestPath, error);
+                    if (error)
+                        result.errors.push_back("Failed to invalidate cook manifest: " + error.message());
+                }
                 error.clear();
             }
             else
@@ -124,6 +135,9 @@ CookResult AssetCooker::Cook(const std::filesystem::path &assetDirectory, const 
         if (options.progress)
             options.progress(sources.empty() ? 0.8f : 0.8f * static_cast<float>(index + 1) / static_cast<float>(sources.size()), key);
     }
+    // 失败时保留上次成功的清单，避免重试误收过期输出。
+    if (!result.errors.empty())
+        return result;
     for (const auto &old : previous)
     {
         if (current.count(old.first))
@@ -153,4 +167,4 @@ CookResult AssetCooker::Cook(const std::filesystem::path &assetDirectory, const 
         options.progress(1.0f, result.success ? "Complete" : "Failed");
     return result;
 }
-} // namespace MiniEngine
+} // MiniEngine 命名空间

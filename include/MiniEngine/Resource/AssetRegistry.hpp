@@ -66,6 +66,10 @@ class AssetRegistry
     bool MarkImported(const std::string &path);
 
   private:
+    friend class AssetMaintenance;
+    void ScanAsset(const std::filesystem::directory_entry &entry, bool createMetadata);
+    void UpdateMovedAsset(const std::filesystem::path &source, const std::filesystem::path &destination,
+                          const std::vector<std::filesystem::path> &rewrittenAssets);
     /// @brief 保存 `Meta`。
     /// @param info 接口所需的输入参数。
     /// @return 操作成功时返回 `true`，否则返回 `false`。
@@ -74,4 +78,4 @@ class AssetRegistry
     std::unordered_map<std::string, AssetInfo> m_assets;
     std::unordered_map<std::string, std::string> m_byId;
 };
-} // namespace MiniEngine
+} // MiniEngine 命名空间
