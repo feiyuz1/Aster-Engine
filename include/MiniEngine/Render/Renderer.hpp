@@ -51,10 +51,13 @@ struct FrameView
 {
     static constexpr std::size_t MaxLights = 64;
     static constexpr std::size_t MaxShadowCascades = 3;
+    static constexpr int ShadowMapResolution = 2048;
     Mat4 view = Mat4::Identity();
     Mat4 projection = Mat4::Identity();
     Mat4 previousViewProjection = Mat4::Identity();
     Vec2 temporalJitter{};
+    bool occlusionHistoryValid = false;
+    bool resetTemporalHistory = true;
     Vec3 cameraPosition{0.0f, 0.0f, 5.0f};
     Vec3 lightDirection{-0.4f, -1.0f, -0.3f};
     Vec3 lightColor{1.0f, 1.0f, 1.0f};
@@ -136,7 +139,10 @@ class RenderDevice
     /// @brief 获取 `ViewportSize`。
     /// @return 返回接口计算或查询得到的结果。
     virtual Vec2 GetViewportSize() const = 0;
-    virtual bool UsesTemporalJitter() const { return false; }
+    virtual bool UsesTemporalJitter() const
+    {
+        return false;
+    }
     /// @brief 开始 `ShadowPass`。
     /// @param view 当前帧的相机与光照视图数据。
     /// @param cascadeIndex 目标阴影级联索引。
@@ -352,6 +358,7 @@ class Renderer
     ResourceManager *m_resources = nullptr;
     std::unique_ptr<RenderDevice> m_device;
     RenderQueue m_renderQueue;
+    std::vector<RenderItem> m_shadowItems;
     FrameView m_frameView;
     std::size_t m_lastDrawCalls = 0;
     std::size_t m_lastCulled = 0;
@@ -371,8 +378,12 @@ class Renderer
     FrameProfile m_lastFrameProfile;
     RenderGraph m_renderGraph;
     Mat4 m_previousViewProjection = Mat4::Identity();
+    Mat4 m_previousUnjitteredViewProjection = Mat4::Identity();
+    Mat4 m_previousProjection = Mat4::Identity();
+    Vec3 m_previousCameraPosition{}, m_previousCameraForward{0, 0, -1};
+    bool m_previousCameraOverride = false;
     bool m_hasPreviousView = false;
     std::unordered_map<Entity, Mat4> m_previousModels;
     std::uint64_t m_frameNumber = 0;
 };
-} // 结束 MiniEngine 命名空间
+} // namespace MiniEngine

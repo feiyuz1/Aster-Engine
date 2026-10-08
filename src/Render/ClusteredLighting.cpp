@@ -24,7 +24,7 @@ std::uint32_t ClampTile(const float normalized, const std::uint32_t count)
     return static_cast<std::uint32_t>(
         std::clamp(static_cast<int>(std::floor(normalized * static_cast<float>(count))), 0, static_cast<int>(count) - 1));
 }
-} // 结束匿名命名空间
+} // namespace
 
 std::size_t ClusteredLightGrid::GetClusterCount() const
 {
@@ -53,11 +53,17 @@ ClusteredLightGrid ClusteredLightBuilder::Build(const std::vector<RenderLight> &
     result.nearPlane = std::max(0.001f, nearPlane);
     result.farPlane = std::max(result.nearPlane + 0.001f, farPlane);
     const std::size_t clusterCount = result.GetClusterCount();
-    std::vector<std::vector<std::uint32_t>> clusters(clusterCount);
+    // 一次收集引用，再按前缀和写入连续数组，避免每个光簇各自分配小 vector。
+    std::vector<std::pair<std::size_t, std::uint32_t>> references;
+    references.reserve(clusterCount);
+    result.counts.assign(clusterCount, 0);
     const auto append = [&](const std::uint32_t x, const std::uint32_t y, const std::uint32_t z, const std::uint32_t light) {
-        auto &cluster = clusters[(static_cast<std::size_t>(z) * result.tilesY + y) * result.tilesX + x];
-        if (cluster.size() < maximumLightsPerCluster)
-            cluster.push_back(light);
+        const std::size_t cluster = (static_cast<std::size_t>(z) * result.tilesY + y) * result.tilesX + x;
+        if (result.counts[cluster] < maximumLightsPerCluster)
+        {
+            ++result.counts[cluster];
+            references.emplace_back(cluster, light);
+        }
     };
 
     for (std::uint32_t lightIndex = 0; lightIndex < lights.size(); ++lightIndex)
@@ -97,15 +103,18 @@ ClusteredLightGrid ClusteredLightBuilder::Build(const std::vector<RenderLight> &
     }
 
     result.offsets.resize(clusterCount);
-    result.counts.resize(clusterCount);
+    std::uint32_t offset = 0;
     for (std::size_t cluster = 0; cluster < clusterCount; ++cluster)
     {
-        result.offsets[cluster] = static_cast<std::uint32_t>(result.lightIndices.size());
-        result.counts[cluster] = static_cast<std::uint32_t>(clusters[cluster].size());
-        result.lightIndices.insert(result.lightIndices.end(), clusters[cluster].begin(), clusters[cluster].end());
+        result.offsets[cluster] = offset;
+        offset += result.counts[cluster];
     }
+    result.lightIndices.resize(offset);
+    auto cursors = result.offsets;
+    for (const auto &reference : references)
+        result.lightIndices[cursors[reference.first]++] = reference.second;
     (void)viewportWidth;
     (void)viewportHeight;
     return result;
 }
-} // 结束 MiniEngine 命名空间
+} // namespace MiniEngine

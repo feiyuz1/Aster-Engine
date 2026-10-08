@@ -148,6 +148,17 @@ add_library(tinyengine STATIC
 
 target_include_directories(tinyengine PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include> $<INSTALL_INTERFACE:include>)
 target_include_directories(tinyengine PRIVATE "${TINYENGINE_STB_DIR}")
+
+# 外部着色器不可用时，内置版本仍须完整支持实例、运动矢量和分簇光照。
+# 两条路径共用同一份 GLSL，避免备用版本随渲染管线升级而过时。
+file(READ "${CMAKE_CURRENT_SOURCE_DIR}/assets/shaders/default.vert" TINYENGINE_DEFAULT_VERTEX_SHADER)
+file(READ "${CMAKE_CURRENT_SOURCE_DIR}/assets/shaders/default.frag" TINYENGINE_DEFAULT_FRAGMENT_SHADER)
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+    "${CMAKE_CURRENT_SOURCE_DIR}/assets/shaders/default.vert"
+    "${CMAKE_CURRENT_SOURCE_DIR}/assets/shaders/default.frag")
+configure_file(src/Render/BuiltinShaders.hpp.in
+    "${CMAKE_CURRENT_BINARY_DIR}/generated/MiniEngine/Render/BuiltinShaders.hpp" @ONLY)
+target_include_directories(tinyengine PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
 target_compile_definitions(tinyengine PRIVATE
     TINYENGINE_HAS_STB_VORBIS=1
     TINYENGINE_VERSION="${PROJECT_VERSION}"
@@ -267,6 +278,14 @@ if(TINYENGINE_BUILD_TESTS)
     target_compile_definitions(tinyengine PUBLIC TINYENGINE_TEST_HOOKS=1)
     add_executable(tinyengine_tests tests/EngineTests.cpp)
     target_link_libraries(tinyengine_tests PRIVATE tinyengine)
+    add_executable(tinyengine_render_stability_tests tests/RenderStabilityTests.cpp)
+    target_link_libraries(tinyengine_render_stability_tests PRIVATE tinyengine)
+    add_test(NAME tinyengine_render_stability COMMAND tinyengine_render_stability_tests)
+    set_tests_properties(tinyengine_render_stability PROPERTIES WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+    file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/RenderStabilityNoAssets")
+    add_test(NAME tinyengine_render_builtin_shaders COMMAND tinyengine_render_stability_tests)
+    set_tests_properties(tinyengine_render_builtin_shaders PROPERTIES
+        WORKING_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/RenderStabilityNoAssets")
     add_executable(tinyengine_scene_save_tests tests/SceneSaveTests.cpp)
     target_link_libraries(tinyengine_scene_save_tests PRIVATE tinyengine)
     add_library(tinyengine_test_dynamic_plugin SHARED tests/TestDynamicPlugin.cpp)
@@ -299,7 +318,7 @@ if(MSVC)
     foreach(TINYENGINE_SOURCE_TARGET IN ITEMS
             tinyengine tinyengine_demo tinyengine_game tinyengine_importers tinyengine_editor
             tinyengine_asset_tool tinyengine_scene_tool tinyengine_package_tool tinyengine_commandlet
-            tinyengine_tests tinyengine_scene_save_tests tinyengine_test_dynamic_plugin tinyengine_extended_tests
+            tinyengine_tests tinyengine_render_stability_tests tinyengine_scene_save_tests tinyengine_test_dynamic_plugin tinyengine_extended_tests
             tinyengine_import_compatibility_tests)
         if(TARGET ${TINYENGINE_SOURCE_TARGET})
             # /FS 在 CMake/MSBuild 并行编译时串行化各目标的 PDB 写入，避免编译器争用。

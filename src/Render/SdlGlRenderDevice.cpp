@@ -1,4 +1,4 @@
-﻿// 文件：src/Render/SdlGlRenderDevice.cpp
+// 文件：src/Render/SdlGlRenderDevice.cpp
 // 作用：实现基于 SDL2 与 OpenGL 的渲染设备、窗口输入和 GPU 资源提交。
 // 约定：GPU 对象只应在拥有图形上下文的线程创建、使用和销毁。
 // 类型：实现文件。
@@ -6,6 +6,7 @@
 #include "MiniEngine/Render/SdlGlRenderDevice.hpp"
 
 #include "MiniEngine/Platform/Platform.hpp"
+#include "MiniEngine/Render/BuiltinShaders.hpp"
 #include "MiniEngine/Render/ShaderPipeline.hpp"
 #include "MiniEngine/UI/TextLayout.hpp"
 #include "MiniEngine/VFX/ParticleSystem.hpp"
@@ -21,6 +22,7 @@
 #include <SDL_opengl.h>
 
 #include <algorithm>
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
@@ -38,104 +40,40 @@ namespace MiniEngine
 {
 namespace
 {
+Mat4 InversePerspective(const Mat4 &projection)
+{
+    Mat4 inverseProjection{};
+    inverseProjection.At(0, 0) = 1.0f / projection.At(0, 0);
+    inverseProjection.At(1, 1) = 1.0f / projection.At(1, 1);
+    inverseProjection.At(0, 3) = projection.At(0, 2) / projection.At(0, 0);
+    inverseProjection.At(1, 3) = projection.At(1, 2) / projection.At(1, 1);
+    inverseProjection.At(2, 3) = -1.0f;
+    inverseProjection.At(3, 2) = 1.0f / projection.At(2, 3);
+    inverseProjection.At(3, 3) = projection.At(2, 2) / projection.At(2, 3);
+    return inverseProjection;
+}
+
+// Perspective 与 LookAt 的解析逆矩阵，避免在 TAA 的每个像素里求逆。
+Mat4 InverseCameraViewProjection(const FrameView &view)
+{
+    Mat4 inverseView = Mat4::Identity();
+    for (std::size_t row = 0; row < 3; ++row)
+        for (std::size_t column = 0; column < 3; ++column)
+            inverseView.At(row, column) = view.view.At(column, row);
+    inverseView.At(0, 3) = view.cameraPosition.x;
+    inverseView.At(1, 3) = view.cameraPosition.y;
+    inverseView.At(2, 3) = view.cameraPosition.z;
+    return inverseView * InversePerspective(view.projection);
+}
+
 template <typename T> bool LoadGl(T &target, const char *name)
 {
     target = reinterpret_cast<T>(SDL_GL_GetProcAddress(name));
     return target != nullptr;
 }
 
-constexpr const char *VertexShaderSource = R"GLSL(
-            #version 330 core
-            layout(location = 0) in vec3 aPosition;
-            layout(location = 1) in vec3 aNormal;
-            layout(location = 2) in vec2 aUv;
-            layout(location = 4) in vec4 aBoneIndices;
-            layout(location = 5) in vec4 aBoneWeights;
-            uniform mat4 uBones[64];
-            uniform mat4 uMvp;
-            uniform mat4 uModel;
-            uniform mat4 uLightViewProjection;
-            out vec3 vNormal;
-            out vec3 vWorldPosition;
-            out vec2 vUv;
-            out vec4 vLightSpace;
-            void main()
-            {
-                float totalWeight = dot(aBoneWeights, vec4(1.0));
-                mat4 skin = mat4(1.0);
-                if (totalWeight > 0.0001) skin = uBones[int(aBoneIndices.x)] * aBoneWeights.x + uBones[int(aBoneIndices.y)] * aBoneWeights.y + uBones[int(aBoneIndices.z)] * aBoneWeights.z + uBones[int(aBoneIndices.w)] * aBoneWeights.w;
-                gl_Position = uMvp * skin * vec4(aPosition, 1.0);
-                vNormal = normalize(mat3(uModel) * aNormal);
-                vWorldPosition = vec3(uModel * vec4(aPosition, 1.0));
-                vLightSpace = uLightViewProjection * vec4(vWorldPosition, 1.0);
-                vUv = aUv;
-            }
-        )GLSL";
-
-constexpr const char *FragmentShaderSource = R"GLSL(
-            #version 330 core
-            in vec3 vNormal;
-            in vec3 vWorldPosition;
-            in vec2 vUv;
-            in vec4 vLightSpace;
-            uniform vec4 uBaseColor;
-            uniform float uMetallic;
-            uniform float uRoughness;
-            uniform vec3 uEmissive;
-            uniform vec3 uCameraPosition;
-            uniform vec3 uLightDirection;
-            uniform vec3 uLightColor;
-            uniform float uLightIntensity;
-            uniform sampler2D uTexture;
-            uniform int uHasTexture;
-            uniform sampler2D uShadowMap;
-            out vec4 outColor;
-            float DistributionGGX(vec3 normal, vec3 halfway, float roughness)
-            {
-                float a = roughness * roughness; float a2 = a * a;
-                float nh = max(dot(normal, halfway), 0.0); float nh2 = nh * nh;
-                float denominator = nh2 * (a2 - 1.0) + 1.0;
-                return a2 / max(3.14159265 * denominator * denominator, 0.0001);
-            }
-            float GeometrySchlickGGX(float nv, float roughness)
-            {
-                float r = roughness + 1.0; float k = r * r / 8.0;
-                return nv / max(nv * (1.0 - k) + k, 0.0001);
-            }
-            vec3 FresnelSchlick(float cosine, vec3 f0)
-            {
-                return f0 + (1.0 - f0) * pow(clamp(1.0 - cosine, 0.0, 1.0), 5.0);
-            }
-            float ShadowFactor(vec3 normal, vec3 light)
-            {
-                vec3 projected = vLightSpace.xyz / max(vLightSpace.w, 0.0001);
-                projected = projected * 0.5 + 0.5;
-                if (projected.z > 1.0 || projected.x < 0.0 || projected.x > 1.0 || projected.y < 0.0 || projected.y > 1.0) return 0.0;
-                float bias = max(0.0025 * (1.0 - dot(normal, light)), 0.0005);
-                vec2 texel = 1.0 / vec2(textureSize(uShadowMap, 0)); float shadow = 0.0;
-                for (int x = -1; x <= 1; ++x) for (int y = -1; y <= 1; ++y)
-                    shadow += projected.z - bias > texture(uShadowMap, projected.xy + vec2(x, y) * texel).r ? 1.0 : 0.0;
-                return shadow / 9.0;
-            }
-            void main()
-            {
-                vec4 surface = uHasTexture != 0 ? texture(uTexture, vUv) : vec4(1.0);
-                vec3 albedo = uBaseColor.rgb * surface.rgb;
-                vec3 normal = normalize(vNormal); vec3 view = normalize(uCameraPosition - vWorldPosition);
-                vec3 light = normalize(-uLightDirection); vec3 halfway = normalize(view + light);
-                float nl = max(dot(normal, light), 0.0); float nv = max(dot(normal, view), 0.0);
-                vec3 f0 = mix(vec3(0.04), albedo, uMetallic);
-                vec3 fresnel = FresnelSchlick(max(dot(halfway, view), 0.0), f0);
-                float distribution = DistributionGGX(normal, halfway, uRoughness);
-                float geometry = GeometrySchlickGGX(nv, uRoughness) * GeometrySchlickGGX(nl, uRoughness);
-                vec3 specular = distribution * geometry * fresnel / max(4.0 * nv * nl, 0.0001);
-                vec3 diffuse = (vec3(1.0) - fresnel) * (1.0 - uMetallic) * albedo / 3.14159265;
-                float shadow = ShadowFactor(normal, light);
-                vec3 direct = (diffuse + specular) * uLightColor * uLightIntensity * nl * (1.0 - shadow);
-                vec3 color = albedo * 0.04 + direct + uEmissive;
-                outColor = vec4(color, uBaseColor.a * surface.a);
-            }
-        )GLSL";
+constexpr const char *VertexShaderSource = BuiltinRenderShaders::Vertex;
+constexpr const char *FragmentShaderSource = BuiltinRenderShaders::Fragment;
 
 constexpr const char *ShadowVertexShaderSource = R"GLSL(
             #version 330 core
@@ -189,6 +127,8 @@ constexpr const char *SkyFragmentShaderSource = R"GLSL(
             uniform mat4 uView;
             uniform sampler2D uEnvironmentSky;
             layout(location = 0) out vec4 outColor;
+            layout(location = 1) out vec2 outVelocity;
+            layout(location = 2) out vec4 outAmbient;
             vec2 DirectionToEquirect(vec3 direction)
             {
                 direction = normalize(direction);
@@ -202,6 +142,8 @@ constexpr const char *SkyFragmentShaderSource = R"GLSL(
                                                      (ndc.y + uProjection[2][1]) / uProjection[1][1], -1.0));
                 vec3 worldDirection = normalize(transpose(mat3(uView)) * viewDirection);
                 outColor = vec4(texture(uEnvironmentSky, DirectionToEquirect(worldDirection)).rgb, 1.0);
+                outVelocity = vec2(0.0);
+                outAmbient = vec4(0.0);
             }
         )GLSL";
 
@@ -227,30 +169,102 @@ constexpr const char *GtaoFragmentShaderSource = R"GLSL(
             in vec2 vUv;
             uniform sampler2D uDepth;
             uniform vec2 uInverseResolution;
-            out float outOcclusion;
+            uniform mat4 uInverseProjection;
+            out vec4 outOcclusion;
+            vec3 ViewPosition(vec2 uv)
+            {
+                // 深度来自最近的像素，反投影必须使用那个像素的中心。
+                vec2 size = vec2(textureSize(uDepth, 0));
+                uv = (floor(uv * size) + 0.5) / size;
+                vec4 position = uInverseProjection * vec4(uv * 2.0 - 1.0, texture(uDepth, uv).r * 2.0 - 1.0, 1.0);
+                return position.xyz / position.w;
+            }
             void main()
             {
                 float center = texture(uDepth, vUv).r;
-                if (center >= 0.99999) { outOcclusion = 1.0; return; }
+                if (center >= 0.99999) { outOcclusion = vec4(1.0, 0.5, 0.5, 1.0); return; }
+                vec3 position = ViewPosition(vUv);
+                vec3 left = position - ViewPosition(vUv - vec2(uInverseResolution.x, 0.0));
+                vec3 right = ViewPosition(vUv + vec2(uInverseResolution.x, 0.0)) - position;
+                vec3 down = position - ViewPosition(vUv - vec2(0.0, uInverseResolution.y));
+                vec3 up = ViewPosition(vUv + vec2(0.0, uInverseResolution.y)) - position;
+                vec3 dx = abs(left.z) < abs(right.z) ? left : right;
+                vec3 dy = abs(down.z) < abs(up.z) ? down : up;
+                vec3 normal = cross(dx, dy);
+                if (dot(normal, normal) < 1e-12) { outOcclusion = vec4(1.0, 0.5, 0.5, 1.0); return; }
+                normal = normalize(normal);
+                if (dot(normal, -position) < 0.0) normal = -normal;
+                const float radius = 0.3;
+                vec2 sampleRadius = radius / (2.0 * max(-position.z, 0.001)) /
+                                    vec2(uInverseProjection[0][0], uInverseProjection[1][1]);
                 float horizon = 0.0;
                 const int directions = 8;
-                const int steps = 4;
+                const int steps = 8;
+                // 空间固定的旋转打散规则射线，移动相机时不会引入逐帧随机闪烁。
+                float rotation = fract(sin(dot(floor(gl_FragCoord.xy), vec2(12.9898, 78.233))) * 43758.5453);
                 for (int direction = 0; direction < directions; ++direction)
                 {
-                    float angle = 6.2831853 * (float(direction) + fract(sin(dot(gl_FragCoord.xy, vec2(12.9898, 78.233))) * 43758.5453)) /
-                                  float(directions);
+                    float angle = 6.2831853 * (float(direction) + rotation) / float(directions);
                     vec2 ray = vec2(cos(angle), sin(angle));
                     float directionOcclusion = 0.0;
                     for (int stepIndex = 1; stepIndex <= steps; ++stepIndex)
                     {
-                        vec2 offset = ray * uInverseResolution * float(stepIndex * stepIndex) * 3.0;
-                        float sampleDepth = texture(uDepth, vUv + offset).r;
-                        float thickness = 0.00035 * float(stepIndex);
-                        directionOcclusion = max(directionOcclusion, sampleDepth + thickness < center ? 1.0 / float(stepIndex) : 0.0);
+                        vec2 uv = vUv + ray * sampleRadius * (float(stepIndex) / float(steps));
+                        if (any(lessThan(uv, vec2(0.0))) || any(greaterThan(uv, vec2(1.0))) || texture(uDepth, uv).r >= 0.99999) continue;
+                        vec3 delta = ViewPosition(uv) - position;
+                        float distance = length(delta);
+                        if (distance < 0.001 || distance >= radius) continue;
+                        // 同一平面上的邻点不形成遮挡，只有表面法线以上的近邻参与。
+                        float elevation = max(0.0, dot(normal, delta) / distance - 0.03);
+                        float falloff = 1.0 - distance * distance / (radius * radius);
+                        // 对采样覆盖率积分，细小遮挡物不能仅凭一次命中就遮住整条射线。
+                        directionOcclusion += elevation * falloff;
                     }
-                    horizon += directionOcclusion;
+                    horizon += directionOcclusion / float(steps);
                 }
-                outOcclusion = clamp(1.0 - horizon / float(directions) * 0.72, 0.18, 1.0);
+                outOcclusion = vec4(clamp(1.0 - horizon / float(directions) * 2.0, 0.3, 1.0), normal * 0.5 + 0.5);
+            }
+        )GLSL";
+
+// 用表面法线和平面距离过滤近邻，平滑采样噪声而不跨墙角、轮廓传播暗色。
+constexpr const char *GtaoFilterFragmentShaderSource = R"GLSL(
+            #version 330 core
+            in vec2 vUv;
+            uniform sampler2D uSource;
+            uniform sampler2D uDepth;
+            uniform mat4 uInverseProjection;
+            out float outOcclusion;
+            vec3 ViewPosition(vec2 uv)
+            {
+                vec2 size = vec2(textureSize(uDepth, 0));
+                uv = (floor(uv * size) + 0.5) / size;
+                vec4 position = uInverseProjection * vec4(uv * 2.0 - 1.0, texture(uDepth, uv).r * 2.0 - 1.0, 1.0);
+                return position.xyz / position.w;
+            }
+            void main()
+            {
+                if (texture(uDepth, vUv).r >= 0.99999) { outOcclusion = 1.0; return; }
+                ivec2 size = textureSize(uSource, 0);
+                ivec2 center = clamp(ivec2(vUv * vec2(size)), ivec2(0), size - 1);
+                vec4 sampleCenter = texelFetch(uSource, center, 0);
+                vec3 normal = normalize(sampleCenter.gba * 2.0 - 1.0);
+                vec3 position = ViewPosition((vec2(center) + 0.5) / vec2(size));
+                float sum = 0.0, weights = 0.0;
+                for (int y = -2; y <= 2; ++y)
+                    for (int x = -2; x <= 2; ++x)
+                    {
+                        ivec2 pixel = clamp(center + ivec2(x, y), ivec2(0), size - 1);
+                        vec2 uv = (vec2(pixel) + 0.5) / vec2(size);
+                        if (texture(uDepth, uv).r >= 0.99999) continue;
+                        vec4 value = texelFetch(uSource, pixel, 0);
+                        vec3 sampleNormal = normalize(value.gba * 2.0 - 1.0);
+                        float planeDistance = abs(dot(normal, ViewPosition(uv) - position));
+                        float weight = exp(-float(x*x + y*y) / 8.0) *
+                                       pow(max(dot(normal, sampleNormal), 0.0), 16.0) * exp(-planeDistance / 0.01);
+                        sum += value.r * weight;
+                        weights += weight;
+                    }
+                outOcclusion = weights > 0.0001 ? sum / weights : sampleCenter.r;
             }
         )GLSL";
 
@@ -284,8 +298,13 @@ constexpr const char *TaaFragmentShaderSource = R"GLSL(
             #version 330 core
             in vec2 vUv;
             uniform sampler2D uScene;
+            uniform sampler2D uAmbient;
             uniform sampler2D uVelocity;
             uniform sampler2D uHistory;
+            uniform sampler2D uDepth;
+            uniform sampler2D uHistoryDepth;
+            uniform mat4 uReprojectDepth;
+            uniform vec2 uDepthRange;
             uniform sampler2D uGtao;
             uniform sampler2D uBloom0;
             uniform sampler2D uBloom1;
@@ -295,18 +314,88 @@ constexpr const char *TaaFragmentShaderSource = R"GLSL(
             uniform vec2 uInverseResolution;
             uniform int uHistoryValid;
             uniform int uTaaEnabled;
-            out vec4 outColor;
+            layout(location = 0) out vec4 outColor;
+            layout(location = 1) out float outHistoryDepth;
+            float LinearDepth(float depth)
+            {
+                return uDepthRange.x * uDepthRange.y /
+                       max(uDepthRange.y - depth * (uDepthRange.y - uDepthRange.x), 0.00001);
+            }
+            float SampleOcclusion(vec2 uv)
+            {
+                vec2 depthSize = vec2(textureSize(uDepth, 0));
+                uv = (clamp(floor(uv * depthSize), vec2(0.0), depthSize - 1.0) + 0.5) / depthSize;
+                float centerDepth = texture(uDepth, uv).r;
+                if (centerDepth >= 0.99999) return 1.0;
+                vec2 stepUv = 1.0 / depthSize;
+                float left = centerDepth - texture(uDepth, uv - vec2(stepUv.x, 0.0)).r;
+                float right = texture(uDepth, uv + vec2(stepUv.x, 0.0)).r - centerDepth;
+                float down = centerDepth - texture(uDepth, uv - vec2(0.0, stepUv.y)).r;
+                float up = texture(uDepth, uv + vec2(0.0, stepUv.y)).r - centerDepth;
+                // 两侧深度差异反号表示孤立前景，不能将背景拼成前景的斜面。
+                vec2 gradient = vec2(left * right < 0.0 ? 0.0 : (abs(left) < abs(right) ? left : right),
+                                     down * up < 0.0 ? 0.0 : (abs(down) < abs(up) ? down : up));
+                vec2 size = vec2(textureSize(uGtao, 0));
+                vec2 pixel = uv * size - 0.5;
+                vec2 fraction = fract(pixel);
+                ivec2 base = ivec2(floor(pixel));
+                float sum = 0.0, weights = 0.0;
+                for (int y = 0; y < 2; ++y)
+                    for (int x = 0; x < 2; ++x)
+                    {
+                        ivec2 tap = clamp(base + ivec2(x, y), ivec2(0), ivec2(size) - 1);
+                        vec2 tapUv = (vec2(tap) + 0.5) / size;
+                        tapUv = (floor(tapUv * depthSize) + 0.5) / depthSize;
+                        // 同一平面的原始深度在屏幕空间线性变化，不能将坡度当成物体边界。
+                        float expectedDepth = centerDepth + dot(gradient, (tapUv - uv) * depthSize);
+                        if (expectedDepth < 0.0 || expectedDepth >= 0.99999) continue;
+                        float tapDepth = LinearDepth(texture(uDepth, tapUv).r);
+                        float depth = LinearDepth(expectedDepth);
+                        if (abs(tapDepth - depth) > max(0.01, depth * 0.001)) continue;
+                        float weight = (x == 0 ? 1.0 - fraction.x : fraction.x) * (y == 0 ? 1.0 - fraction.y : fraction.y);
+                        sum += texelFetch(uGtao, tap, 0).r * weight;
+                        weights += weight;
+                    }
+                return weights > 0.0001 ? sum / weights : 1.0;
+            }
             vec3 Composite(vec2 uv)
             {
-                vec3 scene = texture(uScene, uv).rgb * texture(uGtao, uv).r;
+                // AO 仅遮蔽间接光；直接光和自发光应保留原值。
+                vec3 scene = texture(uScene, uv).rgb - texture(uAmbient, uv).rgb * (1.0 - SampleOcclusion(uv));
                 vec3 bloom = texture(uBloom0, uv).rgb * 0.34 + texture(uBloom1, uv).rgb * 0.25 +
                              texture(uBloom2, uv).rgb * 0.18 + texture(uBloom3, uv).rgb * 0.13 +
                              texture(uBloom4, uv).rgb * 0.10;
                 return scene + bloom;
             }
+            vec2 PreviousDepthGradient(vec2 uv, float depth, vec4 previousClip)
+            {
+                float left = texture(uDepth, uv - vec2(uInverseResolution.x, 0.0)).r;
+                float right = texture(uDepth, uv + vec2(uInverseResolution.x, 0.0)).r;
+                float down = texture(uDepth, uv - vec2(0.0, uInverseResolution.y)).r;
+                float up = texture(uDepth, uv + vec2(0.0, uInverseResolution.y)).r;
+                vec2 offsetX = vec2(uInverseResolution.x, 0.0), offsetY = vec2(0.0, uInverseResolution.y);
+                float depthX = right, depthY = up;
+                if (abs(depth - left) < abs(right - depth)) { offsetX = -offsetX; depthX = left; }
+                if (abs(depth - down) < abs(up - depth)) { offsetY = -offsetY; depthY = down; }
+                // 两侧深度朝同一方向跳变时，这是孤立细节而非连续的坡面。
+                if ((depth - left) * (right - depth) < 0.0 || depthX >= 0.999999) depthX = depth;
+                if ((depth - down) * (up - depth) < 0.0 || depthY >= 0.999999) depthY = depth;
+                vec4 clipX = uReprojectDepth * vec4((uv + offsetX) * 2.0 - 1.0, depthX * 2.0 - 1.0, 1.0);
+                vec4 clipY = uReprojectDepth * vec4((uv + offsetY) * 2.0 - 1.0, depthY * 2.0 - 1.0, 1.0);
+                if (clipX.w <= 0.0 || clipY.w <= 0.0) return vec2(0.0);
+                vec3 origin = previousClip.xyz / previousClip.w;
+                vec3 deltaX = (clipX.xyz / clipX.w - origin) * 0.5;
+                vec3 deltaY = (clipY.xyz / clipY.w - origin) * 0.5;
+                float determinant = deltaX.x * deltaY.y - deltaX.y * deltaY.x;
+                if (abs(determinant) < 1e-12) return vec2(0.0);
+                return vec2(deltaX.z * deltaY.y - deltaY.z * deltaX.y,
+                            deltaX.x * deltaY.z - deltaY.x * deltaX.z) / determinant;
+            }
             void main()
             {
                 vec3 current = Composite(vUv);
+                float depth = texture(uDepth, vUv).r;
+                outHistoryDepth = depth;
                 if (uTaaEnabled == 0 || uHistoryValid == 0)
                 {
                     outColor = vec4(current, 1.0);
@@ -314,6 +403,49 @@ constexpr const char *TaaFragmentShaderSource = R"GLSL(
                 }
                 vec2 velocity = texture(uVelocity, vUv).rg;
                 vec2 historyUv = vUv - velocity;
+                vec4 previousClip = uReprojectDepth * vec4(vUv * 2.0 - 1.0, depth * 2.0 - 1.0, 1.0);
+                if (any(lessThan(historyUv, vec2(0.0))) || any(greaterThan(historyUv, vec2(1.0))) ||
+                    depth >= 0.999999 || previousClip.w <= 0.0)
+                {
+                    outColor = vec4(current, 1.0);
+                    return;
+                }
+                float expectedDepth = previousClip.z / previousClip.w * 0.5 + 0.5;
+                float expectedDistance = LinearDepth(expectedDepth);
+                if (expectedDepth < 0.0 || expectedDepth > 1.0)
+                {
+                    outColor = vec4(current, 1.0);
+                    return;
+                }
+                // 颜色和深度须来自同一组 texel。直接线性过滤颜色、最近点过滤深度
+                // 会把豆子等小物体的历史颜色与地板混在一起，即使最近深度合法。
+                ivec2 historySize = textureSize(uHistory, 0);
+                vec2 historyPixel = historyUv * vec2(historySize) - 0.5;
+                ivec2 historyBase = ivec2(floor(historyPixel));
+                vec2 fraction = fract(historyPixel);
+                vec3 history = vec3(0.0);
+                float validWeight = 0.0;
+                float depthTolerance = max(0.001, expectedDistance * 0.0005);
+                vec2 depthGradient = PreviousDepthGradient(vUv, depth, previousClip);
+                for (int y = 0; y < 2; ++y)
+                    for (int x = 0; x < 2; ++x)
+                    {
+                        ivec2 pixel = clamp(historyBase + ivec2(x, y), ivec2(0), historySize - 1);
+                        float previousDepth = texelFetch(uHistoryDepth, pixel, 0).r;
+                        vec2 tapUv = (vec2(pixel) + 0.5) / vec2(historySize);
+                        float tapDepth = expectedDepth + dot(depthGradient, tapUv - historyUv);
+                        if (tapDepth < 0.0 || tapDepth > 1.0 || previousDepth >= 0.999999 ||
+                            abs(LinearDepth(previousDepth) - LinearDepth(tapDepth)) > depthTolerance) continue;
+                        float weight = (x == 0 ? 1.0 - fraction.x : fraction.x) * (y == 0 ? 1.0 - fraction.y : fraction.y);
+                        history += texelFetch(uHistory, pixel, 0).rgb * weight;
+                        validWeight += weight;
+                    }
+                if (validWeight <= 0.0001)
+                {
+                    outColor = vec4(current, 1.0);
+                    return;
+                }
+                history /= validWeight;
                 vec3 minimumColor = vec3(1e20), maximumColor = vec3(-1e20);
                 for (int y = -1; y <= 1; ++y)
                     for (int x = -1; x <= 1; ++x)
@@ -322,7 +454,7 @@ constexpr const char *TaaFragmentShaderSource = R"GLSL(
                         minimumColor = min(minimumColor, sampleColor);
                         maximumColor = max(maximumColor, sampleColor);
                     }
-                vec3 history = clamp(texture(uHistory, historyUv).rgb, minimumColor, maximumColor);
+                history = clamp(history, minimumColor, maximumColor);
                 float historyWeight = mix(0.92, 0.72, clamp(length(velocity) * 120.0, 0.0, 1.0));
                 outColor = vec4(mix(current, history, historyWeight), 1.0);
             }
@@ -354,7 +486,22 @@ constexpr const char *FinalToneFragmentShaderSource = R"GLSL(
                     float minimumLuma = min(center, min(min(dot(nw, weights), dot(ne, weights)), min(dot(sw, weights), dot(se, weights))));
                     float maximumLuma = max(center, max(max(dot(nw, weights), dot(ne, weights)), max(dot(sw, weights), dot(se, weights))));
                     if (maximumLuma - minimumLuma > max(0.0312, maximumLuma * 0.125))
-                        color = (nw + ne + sw + se + color * 2.0) / 6.0;
+                    {
+                        float lumaNw = dot(nw, weights), lumaNe = dot(ne, weights);
+                        float lumaSw = dot(sw, weights), lumaSe = dot(se, weights);
+                        // 沿边缘滤波，孤立细节的梯度为零，应保留中心像素。
+                        vec2 direction = vec2(-((lumaNw + lumaNe) - (lumaSw + lumaSe)),
+                                               (lumaNw + lumaSw) - (lumaNe + lumaSe));
+                        float reduce = max((lumaNw + lumaNe + lumaSw + lumaSe) * 0.03125, 0.0078125);
+                        direction /= min(abs(direction.x), abs(direction.y)) + reduce;
+                        direction = clamp(direction, vec2(-8.0), vec2(8.0)) * uInverseResolution;
+                        vec3 narrow = 0.5 * (texture(uResolved, vUv - direction / 6.0).rgb +
+                                            texture(uResolved, vUv + direction / 6.0).rgb);
+                        vec3 wide = narrow * 0.5 + 0.25 * (texture(uResolved, vUv - direction * 0.5).rgb +
+                                                         texture(uResolved, vUv + direction * 0.5).rgb);
+                        float wideLuma = dot(wide, weights);
+                        color = wideLuma < minimumLuma || wideLuma > maximumLuma ? narrow : wide;
+                    }
                 }
                 outColor = vec4(pow(AcesFilm(color * uExposure), vec3(1.0 / 2.2)), 1.0);
             }
@@ -371,7 +518,7 @@ constexpr const char *PresentFragmentShaderSource = R"GLSL(
 constexpr const char *GpuCullComputeShaderSource = R"GLSL(
             #version 430 core
             layout(local_size_x = 64) in;
-            struct CullInstance { mat4 model; mat4 previousModel; vec4 bounds; };
+            struct CullInstance { mat4 model; mat4 previousModel; vec4 boundsMin; vec4 boundsMax; };
             layout(std430, binding = 0) readonly buffer CullInput { CullInstance instances[]; };
             layout(std430, binding = 1) writeonly buffer VisibleModels { mat4 visibleModels[]; };
             layout(std430, binding = 2) writeonly buffer VisiblePreviousModels { mat4 visiblePreviousModels[]; };
@@ -388,36 +535,64 @@ constexpr const char *GpuCullComputeShaderSource = R"GLSL(
             uniform int uHzbValid;
             uniform int uHzbCount;
             uniform sampler2D uHzb[12];
+            float SampleHzb(int level, vec2 uv)
+            {
+                return level == 0 ? texture(uHzb[0], uv).r : level == 1 ? texture(uHzb[1], uv).r :
+                       level == 2 ? texture(uHzb[2], uv).r : level == 3 ? texture(uHzb[3], uv).r :
+                       level == 4 ? texture(uHzb[4], uv).r : level == 5 ? texture(uHzb[5], uv).r :
+                       level == 6 ? texture(uHzb[6], uv).r : level == 7 ? texture(uHzb[7], uv).r :
+                       level == 8 ? texture(uHzb[8], uv).r : level == 9 ? texture(uHzb[9], uv).r :
+                       level == 10 ? texture(uHzb[10], uv).r : texture(uHzb[11], uv).r;
+            }
+            vec2 HzbSize(int level)
+            {
+                return vec2(level == 0 ? textureSize(uHzb[0], 0) : level == 1 ? textureSize(uHzb[1], 0) :
+                       level == 2 ? textureSize(uHzb[2], 0) : level == 3 ? textureSize(uHzb[3], 0) :
+                       level == 4 ? textureSize(uHzb[4], 0) : level == 5 ? textureSize(uHzb[5], 0) :
+                       level == 6 ? textureSize(uHzb[6], 0) : level == 7 ? textureSize(uHzb[7], 0) :
+                       level == 8 ? textureSize(uHzb[8], 0) : level == 9 ? textureSize(uHzb[9], 0) :
+                       level == 10 ? textureSize(uHzb[10], 0) : textureSize(uHzb[11], 0));
+            }
             bool Visible(CullInstance instance)
             {
-                vec4 bounds = instance.bounds;
-                vec4 clip = uPreviousViewProjection * vec4(bounds.xyz, 1.0);
-                if (clip.w <= 0.0001) return true;
-                vec3 ndc = clip.xyz / clip.w;
-                float radiusNdc = abs(bounds.w / clip.w) * 1.75;
-                if (ndc.x + radiusNdc < -1.0 || ndc.x - radiusNdc > 1.0 ||
-                    ndc.y + radiusNdc < -1.0 || ndc.y - radiusNdc > 1.0)
-                    return false;
+                // 相机移动、历史失效时必须保留 CPU 本帧判定可见的实例。
+                if (uHzbValid == 0 || uHzbCount == 0) return true;
                 float matrixDelta = 0.0;
                 for (int column = 0; column < 4; ++column)
                     matrixDelta += dot(abs(instance.model[column] - instance.previousModel[column]), vec4(1.0));
                 if (matrixDelta > 0.0001) return true;
-                if (uHzbValid == 0 || uHzbCount == 0) return true;
-                vec2 uv = ndc.xy * 0.5 + 0.5;
-                float diameterPixels = radiusNdc * float(textureSize(uHzb[0], 0).x) * 2.0;
-                int level = clamp(int(floor(log2(max(1.0, diameterPixels)))), 0, uHzbCount - 1);
-                float maximumDepth = level == 0 ? texture(uHzb[0], uv).r :
-                                     level == 1 ? texture(uHzb[1], uv).r :
-                                     level == 2 ? texture(uHzb[2], uv).r :
-                                     level == 3 ? texture(uHzb[3], uv).r :
-                                     level == 4 ? texture(uHzb[4], uv).r :
-                                     level == 5 ? texture(uHzb[5], uv).r :
-                                     level == 6 ? texture(uHzb[6], uv).r :
-                                     level == 7 ? texture(uHzb[7], uv).r :
-                                     level == 8 ? texture(uHzb[8], uv).r :
-                                     level == 9 ? texture(uHzb[9], uv).r :
-                                     level == 10 ? texture(uHzb[10], uv).r : texture(uHzb[11], uv).r;
-                float nearestDepth = ndc.z * 0.5 + 0.5 - radiusNdc * 0.5;
+                vec3 minimumNdc = vec3(1e20), maximumNdc = vec3(-1e20);
+                for (int corner = 0; corner < 8; ++corner)
+                {
+                    vec3 position = vec3((corner & 1) != 0 ? instance.boundsMax.x : instance.boundsMin.x,
+                                         (corner & 2) != 0 ? instance.boundsMax.y : instance.boundsMin.y,
+                                         (corner & 4) != 0 ? instance.boundsMax.z : instance.boundsMin.z);
+                    vec4 clip = uPreviousViewProjection * vec4(position, 1.0);
+                    if (clip.w <= 0.0001) return true;
+                    vec3 ndc = clip.xyz / clip.w;
+                    minimumNdc = min(minimumNdc, ndc);
+                    maximumNdc = max(maximumNdc, ndc);
+                }
+                // 跨越历史画面边界或近裁剪面的盒子不能用旧深度判死。
+                if (any(lessThan(minimumNdc, vec3(-1.0))) || any(greaterThan(maximumNdc, vec3(1.0)))) return true;
+                vec2 uvMin = minimumNdc.xy * 0.5 + 0.5;
+                vec2 uvMax = maximumNdc.xy * 0.5 + 0.5;
+                vec2 extentPixels = (uvMax - uvMin) * vec2(textureSize(uHzb[0], 0));
+                int level = clamp(int(ceil(log2(max(1.0, max(extentPixels.x, extentPixels.y))))), 0, uHzbCount - 1);
+                // 奇数尺寸向上取整，实际层级并非严格的 2^level 比例。
+                // 只有矩形每轴最多跨两个 texel 时，四个角才能覆盖全部候选深度。
+                for (;;)
+                {
+                    vec2 size = HzbSize(level);
+                    vec2 first = floor(clamp(uvMin * size, vec2(0.0), size - 1.0));
+                    vec2 last = floor(clamp(uvMax * size, vec2(0.0), size - 1.0));
+                    if (all(lessThanEqual(last - first, vec2(1.0)))) break;
+                    if (level + 1 >= uHzbCount) return true;
+                    ++level;
+                }
+                float maximumDepth = max(max(SampleHzb(level, uvMin), SampleHzb(level, uvMax)),
+                                         max(SampleHzb(level, vec2(uvMin.x, uvMax.y)), SampleHzb(level, vec2(uvMax.x, uvMin.y))));
+                float nearestDepth = minimumNdc.z * 0.5 + 0.5;
                 return nearestDepth <= maximumDepth + 0.002;
             }
             void main()
@@ -483,13 +658,20 @@ constexpr const char *ParticleFragmentShaderSource = R"GLSL(
             in vec4 vParticleColor;
             uniform sampler2D uParticleTexture;
             uniform int uHasParticleTexture;
-            out vec4 outColor;
+            layout(location = 0) out vec4 outColor;
+            layout(location = 1) out vec2 outVelocity;
+            layout(location = 2) out vec4 outAmbient;
             void main()
             {
-                if (uHasParticleTexture != 0) { outColor = texture(uParticleTexture, vParticleUv) * vParticleColor; return; }
-                float distanceToCenter = length(vParticleUv - vec2(0.5));
-                if (distanceToCenter > 0.5) discard;
-                outColor = vec4(vParticleColor.rgb, vParticleColor.a * smoothstep(0.5, 0.35, distanceToCenter));
+                if (uHasParticleTexture != 0) outColor = texture(uParticleTexture, vParticleUv) * vParticleColor;
+                else
+                {
+                    float distanceToCenter = length(vParticleUv - vec2(0.5));
+                    if (distanceToCenter > 0.5) discard;
+                    outColor = vec4(vParticleColor.rgb, vParticleColor.a * smoothstep(0.5, 0.35, distanceToCenter));
+                }
+                outVelocity = vec2(0.0);
+                outAmbient = vec4(0.0, 0.0, 0.0, outColor.a);
             }
         )GLSL";
 
@@ -543,17 +725,24 @@ constexpr const char *GpuParticleFragmentShaderSource = R"GLSL(
             in vec4 vParticleColor;
             uniform sampler2D uParticleTexture;
             uniform int uHasParticleTexture;
-            out vec4 outColor;
+            layout(location = 0) out vec4 outColor;
+            layout(location = 1) out vec2 outVelocity;
+            layout(location = 2) out vec4 outAmbient;
             void main()
             {
                 if (vParticleColor.a <= 0.0) discard;
-                if (uHasParticleTexture != 0) { outColor = texture(uParticleTexture, vParticleUv) * vParticleColor; return; }
-                float distanceToCenter = length(vParticleUv - vec2(0.5));
-                if (distanceToCenter > 0.5) discard;
-                outColor = vec4(vParticleColor.rgb, vParticleColor.a * smoothstep(0.5, 0.35, distanceToCenter));
+                if (uHasParticleTexture != 0) outColor = texture(uParticleTexture, vParticleUv) * vParticleColor;
+                else
+                {
+                    float distanceToCenter = length(vParticleUv - vec2(0.5));
+                    if (distanceToCenter > 0.5) discard;
+                    outColor = vec4(vParticleColor.rgb, vParticleColor.a * smoothstep(0.5, 0.35, distanceToCenter));
+                }
+                outVelocity = vec2(0.0);
+                outAmbient = vec4(0.0, 0.0, 0.0, outColor.a);
             }
         )GLSL";
-} // 匿名命名空间
+} // namespace
 
 // OpenGL 细节隐藏在 PImpl 中，避免公开头文件暴露 SDL/OpenGL 类型并缩短上层重编译范围。
 // 该对象与创建它的线程绑定；缓存中的 GLuint 只允许在上下文仍有效时销毁。
@@ -618,9 +807,9 @@ struct SdlGlRenderDevice::Impl
     SDL_GLContext context = nullptr;
     InputState input;
     FrameView view;
-    GLuint program = 0, shadowProgram = 0, skyProgram = 0, toneProgram = 0, presentProgram = 0, hzbProgram = 0, gtaoProgram = 0, bloomProgram = 0,
-           taaProgram = 0, gpuCullProgram = 0, uiProgram = 0, particleProgram = 0, gpuParticleProgram = 0, fullScreenVao = 0,
-           particleInstanceBuffer = 0;
+    GLuint program = 0, shadowProgram = 0, skyProgram = 0, toneProgram = 0, presentProgram = 0, hzbProgram = 0, gtaoProgram = 0,
+           gtaoFilterProgram = 0, bloomProgram = 0, taaProgram = 0, gpuCullProgram = 0, uiProgram = 0, particleProgram = 0,
+           gpuParticleProgram = 0, fullScreenVao = 0, particleInstanceBuffer = 0;
     GLuint uiVao = 0, uiVertexBuffer = 0, uiIndexBuffer = 0, fontAtlas = 0;
     struct Glyph
     {
@@ -634,13 +823,14 @@ struct SdlGlRenderDevice::Impl
     FT_Face freeTypeFace = nullptr;
 #endif
     GLuint sceneFramebuffer = 0, toneFramebuffer = 0, postFramebuffer = 0, sceneHdrColor = 0, sceneColor = 0, sceneDepth = 0,
-           sceneVelocity = 0, historyHdrColor = 0, gtaoTexture = 0;
+           sceneVelocity = 0, sceneAmbient = 0, historyHdrColor = 0, gtaoTexture = 0, gtaoRawTexture = 0;
     std::vector<GLuint> hzbTextures;
     std::array<GLuint, 5> bloomTextures{};
     std::array<GLuint, 2> taaTextures{};
+    std::array<GLuint, 2> taaDepthTextures{};
     int temporalTextureIndex = 0;
     std::array<GLuint, FrameView::MaxShadowCascades> shadowFramebuffers{}, shadowDepths{};
-    int shadowResolution = 2048;
+    int shadowResolution = FrameView::ShadowMapResolution;
     std::size_t activeShadowCascade = 0;
     float exposure = 1.0f;
     bool fxaaEnabled = true;
@@ -678,10 +868,13 @@ struct SdlGlRenderDevice::Impl
     GLint skyProjectionLocation = -1, skyViewLocation = -1, skyEnvironmentLocation = -1;
     GLint exposureLocation = -1, inverseResolutionLocation = -1, fxaaEnabledLocation = -1;
     GLint hzbSourceLocation = -1, hzbSourceTexelLocation = -1;
-    GLint gtaoDepthLocation = -1, gtaoInverseResolutionLocation = -1;
+    GLint gtaoDepthLocation = -1, gtaoInverseResolutionLocation = -1, gtaoInverseProjectionLocation = -1;
+    GLint gtaoFilterSourceLocation = -1, gtaoFilterDepthLocation = -1, gtaoFilterInverseProjectionLocation = -1;
     GLint bloomSourceLocation = -1, bloomSourceTexelLocation = -1, bloomExtractLocation = -1;
     GLint taaSceneLocation = -1, taaVelocityLocation = -1, taaHistoryLocation = -1, taaGtaoLocation = -1, taaInverseResolutionLocation = -1,
           taaHistoryValidLocation = -1, taaEnabledLocation = -1;
+    GLint taaDepthLocation = -1, taaHistoryDepthLocation = -1, taaReprojectDepthLocation = -1, taaDepthRangeLocation = -1;
+    GLint taaAmbientLocation = -1;
     std::array<GLint, 5> taaBloomLocations{};
     GLint toneResolvedLocation = -1;
     GLint presentSceneColorLocation = -1;
@@ -842,6 +1035,8 @@ struct SdlGlRenderDevice::Impl
     {
         if (sceneHdrColor)
             glDeleteTextures(1, &sceneHdrColor);
+        if (sceneAmbient)
+            glDeleteTextures(1, &sceneAmbient);
         if (sceneColor)
             glDeleteTextures(1, &sceneColor);
         if (sceneDepth)
@@ -852,6 +1047,8 @@ struct SdlGlRenderDevice::Impl
             glDeleteTextures(1, &historyHdrColor);
         if (gtaoTexture)
             glDeleteTextures(1, &gtaoTexture);
+        if (gtaoRawTexture)
+            glDeleteTextures(1, &gtaoRawTexture);
         for (const GLuint texture : hzbTextures)
             if (texture)
                 glDeleteTextures(1, &texture);
@@ -868,14 +1065,20 @@ struct SdlGlRenderDevice::Impl
                 glDeleteTextures(1, &texture);
             texture = 0;
         }
+        for (GLuint &texture : taaDepthTextures)
+        {
+            if (texture)
+                glDeleteTextures(1, &texture);
+            texture = 0;
+        }
         if (sceneFramebuffer)
             DeleteFramebuffers(1, &sceneFramebuffer);
         if (toneFramebuffer)
             DeleteFramebuffers(1, &toneFramebuffer);
         if (postFramebuffer)
             DeleteFramebuffers(1, &postFramebuffer);
-        sceneHdrColor = sceneColor = sceneDepth = sceneVelocity = historyHdrColor = gtaoTexture = sceneFramebuffer = toneFramebuffer =
-            postFramebuffer = 0;
+        sceneHdrColor = sceneColor = sceneDepth = sceneVelocity = sceneAmbient = historyHdrColor = gtaoTexture = gtaoRawTexture =
+            sceneFramebuffer = toneFramebuffer = postFramebuffer = 0;
         historyValid = false;
         temporalTextureIndex = 0;
         sceneWidth = sceneHeight = 0;
@@ -910,8 +1113,16 @@ struct SdlGlRenderDevice::Impl
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
         FramebufferTexture2D(GL_FRAMEBUFFER, 0x8CE1, GL_TEXTURE_2D, sceneVelocity, 0);
-        const GLenum sceneAttachments[] = {GL_COLOR_ATTACHMENT0, 0x8CE1};
-        DrawBuffers(2, sceneAttachments);
+        glGenTextures(1, &sceneAmbient);
+        glBindTexture(GL_TEXTURE_2D, sceneAmbient);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA16F, width, height, 0, GL_RGBA, GL_FLOAT, nullptr);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        FramebufferTexture2D(GL_FRAMEBUFFER, 0x8CE2, GL_TEXTURE_2D, sceneAmbient, 0);
+        const GLenum sceneAttachments[] = {GL_COLOR_ATTACHMENT0, 0x8CE1, 0x8CE2};
+        DrawBuffers(3, sceneAttachments);
         bool complete = CheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE;
         GenFramebuffers(1, &toneFramebuffer);
         BindFramebuffer(GL_FRAMEBUFFER, toneFramebuffer);
@@ -945,6 +1156,7 @@ struct SdlGlRenderDevice::Impl
             hzbHeight = std::max(1, (hzbHeight + 1) / 2);
         }
         createTexture(gtaoTexture, 0x822D, std::max(1, width / 2), std::max(1, height / 2), GL_RED, GL_FLOAT, GL_LINEAR);
+        createTexture(gtaoRawTexture, GL_RGBA16F, std::max(1, width / 2), std::max(1, height / 2), GL_RGBA, GL_FLOAT, GL_NEAREST);
         int bloomWidth = std::max(1, width / 2), bloomHeight = std::max(1, height / 2);
         for (GLuint &texture : bloomTextures)
         {
@@ -954,6 +1166,8 @@ struct SdlGlRenderDevice::Impl
         }
         for (GLuint &texture : taaTextures)
             createTexture(texture, GL_RGBA16F, width, height, GL_RGBA, GL_FLOAT, GL_LINEAR);
+        for (GLuint &texture : taaDepthTextures)
+            createTexture(texture, 0x822E, width, height, GL_RED, GL_FLOAT, GL_NEAREST);
         BindFramebuffer(GL_FRAMEBUFFER, 0);
         glBindTexture(GL_TEXTURE_2D, 0);
         if (!complete)
@@ -1273,6 +1487,7 @@ struct SdlGlRenderDevice::Impl
         presentProgram = CreateLinkedProgram(ToneVertexShaderSource, PresentFragmentShaderSource);
         hzbProgram = CreateLinkedProgram(ToneVertexShaderSource, HzbFragmentShaderSource);
         gtaoProgram = CreateLinkedProgram(ToneVertexShaderSource, GtaoFragmentShaderSource);
+        gtaoFilterProgram = CreateLinkedProgram(ToneVertexShaderSource, GtaoFilterFragmentShaderSource);
         bloomProgram = CreateLinkedProgram(ToneVertexShaderSource, BloomFragmentShaderSource);
         taaProgram = CreateLinkedProgram(ToneVertexShaderSource, TaaFragmentShaderSource);
         if (computeCullingSupported)
@@ -1283,8 +1498,8 @@ struct SdlGlRenderDevice::Impl
         uiProgram = CreateLinkedProgram(UiVertexShaderSource, UiFragmentShaderSource);
         particleProgram = CreateLinkedProgram(ParticleVertexShaderSource, ParticleFragmentShaderSource);
         gpuParticleProgram = CreateLinkedProgram(GpuParticleVertexShaderSource, GpuParticleFragmentShaderSource);
-        if (!shadowProgram || !skyProgram || !toneProgram || !presentProgram || !hzbProgram || !gtaoProgram || !bloomProgram || !taaProgram ||
-            !uiProgram || !particleProgram || !gpuParticleProgram)
+        if (!shadowProgram || !skyProgram || !toneProgram || !presentProgram || !hzbProgram || !gtaoProgram || !gtaoFilterProgram ||
+            !bloomProgram || !taaProgram || !uiProgram || !particleProgram || !gpuParticleProgram)
             return false;
         shadowMvpLocation = GetUniformLocation(shadowProgram, "uLightMvp");
         shadowLightViewProjectionLocation = GetUniformLocation(shadowProgram, "uLightViewProjection");
@@ -1304,12 +1519,21 @@ struct SdlGlRenderDevice::Impl
         hzbSourceTexelLocation = GetUniformLocation(hzbProgram, "uSourceTexel");
         gtaoDepthLocation = GetUniformLocation(gtaoProgram, "uDepth");
         gtaoInverseResolutionLocation = GetUniformLocation(gtaoProgram, "uInverseResolution");
+        gtaoInverseProjectionLocation = GetUniformLocation(gtaoProgram, "uInverseProjection");
+        gtaoFilterSourceLocation = GetUniformLocation(gtaoFilterProgram, "uSource");
+        gtaoFilterDepthLocation = GetUniformLocation(gtaoFilterProgram, "uDepth");
+        gtaoFilterInverseProjectionLocation = GetUniformLocation(gtaoFilterProgram, "uInverseProjection");
         bloomSourceLocation = GetUniformLocation(bloomProgram, "uSource");
         bloomSourceTexelLocation = GetUniformLocation(bloomProgram, "uSourceTexel");
         bloomExtractLocation = GetUniformLocation(bloomProgram, "uExtract");
         taaSceneLocation = GetUniformLocation(taaProgram, "uScene");
+        taaAmbientLocation = GetUniformLocation(taaProgram, "uAmbient");
         taaVelocityLocation = GetUniformLocation(taaProgram, "uVelocity");
         taaHistoryLocation = GetUniformLocation(taaProgram, "uHistory");
+        taaDepthLocation = GetUniformLocation(taaProgram, "uDepth");
+        taaHistoryDepthLocation = GetUniformLocation(taaProgram, "uHistoryDepth");
+        taaReprojectDepthLocation = GetUniformLocation(taaProgram, "uReprojectDepth");
+        taaDepthRangeLocation = GetUniformLocation(taaProgram, "uDepthRange");
         taaGtaoLocation = GetUniformLocation(taaProgram, "uGtao");
         taaInverseResolutionLocation = GetUniformLocation(taaProgram, "uInverseResolution");
         taaHistoryValidLocation = GetUniformLocation(taaProgram, "uHistoryValid");
@@ -1633,11 +1857,13 @@ bool SdlGlRenderDevice::Initialize()
         Shutdown();
         return false;
     }
-    const char *extensions = reinterpret_cast<const char *>(glGetString(GL_EXTENSIONS));
-    if (extensions && std::strstr(extensions, "GL_EXT_texture_filter_anisotropic"))
+    // Core Profile 不允许 glGetString(GL_EXTENSIONS)，由 SDL 使用 glGetStringi 查询。
+    if (SDL_GL_ExtensionSupported("GL_EXT_texture_filter_anisotropic"))
         glGetFloatv(0x84FF, &m_impl->maximumAnisotropy);
     const auto vertexSource = ShaderPipeline::Preprocess(m_impl->vertexShaderPath),
                fragmentSource = ShaderPipeline::Preprocess(m_impl->fragmentShaderPath);
+    if (!vertexSource.success || !fragmentSource.success)
+        SDL_Log("Default shader files unavailable; using embedded default render shaders.");
     const bool programCreated = vertexSource.success && fragmentSource.success
                                     ? m_impl->CreateDefaultProgram(vertexSource.source.c_str(), fragmentSource.source.c_str())
                                     : m_impl->CreateDefaultProgram();
@@ -1744,7 +1970,8 @@ void SdlGlRenderDevice::Shutdown()
             m_impl->DeleteProgram(m_impl->presentProgram);
             m_impl->presentProgram = 0;
         }
-        for (GLuint *program : {&m_impl->hzbProgram, &m_impl->gtaoProgram, &m_impl->bloomProgram, &m_impl->taaProgram})
+        for (GLuint *program :
+             {&m_impl->hzbProgram, &m_impl->gtaoProgram, &m_impl->gtaoFilterProgram, &m_impl->bloomProgram, &m_impl->taaProgram})
         {
             if (*program)
             {
@@ -1985,20 +2212,24 @@ void SdlGlRenderDevice::BeginShadowPass(const FrameView &view, const std::size_t
 {
     m_impl->view = view;
     m_impl->activeShadowCascade = std::min(cascadeIndex, FrameView::MaxShadowCascades - 1);
-    const int previous = (m_impl->timerIndex + 1) % 2;
-    if (m_impl->timerIssued[previous])
+    // 三个阴影级联属于同一帧，GL_TIME_ELAPSED 查询不能嵌套开启。
+    if (!m_impl->timerActive)
     {
-        GLint available = GL_FALSE;
-        m_impl->GetQueryObjectiv(m_impl->timerQueries[previous], GL_QUERY_RESULT_AVAILABLE, &available);
-        if (available == GL_TRUE)
+        const int previous = (m_impl->timerIndex + 1) % 2;
+        if (m_impl->timerIssued[previous])
         {
-            GLuint64 nanoseconds = 0;
-            m_impl->GetQueryObjectui64v(m_impl->timerQueries[previous], GL_QUERY_RESULT, &nanoseconds);
-            m_impl->lastGpuFrameMilliseconds = static_cast<float>(nanoseconds) / 1000000.0f;
+            GLint available = GL_FALSE;
+            m_impl->GetQueryObjectiv(m_impl->timerQueries[previous], GL_QUERY_RESULT_AVAILABLE, &available);
+            if (available == GL_TRUE)
+            {
+                GLuint64 nanoseconds = 0;
+                m_impl->GetQueryObjectui64v(m_impl->timerQueries[previous], GL_QUERY_RESULT, &nanoseconds);
+                m_impl->lastGpuFrameMilliseconds = static_cast<float>(nanoseconds) / 1000000.0f;
+            }
         }
+        m_impl->BeginQuery(GL_TIME_ELAPSED, m_impl->timerQueries[m_impl->timerIndex]);
+        m_impl->timerActive = true;
     }
-    m_impl->BeginQuery(GL_TIME_ELAPSED, m_impl->timerQueries[m_impl->timerIndex]);
-    m_impl->timerActive = true;
     m_impl->BindFramebuffer(GL_FRAMEBUFFER, m_impl->shadowFramebuffers[m_impl->activeShadowCascade]);
     glViewport(0, 0, m_impl->shadowResolution, m_impl->shadowResolution);
     glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
@@ -2069,6 +2300,8 @@ void SdlGlRenderDevice::EndShadowPass()
 // 保存本帧公共常量并准备离屏颜色、深度和运动矢量目标，后处理统一从这些目标读取。
 void SdlGlRenderDevice::BeginFrame(const FrameView &view)
 {
+    if (view.resetTemporalHistory)
+        m_impl->historyValid = false;
     m_impl->view = view;
     if (m_impl->sceneTargetEnabled && m_impl->presentSceneToWindow)
     {
@@ -2278,15 +2511,15 @@ void SdlGlRenderDevice::DrawInstanced(const std::vector<RenderItem> &items)
         {
             Mat4 model;
             Mat4 previousModel;
-            float bounds[4];
+            float boundsMin[4];
+            float boundsMax[4];
         };
         std::vector<CullInput> inputs;
         inputs.reserve(items.size());
         for (const auto &item : items)
         {
-            const Vec3 center = (item.worldBounds.minimum + item.worldBounds.maximum) * 0.5f;
-            const float radius = Length(item.worldBounds.maximum - item.worldBounds.minimum) * 0.5f;
-            inputs.push_back({item.model, item.previousModel, {center.x, center.y, center.z, radius}});
+            const Vec3 minimum = item.worldBounds.minimum, maximum = item.worldBounds.maximum;
+            inputs.push_back({item.model, item.previousModel, {minimum.x, minimum.y, minimum.z, 0}, {maximum.x, maximum.y, maximum.z, 0}});
         }
         const std::uint32_t command[5] = {static_cast<std::uint32_t>(mesh->indexCount), 0, 0, 0, 0};
         m_impl->BindBuffer(0x90D2, mesh->cullInputBuffer);
@@ -2304,7 +2537,7 @@ void SdlGlRenderDevice::DrawInstanced(const std::vector<RenderItem> &items)
         m_impl->UseProgram(m_impl->gpuCullProgram);
         m_impl->UniformMatrix4fv(m_impl->gpuCullPreviousViewProjectionLocation, 1, GL_FALSE, m_impl->view.previousViewProjection.Data());
         m_impl->Uniform1ui(m_impl->gpuCullInputCountLocation, static_cast<GLuint>(inputs.size()));
-        m_impl->Uniform1i(m_impl->gpuCullHzbValidLocation, m_impl->historyValid ? 1 : 0);
+        m_impl->Uniform1i(m_impl->gpuCullHzbValidLocation, m_impl->historyValid && m_impl->view.occlusionHistoryValid ? 1 : 0);
         const int hzbCount = static_cast<int>(std::min<std::size_t>(m_impl->hzbTextures.size(), m_impl->gpuCullHzbLocations.size()));
         m_impl->Uniform1i(m_impl->gpuCullHzbCountLocation, hzbCount);
         for (int index = 0; index < hzbCount; ++index)
@@ -2527,10 +2760,19 @@ void SdlGlRenderDevice::ExecutePostProcess(const PostProcessPass pass)
         }
         else
         {
+            attach(m_impl->gtaoRawTexture, width, height);
             m_impl->UseProgram(m_impl->gtaoProgram);
             bindTexture(0, m_impl->sceneDepth, m_impl->gtaoDepthLocation);
             m_impl->Uniform2f(m_impl->gtaoInverseResolutionLocation, 1.0f / std::max(1, m_impl->sceneWidth),
                               1.0f / std::max(1, m_impl->sceneHeight));
+            const Mat4 inverseProjection = InversePerspective(m_impl->view.projection);
+            m_impl->UniformMatrix4fv(m_impl->gtaoInverseProjectionLocation, 1, GL_FALSE, inverseProjection.Data());
+            glDrawArrays(GL_TRIANGLES, 0, 3);
+            attach(m_impl->gtaoTexture, width, height);
+            m_impl->UseProgram(m_impl->gtaoFilterProgram);
+            bindTexture(0, m_impl->gtaoRawTexture, m_impl->gtaoFilterSourceLocation);
+            bindTexture(1, m_impl->sceneDepth, m_impl->gtaoFilterDepthLocation);
+            m_impl->UniformMatrix4fv(m_impl->gtaoFilterInverseProjectionLocation, 1, GL_FALSE, inverseProjection.Data());
             glDrawArrays(GL_TRIANGLES, 0, 3);
         }
     }
@@ -2564,11 +2806,20 @@ void SdlGlRenderDevice::ExecutePostProcess(const PostProcessPass pass)
     {
         const int writeIndex = 1 - m_impl->temporalTextureIndex;
         attach(m_impl->taaTextures[writeIndex], m_impl->sceneWidth, m_impl->sceneHeight);
+        m_impl->FramebufferTexture2D(GL_FRAMEBUFFER, 0x8CE1, GL_TEXTURE_2D, m_impl->taaDepthTextures[writeIndex], 0);
+        const GLenum temporalAttachments[] = {GL_COLOR_ATTACHMENT0, 0x8CE1};
+        m_impl->DrawBuffers(2, temporalAttachments);
         m_impl->UseProgram(m_impl->taaProgram);
         bindTexture(0, m_impl->sceneHdrColor, m_impl->taaSceneLocation);
         bindTexture(1, m_impl->sceneVelocity, m_impl->taaVelocityLocation);
         bindTexture(2, m_impl->taaTextures[m_impl->temporalTextureIndex], m_impl->taaHistoryLocation);
         bindTexture(3, m_impl->gtaoTexture, m_impl->taaGtaoLocation);
+        bindTexture(11, m_impl->sceneAmbient, m_impl->taaAmbientLocation);
+        bindTexture(9, m_impl->sceneDepth, m_impl->taaDepthLocation);
+        bindTexture(10, m_impl->taaDepthTextures[m_impl->temporalTextureIndex], m_impl->taaHistoryDepthLocation);
+        const Mat4 reprojectDepth = m_impl->view.previousViewProjection * InverseCameraViewProjection(m_impl->view);
+        m_impl->UniformMatrix4fv(m_impl->taaReprojectDepthLocation, 1, GL_FALSE, reprojectDepth.Data());
+        m_impl->Uniform2f(m_impl->taaDepthRangeLocation, m_impl->view.clusteredLights.nearPlane, m_impl->view.clusteredLights.farPlane);
         for (std::size_t index = 0; index < m_impl->bloomTextures.size(); ++index)
             bindTexture(static_cast<int>(4 + index), m_impl->bloomTextures[index], m_impl->taaBloomLocations[index]);
         m_impl->Uniform2f(m_impl->taaInverseResolutionLocation, 1.0f / std::max(1, m_impl->sceneWidth),
@@ -2576,6 +2827,9 @@ void SdlGlRenderDevice::ExecutePostProcess(const PostProcessPass pass)
         m_impl->Uniform1i(m_impl->taaHistoryValidLocation, m_impl->historyValid ? 1 : 0);
         m_impl->Uniform1i(m_impl->taaEnabledLocation, m_impl->taaEnabled ? 1 : 0);
         glDrawArrays(GL_TRIANGLES, 0, 3);
+        m_impl->FramebufferTexture2D(GL_FRAMEBUFFER, 0x8CE1, GL_TEXTURE_2D, 0, 0);
+        const GLenum colorAttachment = GL_COLOR_ATTACHMENT0;
+        m_impl->DrawBuffers(1, &colorAttachment);
         m_impl->temporalTextureIndex = writeIndex;
         m_impl->historyValid = true;
     }
@@ -2914,4 +3168,4 @@ bool SdlGlRenderDevice::IsControllerConnected() const
 {
     return m_impl && m_impl->controller && SDL_GameControllerGetAttached(m_impl->controller) == SDL_TRUE;
 }
-} // 结束 MiniEngine 命名空间
+} // namespace MiniEngine

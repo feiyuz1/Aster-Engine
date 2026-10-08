@@ -41,6 +41,7 @@ uniform sampler2D uEnvironmentBrdfLut;
 uniform int uHasEnvironment;
 layout(location = 0) out vec4 outColor;
 layout(location = 1) out vec2 outVelocity;
+layout(location = 2) out vec4 outAmbient;
 
 vec2 DirectionToEquirect(vec3 direction)
 {
@@ -198,6 +199,7 @@ void main()
     }
     vec3 color = ambient * ao + direct + emissive;
     outColor = vec4(color, uBaseColor.a * surface.a);
+    outAmbient = vec4(ambient * ao, outColor.a);
     vec2 currentNdc = vCurrentClip.xy / max(vCurrentClip.w, 0.0001);
     vec2 previousNdc = vPreviousClip.xy / max(vPreviousClip.w, 0.0001);
     outVelocity = (currentNdc - previousNdc) * 0.5;

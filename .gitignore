@@ -24,6 +24,11 @@
 !/src/
 !/tools/
 
+# 相机移动与渲染稳定性的回归测试。
+!/tests/
+/tests/*
+!/tests/RenderStabilityTests.cpp
+
 # 技术说明文档
 !/docs/
 /docs/*

@@ -122,6 +122,32 @@ const std::vector<RenderItem> &RenderQueue::GetItems() const
 
 namespace
 {
+// 用六个裁剪平面测试世界包围盒；只在整个盒子位于某个平面外时剔除。
+bool IntersectsFrustum(const Aabb &bounds, const Mat4 &viewProjection)
+{
+    for (std::size_t axis = 0; axis < 3; ++axis)
+        for (float sign : {-1.0f, 1.0f})
+        {
+            const Vec3 normal{viewProjection.At(3, 0) + sign * viewProjection.At(axis, 0),
+                              viewProjection.At(3, 1) + sign * viewProjection.At(axis, 1),
+                              viewProjection.At(3, 2) + sign * viewProjection.At(axis, 2)};
+            const float offset = viewProjection.At(3, 3) + sign * viewProjection.At(axis, 3);
+            const Vec3 support{normal.x >= 0 ? bounds.maximum.x : bounds.minimum.x, normal.y >= 0 ? bounds.maximum.y : bounds.minimum.y,
+                               normal.z >= 0 ? bounds.maximum.z : bounds.minimum.z};
+            if (Dot(normal, support) + offset < -0.00001f)
+                return false;
+        }
+    return true;
+}
+
+float MatrixDifference(const Mat4 &left, const Mat4 &right)
+{
+    float difference = 0;
+    for (std::size_t index = 0; index < left.data.size(); ++index)
+        difference = std::max(difference, std::abs(left.data[index] - right.data[index]));
+    return difference;
+}
+
 Aabb TransformBounds(const Aabb &bounds, const Mat4 &matrix)
 {
     const Vec3 center = (bounds.minimum + bounds.maximum) * 0.5f;
@@ -172,7 +198,7 @@ float Halton(std::uint64_t index, const std::uint32_t base)
     }
     return result;
 }
-} // 匿名命名空间
+} // namespace
 
 void Renderer::SetLogger(Logger *logger)
 {
@@ -192,6 +218,7 @@ bool Renderer::Initialize(std::unique_ptr<RenderDevice> device)
 void Renderer::Shutdown()
 {
     m_renderQueue.Clear();
+    m_shadowItems.clear();
     m_lastLodSwitches = 0;
     m_lastCulled = 0;
     m_renderGraph.Reset();
@@ -219,6 +246,7 @@ const InputState &Renderer::GetInputState() const
 void Renderer::BuildRenderQueue(World &world)
 {
     m_renderQueue.Clear();
+    m_shadowItems.clear();
     m_lastCulled = 0;
     m_lastLodSwitches = 0;
     Vec3 cameraPosition{0.0f, 0.0f, 5.0f};
@@ -258,13 +286,21 @@ void Renderer::BuildRenderQueue(World &world)
     m_frameView.view = LookAt(cameraPosition, cameraPosition + cameraForward, {0.0f, 1.0f, 0.0f});
     m_frameView.projection =
         Perspective(camera.fov, m_device ? m_device->GetAspectRatio() : 16.0f / 9.0f, camera.nearPlane, camera.farPlane);
+    const Mat4 unjitteredProjection = m_frameView.projection;
+    const Mat4 unjitteredViewProjection = unjitteredProjection * m_frameView.view;
+    m_frameView.occlusionHistoryValid =
+        m_hasPreviousView && MatrixDifference(unjitteredViewProjection, m_previousUnjitteredViewProjection) < 0.000001f;
+    m_frameView.resetTemporalHistory = !m_hasPreviousView || m_previousCameraOverride != m_cameraOverrideEnabled ||
+                                       Length(cameraPosition - m_previousCameraPosition) > 1.0f ||
+                                       Dot(cameraForward, m_previousCameraForward) < 0.95f ||
+                                       MatrixDifference(unjitteredProjection, m_previousProjection) > 0.00001f;
     const Vec2 viewport = m_device ? m_device->GetViewportSize() : Vec2{1280.0f, 720.0f};
     const std::uint64_t jitterIndex = m_frameNumber % 8 + 1;
     // 编辑和点选需要稳定投影；关闭 TAA 时不得继续抖动画面。
     m_frameView.temporalJitter = {};
     if (!m_cameraOverrideEnabled && m_device && m_device->UsesTemporalJitter())
         m_frameView.temporalJitter = {(Halton(jitterIndex, 2) - 0.5f) / std::max(1.0f, viewport.x),
-                                    (Halton(jitterIndex, 3) - 0.5f) / std::max(1.0f, viewport.y)};
+                                      (Halton(jitterIndex, 3) - 0.5f) / std::max(1.0f, viewport.y)};
     m_frameView.projection.At(0, 2) += m_frameView.temporalJitter.x * 2.0f;
     m_frameView.projection.At(1, 2) += m_frameView.temporalJitter.y * 2.0f;
     const Mat4 currentViewProjection = m_frameView.projection * m_frameView.view;
@@ -325,8 +361,17 @@ void Renderer::BuildRenderQueue(World &world)
         const float radius =
             std::ceil(std::sqrt(vertical * vertical * (1.0f + std::pow(m_device ? m_device->GetAspectRatio() : 1.0f, 2.0f))) +
                       (cascadeFar - cascadeNear) * 0.5f);
-        m_frameView.shadowViewProjections[cascade] = Orthographic(-radius, radius, -radius, radius, 0.1f, radius * 4.0f + 20.0f) *
-                                                     LookAt(focus - lightDirection * (radius * 2.0f + 5.0f), focus, shadowUp);
+        Mat4 shadowProjection = Orthographic(-radius, radius, -radius, radius, 0.1f, radius * 4.0f + 20.0f);
+        const Mat4 shadowView = LookAt(focus - lightDirection * (radius * 2.0f + 5.0f), focus, shadowUp);
+        const Mat4 shadowViewProjection = shadowProjection * shadowView;
+        const float texelScale = FrameView::ShadowMapResolution * 0.5f;
+        // 把固定世界原点的投影对齐到阴影像素，消除相机亚像素移动造成的阴影游动。
+        for (std::size_t axis = 0; axis < 2; ++axis)
+        {
+            const float origin = shadowViewProjection.At(axis, 3) * texelScale;
+            shadowProjection.At(axis, 3) += (std::round(origin) - origin) / texelScale;
+        }
+        m_frameView.shadowViewProjections[cascade] = shadowProjection * shadowView;
         m_frameView.shadowCascadeSplits[cascade] = cascadeFar;
         cascadeNear = cascadeFar;
     }
@@ -337,21 +382,13 @@ void Renderer::BuildRenderQueue(World &world)
             return;
         if (const auto *active = world.GetComponent<ActiveComponent>(entity); active && !active->active)
             return;
-        auto material = m_resources->Load<MaterialResource>(meshComponent.materialPath);
         auto loadTexture = [&](const std::string &path) {
             return path.empty() ? std::shared_ptr<TextureResource>{} : m_resources->Load<TextureResource>(path);
         };
-        const auto *transform = world.GetComponent<TransformComponent>(entity);
-        const Vec3 position = transform ? transform->position : Vec3{};
+        const Mat4 model = world.GetWorldMatrix(entity);
+        const Vec3 position{model.At(0, 3), model.At(1, 3), model.At(2, 3)};
         const Vec3 offset = position - cameraPosition;
         const float distance = Length(offset);
-        const float facing = distance > 0.001f ? Dot(offset / distance, cameraForward) : 1.0f;
-        const float halfFov = DegreesToRadians(camera.fov * 0.65f);
-        if (distance > camera.farPlane || (distance > camera.nearPlane && facing < std::cos(halfFov)))
-        {
-            ++m_lastCulled;
-            return;
-        }
         std::string meshPath = meshComponent.meshPath;
         if (const auto *lod = world.GetComponent<LodComponent>(entity))
         {
@@ -369,15 +406,28 @@ void Renderer::BuildRenderQueue(World &world)
         auto mesh = m_resources->Load<MeshResource>(meshPath);
         if (!mesh)
             return;
+        const Aabb bounds = TransformBounds(mesh->GetBounds(), model);
+        const auto *animation = world.GetComponent<AnimationComponent>(entity);
+        // 蒙皮可能超出静态网格包围盒；没有动态包围盒时保守保留，避免动画被误剔除。
+        const bool skinned = animation && !animation->skinMatrices.empty();
+        const bool sceneVisible = skinned || IntersectsFrustum(bounds, unjitteredViewProjection);
+        bool castsShadow = skinned;
+        for (const auto &shadowMatrix : m_frameView.shadowViewProjections)
+            castsShadow = castsShadow || IntersectsFrustum(bounds, shadowMatrix);
+        if (!sceneVisible)
+            ++m_lastCulled;
+        if (!sceneVisible && !castsShadow)
+            return;
+        auto material = m_resources->Load<MaterialResource>(meshComponent.materialPath);
         const bool transparent = material && material->IsTransparent();
         RenderItem item;
         item.entity = entity;
         item.distanceToCamera = distance;
-        item.model = world.GetWorldMatrix(entity);
+        item.model = model;
         const auto previousModel = m_previousModels.find(entity);
         item.previousModel = previousModel != m_previousModels.end() ? previousModel->second : item.model;
-        item.worldBounds = TransformBounds(mesh->GetBounds(), item.model);
-        if (const auto *animation = world.GetComponent<AnimationComponent>(entity))
+        item.worldBounds = bounds;
+        if (animation)
             item.skinMatrices = animation->skinMatrices;
         item.mesh = std::move(mesh);
         item.transparent = transparent;
@@ -392,13 +442,23 @@ void Renderer::BuildRenderQueue(World &world)
             item.packedTexture = loadTexture(material->GetPackedTexturePath());
         }
         item.material = std::move(material);
-        m_renderQueue.AddItem(item);
+        if (sceneVisible)
+            m_renderQueue.AddItem(item);
+        if (castsShadow)
+            m_shadowItems.push_back(std::move(item));
     });
     m_renderQueue.Sort();
     m_previousViewProjection = currentViewProjection;
+    m_previousUnjitteredViewProjection = unjitteredViewProjection;
+    m_previousProjection = unjitteredProjection;
+    m_previousCameraPosition = cameraPosition;
+    m_previousCameraForward = cameraForward;
+    m_previousCameraOverride = m_cameraOverrideEnabled;
     m_hasPreviousView = true;
     m_previousModels.clear();
     for (const auto &item : m_renderQueue.GetItems())
+        m_previousModels[item.entity] = item.model;
+    for (const auto &item : m_shadowItems)
         m_previousModels[item.entity] = item.model;
     ++m_frameNumber;
 }
@@ -412,6 +472,7 @@ void Renderer::RenderFrame(World &world)
     BuildRenderQueue(world);
     const auto queueEnd = std::chrono::steady_clock::now();
     const auto batches = BuildInstanceBatches(m_renderQueue.GetItems());
+    const auto shadowBatches = BuildInstanceBatches(m_shadowItems);
     const auto particles = m_vfxSystem ? m_vfxSystem->BuildParticleList() : std::vector<Particle>{};
     const auto gpuEmitters = m_vfxSystem ? m_vfxSystem->BuildGpuEmitterList() : std::vector<GpuParticleEmitter>{};
     std::size_t particleCount = particles.size();
@@ -425,6 +486,9 @@ void Renderer::RenderFrame(World &world)
     const Vec2 viewport = m_device->GetViewportSize();
     const auto hdr = m_renderGraph.CreateResource({RenderGraphResourceType::Texture, "SceneHDR", static_cast<std::uint32_t>(viewport.x),
                                                    static_cast<std::uint32_t>(viewport.y), 1, 2});
+    const auto ambient =
+        m_renderGraph.CreateResource({RenderGraphResourceType::Texture, "SceneAmbient", static_cast<std::uint32_t>(viewport.x),
+                                      static_cast<std::uint32_t>(viewport.y), 1, 2});
     const auto depth = m_renderGraph.CreateResource({RenderGraphResourceType::Texture, "SceneDepth", static_cast<std::uint32_t>(viewport.x),
                                                      static_cast<std::uint32_t>(viewport.y), 1, 3});
     const auto velocity =
@@ -451,14 +515,14 @@ void Renderer::RenderFrame(World &world)
     for (std::size_t cascade = 0; cascade < shadows.size(); ++cascade)
         m_renderGraph.AddPass({"Shadow Cascade " + std::to_string(cascade), {}, {shadows[cascade]}, [&, cascade] {
                                    m_device->BeginShadowPass(m_frameView, cascade);
-                                   for (const auto &batch : batches)
+                                   for (const auto &batch : shadowBatches)
                                        if (batch.size() > 1)
                                            m_device->DrawShadowInstanced(batch);
                                        else
                                            m_device->DrawShadow(batch.front());
                                    m_device->EndShadowPass();
                                }});
-    m_renderGraph.AddPass({"Forward+ Scene", {shadow0, shadow1, shadow2}, {hdr, depth, velocity}, [&] {
+    m_renderGraph.AddPass({"Forward+ Scene", {shadow0, shadow1, shadow2}, {hdr, ambient, depth, velocity}, [&] {
                                m_device->BeginFrame(m_frameView);
                                m_device->DrawSkybox();
                                for (const auto &batch : batches)
@@ -472,7 +536,7 @@ void Renderer::RenderFrame(World &world)
     m_renderGraph.AddPass({"GPU HZB", {depth}, {hzb}, [&] { m_device->ExecutePostProcess(PostProcessPass::HierarchicalDepth); }});
     m_renderGraph.AddPass({"GTAO", {depth, hzb}, {gtao}, [&] { m_device->ExecutePostProcess(PostProcessPass::Gtao); }});
     m_renderGraph.AddPass({"Bloom Pyramid", {hdr}, {bloom}, [&] { m_device->ExecutePostProcess(PostProcessPass::Bloom); }});
-    m_renderGraph.AddPass({"Motion Vector TAA", {hdr, depth, velocity, gtao, bloom, history}, {resolved}, [&] {
+    m_renderGraph.AddPass({"Motion Vector TAA", {hdr, ambient, depth, velocity, gtao, bloom, history}, {resolved}, [&] {
                                m_device->ExecutePostProcess(PostProcessPass::TemporalResolve);
                            }});
     m_renderGraph.AddPass({"Tone Map", {resolved}, {output}, [&] { m_device->ExecutePostProcess(PostProcessPass::ToneMap); }, true});
@@ -596,4 +660,4 @@ void Renderer::SetEnvironmentPath(std::string path)
     }
     m_environmentPath.clear();
 }
-} // 结束 MiniEngine 命名空间
+} // namespace MiniEngine

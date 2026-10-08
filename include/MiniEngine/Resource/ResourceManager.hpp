@@ -51,7 +51,6 @@ class ResourceManager
     template <typename T> std::shared_ptr<T> Load(const std::string &path)
     {
         const std::string key = NormalizePath(path);
-        const std::string resolvedPath = ResolvePath(key);
         std::shared_ptr<T> resource;
         bool created = false;
         {
@@ -72,7 +71,7 @@ class ResourceManager
             return resource->Wait() ? resource : nullptr;
         if (resource->IsReady())
             return resource;
-        if (!resource->Load(resolvedPath))
+        if (!resource->Load(ResolvePath(key)))
         {
             std::lock_guard<std::mutex> lock(m_mutex);
             const auto found = m_cache.find(key);
@@ -89,7 +88,6 @@ class ResourceManager
     template <typename T> std::shared_ptr<T> LoadAsync(const std::string &path)
     {
         const std::string key = NormalizePath(path);
-        const std::string resolvedPath = ResolvePath(key);
         std::shared_ptr<T> resource;
         {
             std::lock_guard<std::mutex> lock(m_mutex);
@@ -105,6 +103,7 @@ class ResourceManager
             resource->MarkLoading(key);
             m_cache[key] = resource;
         }
+        const std::string resolvedPath = ResolvePath(key);
         // 无 JobSystem 的工具环境退化为同步加载，但仍保持相同的资源状态语义。
         if (!m_jobSystem)
         {
@@ -163,4 +162,4 @@ class ResourceManager
     std::filesystem::path m_assetRoot;
     AssetRegistry m_registry;
 };
-} // 结束 MiniEngine 命名空间
+} // namespace MiniEngine
