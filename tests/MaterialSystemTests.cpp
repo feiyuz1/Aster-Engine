@@ -3,12 +3,19 @@
 #include "MiniEngine/Render/MaterialSystem.hpp"
 #include "MiniEngine/Render/MaterialCompiler.hpp"
 #include "MiniEngine/Resource/AssetMaintenance.hpp"
+#include "MiniEngine/Build/AssetCompiler.hpp"
+#include "MiniEngine/Render/ShaderPipeline.hpp"
 
 #include <cmath>
 #include <filesystem>
 #include <iostream>
 #include <algorithm>
 #include <limits>
+#include <thread>
+#ifdef _WIN32
+#define NOMINMAX
+#include <windows.h>
+#endif
 
 using namespace MiniEngine;
 namespace
@@ -35,6 +42,8 @@ void TestLegacyMaterialCompatibility()
           "legacy false override inherits; missing override applies");
     Check(child.GetTexturePath() == "white.ppm" && child.GetPackedTexturePath() == "channels.ppm" &&
           child.GetPackedTextureLayout() == "RMA" && child.IsTransparent(), "legacy texture, packed layout and blend survive");
+    Write("implicitAlpha.mat","color 1 1 1 .5\n"); MaterialResource alpha; alpha.Load(root+"implicitAlpha.mat");
+    Check(alpha.GetMaterialData().legacyData.transparent,"legacy color alpha preserves implicit transparent state");
 }
 void TestInvalidMaterialCandidates()
 {
@@ -424,6 +433,41 @@ void TestReloadPublication()
     Check(system.ApplyInstanceDraft("assets/legacyDraft.mat",oldDraft,accept).success && PlatformFile::ReadAllText(root+"legacyDraft.mat")==oldDraft.legacyData.source,"legacy editor publishes from memory through the same transaction");
     resources.Shutdown();
 }
+void TestCookingAndSourceCache()
+{
+    Write("invalidCook.matgraph","TINY_MATGRAPH 99\n");
+    Check(!PlatformAssetCompiler::Compile(root+"invalidCook.matgraph",root+"Cooked/invalid.matgraph").success,"offline cook rejects invalid graph rather than copying it");
+    auto graph=MakeBuiltinPbrDefinition(); const auto compiled=MaterialCompiler{}.Compile(graph); auto templates=ShaderPipeline::LoadMaterialTemplates("missing-material-template-directory");
+    std::string first,second,third;
+    Check(MaterialCompiler{}.WriteCache(*compiled.material,templates,root+"SourceCache",&first),"write generated GLSL source/layout/dependency cache");
+    Check(MaterialCompiler{}.WriteCache(*compiled.material,templates,root+"SourceCache",&second) && first==second,"same template content reuses cache identity");
+    templates.files["Lighting.glsl"]+="\n// changed include content\n";
+    Check(MaterialCompiler{}.WriteCache(*compiled.material,templates,root+"SourceCache",&third) && third!=first,"included template content invalidates generated source cache");
+    Check(std::filesystem::is_regular_file(std::filesystem::u8path(root+"SourceCache/"+third+"/Base-Static.frag")),"cache stores inspectable source rather than driver binaries");
+}
+void TestMoveReferenceRollback()
+{
+#ifdef _WIN32
+    const auto directory=std::filesystem::absolute(root+"MoveRollback"+std::to_string(GetTickCount64())); std::filesystem::create_directories(directory);
+    const auto source=directory/"old.ppm",destination=directory/"new.ppm",owner=directory/"owner.mat";
+    PlatformFile::WriteAllText(source,"P3\n1 1\n255\n255 255 255\n");
+    const std::string content="TINY_MAT 2\ndefinition \"builtin:PBR\"\ntexture \"BaseMap\" \"old.ppm\"\n"; PlatformFile::WriteAllText(owner,content);
+    AssetRegistry registry; registry.Scan(directory);
+    const auto handle=CreateFileW(owner.c_str(),GENERIC_READ,FILE_SHARE_READ,nullptr,OPEN_EXISTING,FILE_ATTRIBUTE_NORMAL,nullptr);
+    Check(handle!=INVALID_HANDLE_VALUE,"lock an owner file against replacement"); if (handle==INVALID_HANDLE_VALUE) return;
+    std::string error; const bool moved=AssetMaintenance::MoveAsset(registry,source,destination,&error); CloseHandle(handle);
+    Check(!moved && !error.empty() && std::filesystem::exists(source) && !std::filesystem::exists(destination) && PlatformFile::ReadAllText(owner)==content,"failed owner rewrite restores asset/meta and preserves original references");
+#endif
+}
+void TestUnicodeAtomicPublication()
+{
+    const auto path=std::filesystem::u8path(root+"原子 保存/材质.mat");
+    Check(PlatformFile::WriteAllTextAtomic(path,"initial"),"atomic material save accepts physical Unicode directories");
+    const std::string a(16384,'A'),b(16384,'B'); bool first=false,second=false;
+    std::thread one([&] { first=PlatformFile::WriteAllTextAtomic(path,a); }),two([&] { second=PlatformFile::WriteAllTextAtomic(path,b); }); one.join(); two.join();
+    const auto text=PlatformFile::ReadAllText(path);
+    Check(first && second && (text==a || text==b),"concurrent atomic writes keep a complete valid file with separate temporary names");
+}
 }
 int main()
 {
@@ -446,6 +490,9 @@ int main()
     TestOpacityDependency();
     TestDynamicIsolation();
     TestReloadPublication();
+    TestCookingAndSourceCache();
+    TestMoveReferenceRollback();
+    TestUnicodeAtomicPublication();
     }
     catch (const std::exception& error)
     {

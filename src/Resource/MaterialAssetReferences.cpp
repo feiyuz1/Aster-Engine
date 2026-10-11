@@ -88,9 +88,13 @@ bool RewriteMaterialReferences(std::string &source, bool graph, const std::files
                                const std::filesystem::path &newOwner, const std::filesystem::path &assetRoot,
                                const std::string &oldPath, const std::string &newPath)
 {
+    std::istringstream header(source); std::string first; header>>first;
+    const bool legacy=!graph && first!="TINY_MAT";
     return VisitReferences(source, graph, [&](std::string &path) {
         if (path.empty() || path == "builtin:PBR") return false;
         auto resolved = ResolveMaterialReference(path, owner, assetRoot);
+        const bool directLegacy=legacy && std::filesystem::absolute(std::filesystem::u8path(path)).lexically_normal()==std::filesystem::absolute(std::filesystem::u8path(oldPath)).lexically_normal();
+        if (directLegacy) { path=newPath; return true; }
         if (std::filesystem::absolute(std::filesystem::u8path(resolved)).lexically_normal() == std::filesystem::absolute(std::filesystem::u8path(oldPath)).lexically_normal()) resolved = newPath;
         else if (owner == newOwner) return false;
         auto relative = std::filesystem::absolute(std::filesystem::u8path(resolved)).lexically_normal().lexically_relative(std::filesystem::absolute(assetRoot).lexically_normal());

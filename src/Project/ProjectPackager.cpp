@@ -10,6 +10,7 @@
 #include "MiniEngine/Platform/Platform.hpp"
 #include "MiniEngine/Project/Project.hpp"
 #include "MiniEngine/Resource/PakArchive.hpp"
+#include "MiniEngine/Build/AssetCompiler.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -83,7 +84,15 @@ bool CopyAssetTree(const std::filesystem::path &sourceRoot, const std::filesyste
         if (!iterator->is_regular_file() || IsAuthoringOnly(iterator->path()))
             continue;
         const auto relative = std::filesystem::relative(iterator->path(), sourceRoot, error);
-        if (error || !CopyFile(iterator->path(), destinationRoot / relative, result))
+        if (error) return false;
+        const auto extension=iterator->path().extension();
+        if (extension==".mat" || extension==".matgraph")
+        {
+            const auto compiled=PlatformAssetCompiler::Compile(iterator->path(),destinationRoot/relative,sourceRoot);
+            if (!compiled.success) { result.errors.push_back("Material CPU validation failed: "+iterator->path().generic_u8string()+": "+compiled.error); return false; }
+            ++result.stagedFiles;
+        }
+        else if (!CopyFile(iterator->path(), destinationRoot / relative, result))
             return false;
     }
     if (error)

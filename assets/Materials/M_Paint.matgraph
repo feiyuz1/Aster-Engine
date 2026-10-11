@@ -1,0 +1,15 @@
+TINY_MATGRAPH 2
+settings Lit Opaque 0 0.5
+parameter "PaintColor" Vec3 Linear 0.5 0.05 0.02
+parameter_meta "PaintColor" "Paint Color" "Surface" 0 0 1
+parameter "Metallic" Float Linear 0.85
+parameter_meta "Metallic" "Metallic" "Surface" 1 0 1
+parameter "Roughness" Float Linear 0.22
+parameter_meta "Roughness" "Roughness" "Surface" 1 0.04 1
+node 1 SurfaceOutput "Surface" 600 80 Float 0 0 0 0 "" ""
+node 2 VectorParameter "Paint Color" 40 40 Float 0 0 0 0 "PaintColor" ""
+node 3 ScalarParameter "Metallic" 40 180 Float 0 0 0 0 "Metallic" ""
+node 4 ScalarParameter "Roughness" 40 300 Float 0 0 0 0 "Roughness" ""
+link 2 0 1 0
+link 3 0 1 1
+link 4 0 1 2

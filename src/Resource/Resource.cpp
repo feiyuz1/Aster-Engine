@@ -805,7 +805,7 @@ const Aabb &MeshResource::GetBounds() const
 bool ShaderResource::Load(const std::string &path)
 {
     MarkLoading(path);
-    m_source = PlatformFile::ReadAllText(path);
+    m_source = PlatformFile::ReadAllText(std::filesystem::u8path(path));
     if (m_source.empty())
     {
         SetState(ResourceState::Failed, "Shader file is empty or missing: " + path);
@@ -887,7 +887,7 @@ void MaterialResource::CaptureLegacyData(const std::string &source)
     data.metallic = m_metallic;
     data.roughness = m_roughness;
     data.emissive = m_emissive;
-    data.transparent = m_transparent;
+    data.transparent = IsTransparent();
     data.shaderPath = m_shaderPath;
     data.texturePath = m_texturePath;
     data.normalTexturePath = m_normalTexturePath;
@@ -1119,7 +1119,15 @@ bool MaterialResource::LoadCandidate(const std::string &path)
     if (m_referenceResolver)
         for (auto *reference : {&m_shaderPath, &m_texturePath, &m_normalTexturePath, &m_metallicTexturePath, &m_roughnessTexturePath,
                                 &m_aoTexturePath, &m_emissiveTexturePath, &m_packedTexturePath})
-            if (!reference->empty()) *reference = m_referenceResolver(*reference, path);
+            if (!reference->empty())
+            {
+                const auto resolved=m_referenceResolver(*reference,path);
+                // Legacy importers also emitted project-relative paths. Prefer an existing owner reference,
+                // then retain that older form when it points to a real loose asset.
+                if (PlatformFile::GetReadPolicy()==PlatformFile::ReadPolicy::LooseFirst && !PlatformFile::Exists(std::filesystem::u8path(resolved)) && PlatformFile::Exists(std::filesystem::u8path(*reference)))
+                    *reference=std::filesystem::absolute(std::filesystem::u8path(*reference)).lexically_normal().generic_u8string();
+                else *reference=resolved;
+            }
     CaptureLegacyData(source);
     SetState(ResourceState::Loaded);
     return true;

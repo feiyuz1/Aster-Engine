@@ -132,6 +132,17 @@ bool GlMaterialProgramCache::Initialize()
     return true;
 }
 void GlMaterialProgramCache::SetTemplates(MaterialTemplateSources sources) { m_impl->templates = std::move(sources); m_impl->fast.clear(); }
+bool GlMaterialProgramCache::ValidateTemplates(const MaterialTemplateSources &sources)
+{
+    auto &p=*m_impl; auto previous=p.templates; p.templates=sources;
+    std::vector<std::shared_ptr<const CompiledMaterial>> materials;
+    for (const auto &entry:p.fast) if (auto material=entry.second.owner.lock()) materials.push_back(std::move(material));
+    materials.push_back(MaterialCompiler{}.Compile(MakeBuiltinPbrDefinition()).material);
+    bool valid=true;
+    for (const auto &material:materials) for (auto pass:{MaterialPass::Base,MaterialPass::Shadow}) for (auto geometry:{MaterialGeometry::Static,MaterialGeometry::Skinned,MaterialGeometry::Instanced})
+        valid=GetOrCreate(*material,pass,geometry)!=nullptr && valid;
+    p.templates=std::move(previous); return valid;
+}
 void GlMaterialProgramCache::SetFrameBindings(const std::array<std::uint32_t,3> &shadows,std::uint32_t lightData,std::uint32_t clusterData,
                                             std::size_t cascade,Vec2 viewport)
 { m_impl->shadows=shadows; m_impl->lightData=lightData; m_impl->clusterData=clusterData; m_impl->cascade=cascade; m_impl->viewport=viewport; }

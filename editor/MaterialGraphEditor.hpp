@@ -11,6 +11,7 @@ public:
     bool ConnectPorts(std::uint32_t from,std::uint32_t output,std::uint32_t to,std::uint32_t input);
     bool DisconnectPort(std::uint32_t to,std::uint32_t input);
     bool DeleteNode(std::uint32_t id);
+    bool SetParameterDefault(const std::string &name,const MaterialParameterValue &value);
     void Draw();
 private:
     std::uint32_t m_selected=0,m_linkFrom=0;

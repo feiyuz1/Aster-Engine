@@ -18,19 +18,24 @@ namespace MiniEngine
 {
 MaterialTemplateSources ShaderPipeline::LoadMaterialTemplates(const std::filesystem::path &directory)
 {
-    const std::map<std::string,const char *> builtins = {
-        {"Surface.glsl",BuiltinMaterialShaders::Surface_glsl}, {"Lighting.glsl",BuiltinMaterialShaders::Lighting_glsl},
-        {"VertexTransform.glsl",BuiltinMaterialShaders::VertexTransform_glsl}, {"BasePass.vert",BuiltinMaterialShaders::BasePass_vert},
-        {"BasePass.frag",BuiltinMaterialShaders::BasePass_frag}, {"ShadowPass.vert",BuiltinMaterialShaders::ShadowPass_vert},
-        {"ShadowPass.frag",BuiltinMaterialShaders::ShadowPass_frag}};
     MaterialTemplateSources sources;
-    for (const auto &entry : builtins)
+    for (const auto &entry : BuiltinMaterialShaders::Files)
     {
-        auto text = PlatformFile::ReadAllText(directory / std::filesystem::u8path(entry.first));
-        if (text.empty()) text = entry.second;
+        auto text = PlatformFile::ReadAllText(directory / std::filesystem::u8path(entry.name));
+        if (text.empty()) text = entry.text;
         text.erase(std::remove(text.begin(),text.end(),'\r'),text.end());
-        sources.files.emplace(entry.first,std::move(text));
+        sources.files.emplace(entry.name,std::move(text));
     }
+    std::error_code error;
+    if (std::filesystem::is_directory(directory,error))
+        for (std::filesystem::recursive_directory_iterator it(directory,error),end; it!=end && !error; it.increment(error))
+        {
+            if (!it->is_regular_file()) continue;
+            const auto key=it->path().lexically_relative(directory).generic_u8string();
+            if (sources.files.count(key)) continue;
+            auto text=PlatformFile::ReadAllText(it->path()); text.erase(std::remove(text.begin(),text.end(),'\r'),text.end());
+            if (!text.empty()) sources.files.emplace(key,std::move(text));
+        }
     return sources;
 }
 namespace

@@ -21,6 +21,7 @@ public:
     ~GlMaterialProgramCache();
     bool Initialize();
     void SetTemplates(MaterialTemplateSources sources);
+    bool ValidateTemplates(const MaterialTemplateSources &sources);
     void SetFrameBindings(const std::array<std::uint32_t,3> &shadows, std::uint32_t lightData, std::uint32_t clusterData,
                           std::size_t cascade, Vec2 viewport);
     GlMaterialProgram *GetOrCreate(const CompiledMaterial &,MaterialPass,MaterialGeometry);

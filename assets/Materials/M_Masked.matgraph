@@ -1,0 +1,15 @@
+TINY_MATGRAPH 2
+settings Lit Masked 1 0.5
+parameter "Tint" Vec3 Linear 0.12 0.55 0.2
+parameter_meta "Tint" "Leaf Tint" "Surface" 0 0 1
+parameter "Mask" Texture2D Linear "T_Mask.ppm"
+parameter_meta "Mask" "Opacity Mask" "Surface" 0 0 1
+node 1 SurfaceOutput "Surface" 650 100 Float 0 0 0 0 "" ""
+node 2 TextureParameter "Mask" 20 150 Float 0 0 0 0 "Mask" ""
+node 3 TextureSample "Sample UV0" 230 150 Float 0 0 0 0 "" ""
+node 4 ComponentMask "R to Opacity" 440 150 Float 0 0 0 0 "" "x"
+node 5 VectorParameter "Tint" 20 20 Float 0 0 0 0 "Tint" ""
+link 2 0 3 0
+link 3 0 4 0
+link 4 0 1 6
+link 5 0 1 0

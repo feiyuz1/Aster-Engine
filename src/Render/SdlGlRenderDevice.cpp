@@ -3173,9 +3173,11 @@ int SdlGlRenderDevice::GetSceneTargetHeight() const
 }
 bool SdlGlRenderDevice::ReloadShaders()
 {
-    if (!m_impl || !m_impl->ReloadDefaultShadersFromFiles()) return false;
+    if (!m_impl) return false;
+    const auto templates=ShaderPipeline::LoadMaterialTemplates();
+    if (!m_impl->materialPrograms->ValidateTemplates(templates) || !m_impl->ReloadDefaultShadersFromFiles()) return false;
     m_impl->legacyReflection.clear();
-    m_impl->materialPrograms->SetTemplates(ShaderPipeline::LoadMaterialTemplates());
+    m_impl->materialPrograms->SetTemplates(templates);
     return true;
 }
 bool SdlGlRenderDevice::ValidateShader(const std::string &path)

@@ -8,6 +8,9 @@
 #include "MiniEngine/Platform/Platform.hpp"
 #include "MiniEngine/Resource/Resource.hpp"
 #include "MiniEngine/Serialization/Archive.hpp"
+#include "MiniEngine/Render/MaterialSystem.hpp"
+#include "MiniEngine/Render/MaterialCompiler.hpp"
+#include "MiniEngine/Render/ShaderPipeline.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -37,7 +40,7 @@ bool Copy(const std::filesystem::path &source, const std::filesystem::path &dest
 } // 结束匿名命名空间
 
 // 根据目标平台选择纹理压缩与资源布局；相同输入和平台配置必须生成字节一致的输出。
-AssetCompileResult PlatformAssetCompiler::Compile(const std::filesystem::path &source, const std::filesystem::path &destination)
+AssetCompileResult PlatformAssetCompiler::Compile(const std::filesystem::path &source, const std::filesystem::path &destination,const std::filesystem::path &materialAssetRoot)
 {
     AssetCompileResult result;
     std::error_code error;
@@ -50,7 +53,28 @@ AssetCompileResult PlatformAssetCompiler::Compile(const std::filesystem::path &s
         return result;
     }
     BinaryWriter writer;
-    if (IsTexture(source))
+    if (Extension(source)==".mat" || Extension(source)==".matgraph")
+    {
+        auto assetRoot=materialAssetRoot;
+        if (assetRoot.empty())
+        {
+            assetRoot=std::filesystem::absolute(source).parent_path();
+            for (auto parent=assetRoot; !parent.empty() && parent!=parent.parent_path(); parent=parent.parent_path())
+                if (parent.filename()=="assets") { assetRoot=parent; break; }
+        }
+        ResourceManager resources; resources.Initialize(nullptr,assetRoot); MaterialSystem system(resources);
+        const auto path=std::filesystem::absolute(source).lexically_normal().generic_u8string(); const auto resolved=system.Resolve(path);
+        if (!resolved)
+        { for (const auto &d:system.GetDiagnostics(path)) result.error+=d.message+'\n'; return result; }
+        const auto compiled=MaterialCompiler{}.Compile(*resolved->definition);
+        if (!compiled.Success())
+        { for (const auto &d:compiled.diagnostics) result.error+=d.message+'\n'; return result; }
+        if (!MaterialCompiler{}.WriteCache(*compiled.material,ShaderPipeline::LoadMaterialTemplates(),assetRoot.parent_path()/"Saved/MaterialCache"))
+        { result.error="Unable to write generated material source cache"; return result; }
+        result.type=CompiledAssetType::Material; result.success=Copy(source,destination,result.error);
+        resources.Shutdown();
+    }
+    else if (IsTexture(source))
     {
         TextureResource texture;
         if (!texture.Load(source.generic_string()))

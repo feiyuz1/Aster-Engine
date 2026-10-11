@@ -560,6 +560,7 @@ int main()
     CHECK(PlatformFile::WriteAllBytes("Saved/FakeGame.exe", {0x4d, 0x5a, 0x00, 0x00}));
     CHECK(BuildCompatibility::Save(BuildCompatibility::SidecarPath("Saved/FakeGame.exe"), BuildCompatibility::Current()));
     const auto package = ProjectPackager::Package({"TinyEngine.tinyproject", "Saved/TestPackage", "Saved/FakeGame.exe"});
+    for (const auto &error : package.errors) std::cerr << "Package regression: " << error << '\n';
     CHECK(package.success && std::filesystem::is_regular_file(package.archive) && std::filesystem::is_regular_file(package.projectFile) &&
           std::filesystem::is_regular_file(package.buildInfo));
     CHECK(!PakArchive::List(package.archive).empty() &&

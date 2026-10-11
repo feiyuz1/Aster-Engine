@@ -1,5 +1,6 @@
 #include "MiniEngine/Platform/Platform.hpp"
 #include "MiniEngine/Render/MaterialCompiler.hpp"
+#include "MiniEngine/Resource/PakArchive.hpp"
 #include "MiniEngine/Render/SdlGlRenderDevice.hpp"
 #define SDL_MAIN_HANDLED
 #include <SDL.h>
@@ -229,6 +230,21 @@ void TestGpuCandidateRollback(SdlGlRenderDevice &device,RenderItem &item)
     Check(device.GetMaterialProgramCompileCountForTests(MaterialPass::Base)<=texturePrograms+2,"texture replacement only validates missing geometry variants");
     resources.Shutdown();
 }
+void TestPackagedWorkingDirectory(SdlGlRenderDevice &device,RenderItem &item)
+{
+    auto graph=TextureDefinition(TextureSampling::Linear); graph.parameters[0].defaultValue=std::string("gray.ppm"); graph.graph.GetParameters()=graph.parameters; graph.graph.GetRenderState()=graph.renderState;
+    PlatformFile::WriteAllText(root+"Package/assets/Parent.matgraph",graph.graph.Serialize());
+    PlatformFile::WriteAllText(root+"Package/assets/Base.mat","TINY_MAT 2\ndefinition \"Parent.matgraph\"\n");
+    PlatformFile::WriteAllText(root+"Package/assets/Child.mat","TINY_MAT 2\nparent \"Base.mat\"\n");
+    PlatformFile::WriteAllText(root+"Package/assets/gray.ppm","P3\n1 1\n255\n128 128 128\n");
+    const auto archive=std::filesystem::absolute(root+"Game.tpak"); Check(PakArchive::PackDirectory(root+"Package",archive),"pack parent graph, instance chain and texture source");
+    struct Restore { std::filesystem::path cwd=std::filesystem::current_path(); ~Restore() { PlatformFile::ClearMounts(); std::filesystem::current_path(cwd); } } restore;
+    auto foreign=std::filesystem::absolute(root+"ForeignCwd"); std::filesystem::create_directories(foreign); std::filesystem::current_path(foreign);
+    PlatformFile::ClearMounts(); Check(PlatformFile::MountPak(archive),"mount material package from a different working directory"); PlatformFile::SetReadPolicy(PlatformFile::ReadPolicy::MountedOnly);
+    ResourceManager resources; resources.Initialize(nullptr,"assets"); MaterialSystem system(resources); item.materialProxy=system.BuildProxy("assets/Child.mat");
+    auto pixel=Draw(device,item,View());
+    Check(system.Resolve("assets/Child.mat") && Near(pixel.x,128.f/255.f),"mounted graph, inherited instance and default texture render correctly without loose files"); resources.Shutdown();
+}
 }
 int main()
 {
@@ -252,6 +268,7 @@ int main()
         TestSharedPrograms(device,item); TestParameterUpload(device,item); TestTextureSemantics(device,item); TestFallbackTexture(device,item); TestTextureBudget(device,item);
         TestPassClippingAndState(device,item); TestGeometryAndPbr(device,item);
         TestGpuCandidateRollback(device,item);
+        TestPackagedWorkingDirectory(device,item);
         device.Shutdown();
     }
     catch (const std::exception &error) { std::cerr << "[FAIL] " << error.what() << '\n'; return 1; }

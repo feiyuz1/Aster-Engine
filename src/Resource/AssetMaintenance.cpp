@@ -212,12 +212,33 @@ bool AssetMaintenance::MoveAsset(AssetRegistry &registry, const std::filesystem:
     }
     const std::string oldPath = NormalizePath(source), newPath = NormalizePath(destination);
     std::vector<std::filesystem::path> rewrittenAssets;
+    struct Original { std::filesystem::path path; std::string text; bool existed=true; };
+    std::vector<Original> originals;
+    const auto scope=registry.GetRootPath();
+    const auto rollback=[&](const std::string &message) {
+        bool restored=true; std::error_code failure;
+        for (auto it=originals.rbegin();it!=originals.rend();++it)
+        {
+            if (it->existed) restored=PlatformFile::WriteAllTextAtomic(it->path,it->text) && restored;
+            else { std::filesystem::remove(it->path,failure); restored=restored && !failure; }
+        }
+        if (std::filesystem::is_regular_file(newMeta)) { std::filesystem::rename(newMeta,oldMeta,failure); restored=restored && !failure; }
+        std::filesystem::rename(destination,source,failure); restored=restored && !failure;
+        if (!scope.empty()) registry.Scan(scope);
+        if (error) *error=message+(restored ? "" : "; rollback could not restore all files"); return false;
+    };
+    const auto write=[&](const std::filesystem::path &path,const std::string &text) {
+        const auto previous=PlatformFile::ReadAllText(path);
+        if (!PlatformFile::WriteAllTextAtomic(path,text)) return false;
+        originals.push_back({path,previous,true}); return true;
+    };
     if (source.extension() == ".mat" || source.extension() == ".matgraph")
     {
         auto text = PlatformFile::ReadAllText(destination);
         if (RewriteMaterialReferences(text, source.extension() == ".matgraph", source, destination, registry.GetRootPath(), oldPath, newPath))
-            PlatformFile::WriteAllText(destination, text);
+            if (!write(destination,text)) return rollback("Could not rewrite moved material references");
     }
+    std::vector<std::pair<std::string,std::vector<std::string>>> dependencyUpdates;
     for (const auto &asset : registry.GetAssets())
     {
         if (asset.path == oldPath)
@@ -226,8 +247,11 @@ bool AssetMaintenance::MoveAsset(AssetRegistry &registry, const std::filesystem:
         const bool changedText = asset.type == "Material" || asset.type == "MaterialGraph" ?
             RewriteMaterialReferences(text, asset.type == "MaterialGraph", std::filesystem::u8path(asset.path), std::filesystem::u8path(asset.path), registry.GetRootPath(), oldPath, newPath) :
             ReplaceAll(text, oldPath, newPath);
-        if (!text.empty() && changedText && PlatformFile::WriteAllText(std::filesystem::u8path(asset.path), text))
+        if (!text.empty() && changedText)
+        {
+            if (!write(std::filesystem::u8path(asset.path),text)) return rollback("Could not rewrite asset references: "+asset.path);
             rewrittenAssets.emplace_back(std::filesystem::u8path(asset.path));
+        }
         auto dependencies = asset.dependencies;
         bool changed = false;
         for (auto &dependency : dependencies)
@@ -237,7 +261,13 @@ bool AssetMaintenance::MoveAsset(AssetRegistry &registry, const std::filesystem:
                 changed = true;
             }
         if (changed)
-            registry.SetDependencies(asset.path, std::move(dependencies));
+            dependencyUpdates.emplace_back(asset.path,std::move(dependencies));
+    }
+    for (auto &update:dependencyUpdates)
+    {
+        const auto meta=std::filesystem::u8path(update.first+".meta");
+        originals.push_back({meta,PlatformFile::ReadAllText(meta),std::filesystem::exists(meta)});
+        if (!registry.SetDependencies(update.first,std::move(update.second))) return rollback("Could not save dependency metadata: "+update.first);
     }
     registry.UpdateMovedAsset(source, destination, rewrittenAssets);
     return true;

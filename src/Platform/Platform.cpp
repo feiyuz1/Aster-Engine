@@ -11,6 +11,8 @@
 #define NOMINMAX
 #endif
 #include <windows.h>
+#else
+#include <unistd.h>
 #endif
 
 #include <algorithm>
@@ -134,6 +136,11 @@ bool PlatformFile::WriteAllText(const std::filesystem::path &path, const std::st
 
 bool PlatformFile::WriteAllTextAtomic(const std::filesystem::path &path, const std::string &text, const bool keepBackup)
 {
+    // Windows ReplaceFile temporarily opens the target without delete sharing.
+    // Serialize publication (including backups), while unique names also keep
+    // temporary files from colliding with writers in another process.
+    static std::mutex publicationMutex;
+    const std::lock_guard<std::mutex> publicationLock(publicationMutex);
     if (path.empty())
         return false;
     std::error_code error;
@@ -147,8 +154,14 @@ bool PlatformFile::WriteAllTextAtomic(const std::filesystem::path &path, const s
             return false;
     }
 
-    const std::filesystem::path temporary = target.string() + ".tmp";
-    const std::filesystem::path backup = target.string() + ".bak";
+    static std::atomic<std::uint64_t> temporarySequence{0};
+#ifdef _WIN32
+    const auto process=GetCurrentProcessId();
+#else
+    const auto process=getpid();
+#endif
+    auto temporary=target; temporary += ".tmp."+std::to_string(process)+"."+std::to_string(++temporarySequence);
+    auto backup=target; backup += ".bak";
     std::filesystem::remove(temporary, error);
     error.clear();
     {

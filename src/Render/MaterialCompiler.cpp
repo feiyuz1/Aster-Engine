@@ -1,4 +1,5 @@
 #include "MiniEngine/Render/MaterialCompiler.hpp"
+#include "MiniEngine/Platform/Platform.hpp"
 #include <algorithm>
 #include <functional>
 #include <iomanip>
@@ -361,5 +362,35 @@ GeneratedShaderSources MaterialCompiler::GeneratePass(const CompiledMaterial &ma
     if (!expand(base+".vert",generated.vertex) || !expand(base+".frag",generated.fragment)) { generated.vertex.clear(); generated.fragment.clear(); }
     generated.dependencies.assign(dependencies.begin(),dependencies.end());
     return generated;
+}
+bool MaterialCompiler::WriteCache(const CompiledMaterial &material,const MaterialTemplateSources &templates,const std::filesystem::path &directory,std::string *cacheKey) const
+{
+    std::map<std::string,std::string> files; std::set<std::string> dependencies;
+    std::string content=material.canonicalProgramContent;
+    for (auto pass:{MaterialPass::Base,MaterialPass::Shadow}) for (auto geometry:{MaterialGeometry::Static,MaterialGeometry::Skinned,MaterialGeometry::Instanced})
+    {
+        const auto generated=GeneratePass(material,pass,geometry,templates); if (!generated.error.empty()) return false;
+        const std::string name=std::string(pass==MaterialPass::Base ? "Base" : "Shadow")+'-'+(geometry==MaterialGeometry::Static ? "Static" : geometry==MaterialGeometry::Skinned ? "Skinned" : "Instanced");
+        files[name+".vert"]=generated.vertex; files[name+".frag"]=generated.fragment;
+        content+=name+'\n'+generated.vertex+generated.fragment; dependencies.insert(generated.dependencies.begin(),generated.dependencies.end());
+    }
+    std::uint64_t hash=1469598103934665603ull; for (unsigned char c:content) { hash^=c; hash*=1099511628211ull; }
+    std::ostringstream hex; hex << std::hex << hash; std::string key=hex.str();
+    for (unsigned collision=0;;++collision)
+    {
+        key=hex.str()+(collision ? "-"+std::to_string(collision) : "");
+        const auto previous=PlatformFile::ReadAllText(directory/key/"content.key");
+        if (previous.empty() || previous==content) break;
+    }
+    const auto root=directory/key;
+    if (!PlatformFile::WriteAllTextAtomic(root/"content.key",content)) return false;
+    for (const auto &file:files) if (!PlatformFile::WriteAllTextAtomic(root/file.first,file.second)) return false;
+    std::string layout=material.layout.canonicalSchema;
+    for (const auto &slot:material.layout.numericSlots) layout+=slot.name+" numeric-slot "+std::to_string(slot.slot)+'\n';
+    for (const auto &slot:material.layout.textureSlots) layout+=slot.name+" texture-slot "+std::to_string(slot.slot)+'\n';
+    dependencies.insert(material.dependencies.begin(),material.dependencies.end()); std::string summary;
+    for (const auto &dependency:dependencies) summary+=dependency+'\n';
+    if (!PlatformFile::WriteAllTextAtomic(root/"layout.txt",layout) || !PlatformFile::WriteAllTextAtomic(root/"dependencies.txt",summary)) return false;
+    if (cacheKey) *cacheKey=key; return true;
 }
 } // namespace MiniEngine

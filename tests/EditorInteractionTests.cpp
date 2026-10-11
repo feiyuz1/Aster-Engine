@@ -5,6 +5,7 @@
 #include "MiniEngine/ECS/Components.hpp"
 #include "MiniEngine/ECS/SceneSerializer.hpp"
 #include "MiniEngine/Render/SdlGlRenderDevice.hpp"
+#include "MiniEngine/Project/ProjectPackager.hpp"
 #define SDL_MAIN_HANDLED
 #include <SDL.h>
 #include <imgui.h>
@@ -789,6 +790,46 @@ struct EditorInteractionTests
         Frame([&] { asset.Draw(); editor.Draw(); });
         Check(editor.IsDirty(),"actual ImGui material modules retain draft state");
     }
+    void MaterialWorkflowGpu()
+    {
+        const auto root=std::filesystem::absolute("Saved/MaterialWorkflow"); const auto assets=root/"assets"; std::filesystem::create_directories(assets);
+        PlatformFile::WriteAllText(assets/"quad.mesh","v -0.5 -0.5 0\nv 0.5 -0.5 0\nv 0.5 0.5 0\nv -0.5 0.5 0\nvt 0 0\nvt 1 0\nvt 1 1\nvt 0 1\nvn 0 0 1\nf 1/1/1 2/2/1 3/3/1\nf 1/1/1 3/3/1 4/4/1\n");
+        PlatformFile::WriteAllText(assets/"default.input",PlatformFile::ReadAllText("assets/default.input"));
+        ResourceManager resources; resources.Initialize(nullptr,assets); Renderer renderer; renderer.SetResourceManager(&resources);
+        auto gpu=std::make_unique<SdlGlRenderDevice>(128,64,"Material editor workflow"); auto *device=gpu.get();
+        Check(renderer.Initialize(std::move(gpu)),"material editor workflow initializes real GPU"); SDL_HideWindow(static_cast<SDL_Window *>(device->GetNativeWindow()));
+        device->EnableSceneRenderTarget(true,128,64); device->SetTaaEnabled(false); device->SetGtaoEnabled(false); device->SetBloomEnabled(false); device->SetFxaaEnabled(false);
+        auto &system=renderer.GetMaterialSystem(); const auto validator=[&](const auto &compiled,auto &diagnostics) { return device->ValidateMaterial(compiled,diagnostics); };
+        MaterialDefinitionData definition; definition.sourcePath=(assets/"Shared.matgraph").generic_u8string(); definition.renderState.shadingModel=MaterialShadingModel::Unlit;
+        definition.graph.SetFormatVersion(2); definition.graph.AddNode(MaterialNodeType::SurfaceOutput,"Surface");
+        MaterialParameterDecl color; color.name="Tint"; color.type=MaterialParameterType::Vec3; color.defaultValue=Vec3{.3f,.3f,.3f}; definition.parameters={color};
+        auto id=definition.graph.AddNode(MaterialNodeType::VectorParameter,"Tint"); definition.graph.GetNodes().back().parameterName="Tint"; definition.graph.Connect(id,1,0);
+        MaterialGraphEditor graph; graph.Open(definition.sourcePath,definition); graph.SetSaveRequest([&](const auto &path,const auto &data,auto &diagnostics) { const auto r=system.ApplyDefinitionDraft(path,data,validator); diagnostics=r.diagnostics; return r.success; });
+        Check(graph.Save(),"real graph editor saves a validated parent definition");
+        std::string error;
+        for (const auto &name:{"Red","Blue"}) Check(MaterialAssetEditor::CreateInstance((assets/(std::string(name)+".mat")).generic_u8string(),definition.sourcePath,error),"create instance through material editor command");
+        MaterialAssetEditor red,blue; MaterialResource data; data.Load((assets/"Red.mat").generic_u8string()); red.Open((assets/"Red.mat").generic_u8string(),data.GetMaterialData(),definition.parameters);
+        data.Load((assets/"Blue.mat").generic_u8string()); blue.Open((assets/"Blue.mat").generic_u8string(),data.GetMaterialData(),definition.parameters);
+        const auto save=[&](const auto &path,const auto &draft,auto &diagnostics) { const auto r=system.ApplyInstanceDraft(path,draft,validator); diagnostics=r.diagnostics; return r.success; }; red.SetSaveRequest(save); blue.SetSaveRequest(save);
+        red.SetOverride("Tint",Vec3{1,0,0}); blue.SetOverride("Tint",Vec3{0,0,1}); Check(red.Save() && blue.Save(),"save independent red and blue asset overrides");
+        Frame([&] { graph.Draw(); red.Draw(); });
+        World scene; const auto a=scene.CreateEntity("Red"),b=scene.CreateEntity("Blue");
+        for (auto e:{a,b}) { scene.AddComponent(e,MeshComponent{"assets/quad.mesh",e==a ? "assets/Red.mat" : "assets/Blue.mat"}); scene.GetComponent<TransformComponent>(e)->position={e==a ? -.65f : .65f,0,0}; }
+        renderer.SetCameraOverride(true,{0,0,3},{}); renderer.RenderFrame(scene); auto hdr=device->ReadHdrAttachmentForTests(0);
+        Check(hdr[32*128+52].x>.9f && hdr[32*128+76].z>.9f,"assigned instances render red and blue in the actual scene");
+        Check(graph.SetParameterDefault("Tint",Vec3{0,1,0}) && graph.Save(),"parent default changes through the graph editor command");
+        auto dynamic=system.CreateDynamicInstance("assets/Blue.mat"); dynamic->SetParameter("Tint",Vec3{1,1,0}); renderer.SetDynamicMaterial(b,dynamic); renderer.RenderFrame(scene); hdr=device->ReadHdrAttachmentForTests(0);
+        Check(hdr[32*128+52].x>.9f && hdr[32*128+76].x>.9f && hdr[32*128+76].y>.9f,"dynamic color affects only its assigned scene entity");
+        auto broken=graph.GetDraft(); broken.graph.GetLinks()[0].fromNode=999; graph.Open(definition.sourcePath,broken); graph.AddNode(MaterialNodeType::Constant,"Unused");
+        Check(!graph.Save() && graph.IsDirty() && !graph.GetDiagnostics().empty(),"broken editor graph cannot replace the live scene material");
+        renderer.RenderFrame(scene); hdr=device->ReadHdrAttachmentForTests(0); Check(hdr[32*128+76].y>.9f,"failed editor save keeps the current rendered material");
+        graph.DisconnectPort(1,0); Check(graph.ConnectPorts(id,0,1,0) && graph.Save(),"repair graph link and publish from the same editor draft");
+        SceneManager scenes(&scene); Check(scenes.SaveScene(assets/"MaterialDemo.scene"),"save scene referencing the new material assets");
+        ProjectSettings project; project.name="MaterialWorkflow"; project.projectFile=root/"MaterialWorkflow.tinyproject"; project.assetDirectory="assets"; project.startupScene="assets/MaterialDemo.scene"; Check(project.Save(project.projectFile),"save isolated material example project");
+        const auto package=ProjectPackager::Package({project.projectFile,root/"Package",TINYENGINE_TEST_GAME_PATH});
+        Check(package.success,"package complete edited material scene with offline validation");
+        renderer.Shutdown(); resources.Shutdown();
+    }
 };
 } // 结束 MiniEngine 命名空间
 
@@ -808,6 +849,7 @@ int main()
         tests.ShaderDocuments();
         tests.WindowClose();
         tests.MaterialDocuments();
+        tests.MaterialWorkflowGpu();
         std::cout << tests.checks << " interaction checks passed\n";
         return 0;
     }

@@ -40,6 +40,12 @@ bool MaterialGraphEditor::DeleteNode(std::uint32_t id)
     auto &links=m_draft.graph.GetLinks(); links.erase(std::remove_if(links.begin(),links.end(),[&](const auto &l) { return l.fromNode==id || l.toNode==id; }),links.end());
     m_dirty=true; if (m_selected==id) m_selected=0; if (m_linkFrom==id) m_linkFrom=0; return true;
 }
+bool MaterialGraphEditor::SetParameterDefault(const std::string &name,const MaterialParameterValue &value)
+{
+    auto p=std::find_if(m_draft.parameters.begin(),m_draft.parameters.end(),[&](const auto &p) { return p.name==name; });
+    if (p==m_draft.parameters.end() || p->type!=GetMaterialParameterType(value) || !IsFiniteMaterialValue(value)) return false;
+    p->defaultValue=value; m_dirty=true; return true;
+}
 void MaterialGraphEditor::DrawCanvas()
 {
     ImGui::BeginChild("Node canvas",{0,360},true,ImGuiWindowFlags_HorizontalScrollbar);
@@ -56,6 +62,8 @@ void MaterialGraphEditor::DrawCanvas()
     {
         const auto ports=Inputs(n.type); ImVec2 pos{origin.x+n.position.x,origin.y+n.position.y};
         draw->AddRectFilled(pos,{pos.x+200,pos.y+70+ports.size()*22},IM_COL32(38,48,65,255),5);
+        const bool error=std::any_of(m_diagnostics.begin(),m_diagnostics.end(),[&](const auto &d) { return d.nodeId==n.id && d.severity==MaterialDiagnosticSeverity::Error; });
+        if (error || m_selected==n.id) draw->AddRect(pos,{pos.x+200,pos.y+70+ports.size()*22},error ? IM_COL32(240,80,80,255) : IM_COL32(100,180,255,255),5.0f,2.0f);
         ImGui::PushID(static_cast<int>(n.id)); ImGui::SetCursorScreenPos(pos);
         ImGui::InvisibleButton("Header",{200,32});
         if (ImGui::IsItemClicked()) m_selected=n.id;
@@ -125,7 +133,8 @@ void MaterialGraphEditor::Draw()
         int shading=static_cast<int>(m_draft.renderState.shadingModel),blend=static_cast<int>(m_draft.renderState.blendMode);
         if (ImGui::Combo("Shading",&shading,"Lit\0Unlit\0")) { m_draft.renderState.shadingModel=static_cast<MaterialShadingModel>(shading); m_dirty=true; }
         if (ImGui::Combo("Blend",&blend,"Opaque\0Masked\0Alpha\0")) { m_draft.renderState.blendMode=static_cast<MaterialBlendMode>(blend); m_dirty=true; }
-        if (ImGui::Checkbox("Two sided",&m_draft.renderState.twoSided) || ImGui::SliderFloat("Mask cutoff",&m_draft.renderState.maskCutoff,0,1)) m_dirty=true;
+        if (ImGui::Checkbox("Two sided",&m_draft.renderState.twoSided)) m_dirty=true;
+        if (ImGui::SliderFloat("Mask cutoff",&m_draft.renderState.maskCutoff,0,1)) m_dirty=true;
         ImGui::TextUnformatted("Click an output, then an input to connect. Right click input to disconnect.");
         DrawCanvas(); DrawProperties(); m_draft.graph.GetParameters()=m_draft.parameters; m_draft.graph.GetRenderState()=m_draft.renderState;
     }
