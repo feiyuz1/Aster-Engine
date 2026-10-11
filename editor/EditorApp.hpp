@@ -8,6 +8,8 @@
 #include "MiniEngine/AI/BehaviorTree.hpp"
 #include "MiniEngine/Animation/SkeletalAnimation.hpp"
 #include "MiniEngine/Render/MaterialGraph.hpp"
+#include "MaterialAssetEditor.hpp"
+#include "MaterialGraphEditor.hpp"
 #include "MiniEngine/Runtime/Engine.hpp"
 #include "MiniEngine/Project/SolutionGenerator.hpp"
 #include "MiniEngine/VFX/ParticleSystem.hpp"
@@ -326,7 +328,10 @@ class EditorApp
     bool m_requestShaderPopup = false;
     bool m_shaderFocused = false;
     std::string m_openMaterialGraphAsset;
-    MaterialGraph m_materialGraph;
+    MaterialGraphEditor m_materialGraphEditor;
+    MaterialAssetEditor m_materialAssetEditor;
+    bool m_requestMaterialExitPopup=false;
+    std::string m_openMaterialAsset;
     std::string m_openAnimationAsset;
     SkeletalClip m_editSkeletalClip;
     BlendTree1D m_editBlendTree;

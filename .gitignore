@@ -76,3 +76,4 @@
 !/assets/shaders/material/BasePass.frag
 !/assets/shaders/material/ShadowPass.vert
 !/assets/shaders/material/ShadowPass.frag
+!/tests/EditorInteractionTests.cpp

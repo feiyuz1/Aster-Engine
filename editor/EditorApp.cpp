@@ -1,4 +1,4 @@
-﻿// 文件：editor/EditorApp.cpp
+// 文件：editor/EditorApp.cpp
 // 作用：定义编辑器窗口、面板状态、选择、Gizmo、资产浏览和撤销重做。
 // 约定：编辑器状态与运行时 World 分离；所有写操作都应进入撤销或明确标记为临时预览。
 // 类型：实现文件。
@@ -13,6 +13,7 @@
 #endif
 
 #include "EditorApp.hpp"
+#include "MiniEngine/Render/MaterialCompiler.hpp"
 
 #include "MiniEngine/ECS/Components.hpp"
 #include "MiniEngine/ECS/Reflection.hpp"
@@ -1076,6 +1077,7 @@ void EditorApp::RequestEditorExit(const bool continueExit)
         RequestShaderAction(ShaderAction::Exit);
         return;
     }
+    if (m_materialAssetEditor.IsDirty() || m_materialGraphEditor.IsDirty()) { m_requestMaterialExitPopup=true; return; }
     // 所有确认完成后才撤掉“不保存”文档的脏标记；中途取消仍保留原来的未保存状态。
     for (const auto index : m_exitDiscardedDocuments)
     {
@@ -1432,6 +1434,7 @@ void EditorApp::DrawInspector()
         {
             if (auto material = m_engine.GetContext().resourceManager->Load<MaterialResource>(asset->path))
             {
+                if (material->GetMaterialData().formatVersion==2) { if (ImGui::Button("Open Material Editor")) m_openMaterialAsset.clear(); ImGui::End(); return; }
                 ImGui::SeparatorText(Localize("Material Asset", "材质资产"));
                 ImGui::TextWrapped("%s", asset->path.c_str());
                 Vec4 color = material->GetBaseColor();
@@ -2626,6 +2629,21 @@ void EditorApp::DrawAssets()
             const auto relative = std::filesystem::relative(clipPath, m_engine.GetProjectSettings().projectFile.parent_path(), error);
             return error || relative.empty() ? clipPath.lexically_normal().generic_string() : relative.lexically_normal().generic_string();
         };
+        if (ImGui::MenuItem("+ Material graph / 材质父图"))
+        {
+            const auto path=createUniquePath("NewMaterial",".matgraph");
+            MaterialGraph graph; graph.SetFormatVersion(2); graph.AddNode(MaterialNodeType::SurfaceOutput,"Surface",{420,60});
+            MaterialParameterDecl color; color.name="BaseColor"; color.displayName="Base Color"; color.type=MaterialParameterType::Vec3; color.defaultValue=Vec3{.8f,.8f,.8f};
+            graph.GetParameters().push_back(color); const auto id=graph.AddNode(MaterialNodeType::VectorParameter,"Base Color",{40,60}); graph.GetNodes().back().parameterName="BaseColor"; graph.Connect(id,1,0);
+            if (graph.Save(path)) m_engine.GetContext().resourceManager->GetAssetRegistry().Scan(m_engine.GetProjectSettings().Resolve(m_engine.GetProjectSettings().assetDirectory));
+        }
+        if (ImGui::MenuItem("+ Material instance / 材质实例"))
+        {
+            auto &registry=m_engine.GetContext().resourceManager->GetAssetRegistry(); const auto parent=registry.Find(m_selectedAsset);
+            const auto path=createUniquePath("NewMaterialInstance",".mat"); std::string error;
+            const auto reference=parent && (parent->type=="Material" || parent->type=="MaterialGraph") ? parent->path : std::string("builtin:PBR");
+            if (MaterialAssetEditor::CreateInstance(path.generic_u8string(),reference,error)) m_engine.GetContext().resourceManager->GetAssetRegistry().Scan(m_engine.GetProjectSettings().Resolve(m_engine.GetProjectSettings().assetDirectory)); else m_messages.push_back(error);
+        }
         if (ImGui::MenuItem(Localize("+ Blend Tree", "+ 混合树")))
         {
             const auto clip = ensureTemplateClip();
@@ -2987,6 +3005,8 @@ void EditorApp::DrawAssets()
         const auto asset = m_engine.GetContext().resourceManager->GetAssetRegistry().Find(m_selectedAsset);
         if (asset && asset->type == "Shader")
             RequestShaderAction(ShaderAction::Open, asset->path);
+        if (asset && asset->type == "MaterialGraph") m_openMaterialGraphAsset.clear();
+        if (asset && asset->type == "Material") m_openMaterialAsset.clear();
     };
     const auto regenerateSelectedThumbnails = [this, &assets](const AssetInfo &fallback) {
         const bool batch = m_selectedAssets.size() > 1 &&
@@ -3916,90 +3936,47 @@ void EditorApp::DrawShaderEditor()
 
 void EditorApp::DrawMaterialGraphEditor()
 {
-    const auto asset = m_selectedAsset.empty() ? std::optional<AssetInfo>{}
-                                               : m_engine.GetContext().resourceManager->GetAssetRegistry().Find(m_selectedAsset);
-    if (!asset || asset->type != "MaterialGraph")
-        return;
-    if (m_openMaterialGraphAsset != asset->path)
+    auto *resources=m_engine.GetContext().resourceManager; auto *renderer=m_engine.GetContext().renderer;
+    if (!resources || !renderer) return;
+    auto &system=renderer->GetMaterialSystem();
+    const auto asset=m_selectedAsset.empty() ? std::optional<AssetInfo>{} : resources->GetAssetRegistry().Find(m_selectedAsset);
+    if (asset && asset->type=="MaterialGraph" && m_openMaterialGraphAsset!=asset->path)
     {
-        m_materialGraph.Load(asset->path);
-        m_openMaterialGraphAsset = asset->path;
+        MaterialDefinitionResource definition;
+        if (definition.Load(asset->path) && m_materialGraphEditor.Open(asset->path,definition.GetData())) m_openMaterialGraphAsset=asset->path;
     }
-    ImGui::SetNextWindowSize({820.0f, 560.0f}, ImGuiCond_FirstUseEver);
-    ImGui::Begin(Localize("Material Graph", "材质图"));
-    if (ImGui::Button(Localize("+ Constant", "+ 常量")))
-        m_materialGraph.AddNode(MaterialNodeType::Constant, "Constant", {30.0f, 60.0f});
-    ImGui::SameLine();
-    if (ImGui::Button(Localize("+ Texture", "+ 纹理")))
-        m_materialGraph.AddNode(MaterialNodeType::Texture, "Texture", {30.0f, 190.0f});
-    ImGui::SameLine();
-    if (ImGui::Button(Localize("+ Multiply", "+ 乘法")))
-        m_materialGraph.AddNode(MaterialNodeType::Multiply, "Multiply", {280.0f, 100.0f});
-    ImGui::SameLine();
-    if (ImGui::Button(Localize("+ Output", "+ 输出")))
-        m_materialGraph.AddNode(MaterialNodeType::PbrOutput, "PBR Output", {540.0f, 100.0f});
-    ImGui::SameLine();
-    if (ImGui::Button(Localize("Save and Compile", "保存并编译")))
+    if (asset && asset->type=="Material" && m_openMaterialAsset!=asset->path)
     {
-        std::vector<std::string> errors;
-        const std::string shader = m_materialGraph.Compile(&errors);
-        const std::filesystem::path output = std::filesystem::path(asset->path).replace_extension(".frag");
-        if (m_materialGraph.Save(asset->path) && !shader.empty() && PlatformFile::WriteAllText(output, shader))
-            m_messages.emplace_back(std::string(Localize("Material graph compiled: ", "材质图已编译：")) + output.generic_string());
-        for (const auto &error : errors)
-            m_messages.emplace_back(std::string(Localize("Material graph: ", "材质图：")) + error);
-    }
-    ImGui::Separator();
-    const ImVec2 canvas = ImGui::GetCursorScreenPos();
-    ImDrawList *drawList = ImGui::GetWindowDrawList();
-    static std::uint32_t linkFrom = 0;
-    auto nodeCenter = [&](const MaterialNode &node) {
-        return ImVec2{canvas.x + node.position.x + 70.0f, canvas.y + node.position.y + 38.0f};
-    };
-    for (const auto &link : m_materialGraph.GetLinks())
-    {
-        const auto from = std::find_if(m_materialGraph.GetNodes().begin(), m_materialGraph.GetNodes().end(),
-                                       [&](const auto &node) { return node.id == link.fromNode; });
-        const auto to = std::find_if(m_materialGraph.GetNodes().begin(), m_materialGraph.GetNodes().end(),
-                                     [&](const auto &node) { return node.id == link.toNode; });
-        if (from != m_materialGraph.GetNodes().end() && to != m_materialGraph.GetNodes().end())
-            drawList->AddBezierCubic(nodeCenter(*from), {nodeCenter(*from).x + 60.0f, nodeCenter(*from).y},
-                                     {nodeCenter(*to).x - 60.0f, nodeCenter(*to).y}, nodeCenter(*to), IM_COL32(120, 190, 255, 255), 2.0f);
-    }
-    for (auto &node : m_materialGraph.GetNodes())
-    {
-        ImGui::SetCursorScreenPos({canvas.x + node.position.x, canvas.y + node.position.y});
-        ImGui::PushID(static_cast<int>(node.id));
-        ImGui::InvisibleButton("node", {140.0f, 76.0f});
-        const bool hovered = ImGui::IsItemHovered();
-        if (ImGui::IsItemActive() && ImGui::IsMouseDragging(ImGuiMouseButton_Left) && !ImGui::GetIO().KeyShift)
+        MaterialResource resource; auto resolved=system.Resolve(asset->path);
+        if (resource.Load(asset->path) && resource.GetMaterialData().formatVersion==2 && resolved)
         {
-            node.position.x += ImGui::GetIO().MouseDelta.x;
-            node.position.y += ImGui::GetIO().MouseDelta.y;
+            const auto &data=resource.GetMaterialData();
+            const auto parent=system.Resolve(resources->ResolveAssetPath(data.parentPath.empty() ? data.definitionPath : data.parentPath,asset->path));
+            auto schema=resolved->definition->parameters;
+            if (parent) for (std::size_t i=0;i<schema.size();++i) schema[i].defaultValue=parent->values[i];
+            if (m_materialAssetEditor.Open(asset->path,resource.GetMaterialData(),schema)) m_openMaterialAsset=asset->path;
         }
-        if (hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left) && ImGui::GetIO().KeyShift)
-        {
-            if (linkFrom == 0)
-                linkFrom = node.id;
-            else
-            {
-                m_materialGraph.Connect(linkFrom, node.id, 0);
-                linkFrom = 0;
-            }
-        }
-        const ImVec2 minimum = ImGui::GetItemRectMin(), maximum = ImGui::GetItemRectMax();
-        drawList->AddRectFilled(minimum, maximum, hovered ? IM_COL32(58, 78, 112, 255) : IM_COL32(42, 52, 72, 255), 6.0f);
-        drawList->AddRect(minimum, maximum, linkFrom == node.id ? IM_COL32(255, 205, 70, 255) : IM_COL32(90, 125, 170, 255), 6.0f);
-        const std::string nodeLabel = LocalizeReflected(node.name);
-        drawList->AddText({minimum.x + 8.0f, minimum.y + 8.0f}, IM_COL32_WHITE, nodeLabel.c_str());
-        drawList->AddText({minimum.x + 8.0f, minimum.y + 34.0f}, IM_COL32(175, 190, 210, 255),
-                          Localize("Shift + Click: Connect", "Shift + 单击：连接"));
-        ImGui::PopID();
     }
-    ImGui::Dummy({760.0f, 430.0f});
+    m_materialGraphEditor.SetSaveRequest([this](const auto &path,const auto &data,auto &diagnostics) {
+        const auto result=MaterialCompiler{}.Compile(data); diagnostics=result.diagnostics;
+        if (!result.Success() || (m_device && !m_device->ValidateMaterial(*result.material,diagnostics))) return false;
+        auto graph=data.graph; graph.GetParameters()=data.parameters; graph.GetRenderState()=data.renderState;
+        return graph.Save(std::filesystem::u8path(path));
+    });
+    m_materialAssetEditor.SetSaveRequest([](const auto &path,const auto &data,auto &) { return PlatformFile::WriteAllText(std::filesystem::u8path(path),SerializeMaterialAsset(data)); });
+    m_materialGraphEditor.Draw(); m_materialAssetEditor.Draw();
+    ImGui::Begin("##MaterialExitHost",nullptr,ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoInputs);
+    if (m_requestMaterialExitPopup) { ImGui::OpenPopup("Unsaved materials"); m_requestMaterialExitPopup=false; }
+    if (ImGui::BeginPopupModal("Unsaved materials",nullptr,ImGuiWindowFlags_AlwaysAutoResize))
+    {
+        ImGui::TextUnformatted("Save material changes before exiting?");
+        if (ImGui::Button("Save all") && (!m_materialGraphEditor.IsDirty() || m_materialGraphEditor.Save()) && (!m_materialAssetEditor.IsDirty() || m_materialAssetEditor.Save())) { ImGui::CloseCurrentPopup(); RequestEditorExit(true); }
+        ImGui::SameLine(); if (ImGui::Button("Discard all")) { m_materialGraphEditor.Discard(); m_materialAssetEditor.Discard(); ImGui::CloseCurrentPopup(); RequestEditorExit(true); }
+        ImGui::SameLine(); if (ImGui::Button("Cancel")) { m_exitInProgress=false; ImGui::CloseCurrentPopup(); }
+        ImGui::EndPopup();
+    }
     ImGui::End();
 }
-
 void EditorApp::DrawConsole()
 {
     const ImGuiViewport *viewport = ImGui::GetMainViewport();
