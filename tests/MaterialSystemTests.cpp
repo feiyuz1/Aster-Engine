@@ -1,12 +1,14 @@
 #include "MiniEngine/Resource/Resource.hpp"
 #include "MiniEngine/Platform/Platform.hpp"
 #include "MiniEngine/Render/MaterialSystem.hpp"
+#include "MiniEngine/Render/MaterialCompiler.hpp"
 #include "MiniEngine/Resource/AssetMaintenance.hpp"
 
 #include <cmath>
 #include <filesystem>
 #include <iostream>
 #include <algorithm>
+#include <limits>
 
 using namespace MiniEngine;
 namespace
@@ -170,6 +172,200 @@ void TestMaterialDependencies()
     Check(reopened.Load(parentPath) && reopened.GetMaterialData().definitionPath.find("moved.matgraph") != std::string::npos,
           "asset move rewrites structured logical definition reference");
 }
+MaterialDefinitionData GraphDefinition()
+{
+    MaterialDefinitionData data;
+    data.sourcePath = "test:graph";
+    data.graph.SetFormatVersion(2);
+    data.graph.AddNode(MaterialNodeType::SurfaceOutput, "Surface");
+    return data;
+}
+std::uint32_t Constant(MaterialDefinitionData& data, MaterialParameterType type, Vec4 value)
+{
+    const auto id = data.graph.AddNode(MaterialNodeType::Constant, "Constant");
+    auto& node = data.graph.GetNodes().back(); node.constantType = type; node.value = value;
+    return id;
+}
+MaterialParameterDecl Declaration(const std::string& name, MaterialParameterValue value)
+{
+    MaterialParameterDecl p; p.name = name; p.type = GetMaterialParameterType(value); p.defaultValue = std::move(value); return p;
+}
+std::uint32_t Parameter(MaterialDefinitionData& data, const std::string& name, MaterialParameterValue value)
+{
+    const auto type = GetMaterialParameterType(value);
+    data.parameters.push_back(Declaration(name, std::move(value)));
+    const auto nodeType = type == MaterialParameterType::Texture2D ? MaterialNodeType::TextureParameter :
+        type == MaterialParameterType::Float ? MaterialNodeType::ScalarParameter : MaterialNodeType::VectorParameter;
+    const auto id = data.graph.AddNode(nodeType, name); data.graph.GetNodes().back().parameterName = name; return id;
+}
+std::uint32_t Mask(MaterialDefinitionData& data, std::uint32_t from, const std::string& channels)
+{
+    const auto id = data.graph.AddNode(MaterialNodeType::ComponentMask, "Mask");
+    data.graph.GetNodes().back().channelMask = channels; data.graph.Connect(from, id, 0); return id;
+}
+void TestGraphTypes()
+{
+    MaterialCompiler compiler;
+    auto graph = GraphDefinition();
+    const auto vector = Constant(graph, MaterialParameterType::Vec4, {1, .3f, .2f, .7f});
+    graph.graph.Connect(vector, 1, 0);
+    Check(!compiler.Compile(graph).Success(), "Vec4 to BaseColor requires explicit component mask");
+    graph.graph.Connect(Mask(graph, vector, "xyz"), 1, 0);
+    Check(compiler.Compile(graph).Success(), "component mask provides typed BaseColor");
+    auto numeric = GraphDefinition();
+    const auto v = Constant(numeric, MaterialParameterType::Vec3, {.2f,.4f,.6f,0});
+    const auto scalar = Parameter(numeric, "Scale", .5f);
+    const auto multiply = numeric.graph.AddNode(MaterialNodeType::Multiply, "Multiply");
+    numeric.graph.Connect(v, multiply, 0); numeric.graph.Connect(scalar, multiply, 1);
+    const auto add = numeric.graph.AddNode(MaterialNodeType::Add, "Add");
+    numeric.graph.Connect(multiply, add, 0); numeric.graph.Connect(scalar, add, 1); numeric.graph.Connect(add, 1, 0);
+    Check(compiler.Compile(numeric).Success(), "Add and Multiply broadcast Float to Vec3");
+    const auto oneMinus = numeric.graph.AddNode(MaterialNodeType::OneMinus, "OneMinus");
+    numeric.graph.Connect(add, oneMinus, 0);
+    const auto clamp = numeric.graph.AddNode(MaterialNodeType::Clamp, "Clamp");
+    numeric.graph.Connect(oneMinus, clamp, 0);
+    const auto lerp = numeric.graph.AddNode(MaterialNodeType::Lerp, "Lerp");
+    numeric.graph.Connect(clamp, lerp, 0); numeric.graph.Connect(scalar, lerp, 1); numeric.graph.Connect(lerp, 1, 0);
+    Check(compiler.Compile(numeric).Success(), "OneMinus, Clamp and Lerp support typed values and defaults");
+    const auto bad = Constant(numeric, MaterialParameterType::Vec2, {1,2,0,0});
+    numeric.graph.Connect(bad, lerp, 2);
+    Check(!compiler.Compile(numeric).Success(), "Lerp alpha must be Float");
+    numeric.graph.Connect(scalar, lerp, 2); numeric.graph.Connect(bad, clamp, 1);
+    Check(!compiler.Compile(numeric).Success(), "Clamp minimum must be Float");
+    auto sampled = GraphDefinition();
+    const auto texture = Parameter(sampled, "Normal", std::string("normal.ppm"));
+    sampled.parameters.back().sampling = TextureSampling::Normal;
+    const auto uv = sampled.graph.AddNode(MaterialNodeType::TexCoord, "UV0");
+    const auto sample = sampled.graph.AddNode(MaterialNodeType::TextureSample, "Sample");
+    sampled.graph.Connect(texture, sample, 0); sampled.graph.Connect(uv, sample, 1);
+    const auto normal = sampled.graph.AddNode(MaterialNodeType::NormalDecode, "NormalDecode");
+    sampled.graph.Connect(Mask(sampled, sample, "xyz"), normal, 0); sampled.graph.Connect(normal, 1, 3);
+    Check(compiler.Compile(sampled).Success(), "TextureParameter, TextureSample, UV0 and NormalDecode compile");
+    auto badUv = sampled;
+    const auto floatUv = Constant(badUv, MaterialParameterType::Float, {1,0,0,0});
+    badUv.graph.Connect(floatUv, sample, 1);
+    Check(!compiler.Compile(badUv).Success(), "texture UV requires Vec2");
+    auto absent = GraphDefinition();
+    const auto missing = absent.graph.AddNode(MaterialNodeType::TextureSample, "Missing");
+    absent.graph.Connect(Mask(absent, missing, "xyz"), 1, 0);
+    Check(!compiler.Compile(absent).Success(), "texture sample requires texture input");
+    auto vectorParam = GraphDefinition();
+    vectorParam.graph.Connect(Parameter(vectorParam, "Color", Vec3{1,.2f,.3f}), 1, 0);
+    Check(compiler.Compile(vectorParam).Success(), "VectorParameter resolves declared vector type");
+    auto invalidMask = graph; invalidMask.graph.GetNodes().back().channelMask = "xa";
+    Check(!compiler.Compile(invalidMask).Success(), "invalid component mask is rejected");
+    auto invalidUV = sampled;
+    for (auto& node : invalidUV.graph.GetNodes()) if (node.id == uv) node.uvIndex = 1;
+    Check(!compiler.Compile(invalidUV).Success(), "only UV0 is supported");
+    auto duplicate = graph; duplicate.graph.GetNodes().push_back(duplicate.graph.GetNodes().back());
+    Check(!compiler.Compile(duplicate).Success(), "duplicate node IDs rejected");
+    auto port = graph; port.graph.GetLinks().front().fromOutput = 1;
+    Check(!compiler.Compile(port).Success(), "unknown output port rejected");
+    auto input = graph; input.graph.GetLinks().push_back(input.graph.GetLinks().front());
+    Check(!compiler.Compile(input).Success(), "duplicate input links rejected");
+}
+void TestLegacyGraphUpgrade()
+{
+    Write("legacy.matgraph", "TINY_MATGRAPH 1\nnode 1 0 \"Color\" 0 0 .2 .4 .6 .8 \"\"\n"
+        "node 2 4 \"Output\" 100 0 1 1 1 1 \"\"\nlink 1 2 0\nlink 1 2 1\nlink 1 2 2\nlink 1 2 3\n");
+    MaterialDefinitionResource resource;
+    Check(resource.Load(root + "legacy.matgraph"), "load v1 graph definition");
+    const auto result = MaterialCompiler{}.Compile(resource.GetData());
+    Check(result.Success() && result.material->surfaceSource.find(".xyz") != std::string::npos &&
+          result.material->opacitySource.find(".w") != std::string::npos, "legacy RGB and alpha are explicitly mapped");
+    auto upgraded = resource.GetData().graph;
+    Check(upgraded.UpgradeLegacy() && upgraded.GetFormatVersion() == 2 && upgraded.Save(root + "upgraded.matgraph"), "explicit legacy graph save uses v2");
+    MaterialDefinitionResource reopened;
+    Check(reopened.Load(root + "upgraded.matgraph") && MaterialCompiler{}.Compile(reopened.GetData()).Success(), "upgraded graph reopens and compiles");
+    MaterialDefinitionData emptyLegacy;
+    const auto add = emptyLegacy.graph.AddNode(MaterialNodeType::Add,"Unconnected Add");
+    const auto output = emptyLegacy.graph.AddNode(MaterialNodeType::PbrOutput,"Output");
+    emptyLegacy.graph.Connect(add,output,0);
+    Check(MaterialCompiler{}.Compile(emptyLegacy).Success(), "legacy unconnected arithmetic retains Vec4 defaults");
+    Write("legacyTexture.matgraph", "TINY_MATGRAPH 1\nnode 1 1 \"Map\" 0 0 1 1 1 1 \"assets/贴图 库/base.ppm\"\n"
+        "node 2 4 \"Output\" 100 0 1 1 1 1 \"\"\nlink 1 2 0\n");
+    MaterialDefinitionResource textureDefinition;
+    Check(textureDefinition.Load(root+"legacyTexture.matgraph") && textureDefinition.GetData().parameters.size() == 1 &&
+          textureDefinition.GetData().parameters[0].type == MaterialParameterType::Texture2D,
+          "legacy texture nodes expose declarations to the inheritance resolver");
+}
+void TestReachableCycles()
+{
+    auto graph = GraphDefinition();
+    const auto a = graph.graph.AddNode(MaterialNodeType::Add, "A"), b = graph.graph.AddNode(MaterialNodeType::Add, "B");
+    graph.graph.Connect(a,b,0); graph.graph.Connect(b,a,0); graph.graph.Connect(a,1,2);
+    Check(!MaterialCompiler{}.Compile(graph).Success(), "reachable cycle fails compilation");
+    graph.graph.GetLinks().pop_back();
+    const auto result = MaterialCompiler{}.Compile(graph);
+    Check(result.Success() && std::any_of(result.diagnostics.begin(), result.diagnostics.end(), [](const auto& d) {
+        return d.severity == MaterialDiagnosticSeverity::Warning;
+    }), "unreachable cycle produces warning and no shader code");
+}
+void TestDeterministicCompilation()
+{
+    auto graph = GraphDefinition();
+    const auto p = Parameter(graph, "Rough", .25f); graph.graph.Connect(p,1,2);
+    const auto c = Constant(graph, MaterialParameterType::Vec3, {.1f,.2f,.3f,0}); graph.graph.Connect(c,1,0);
+    auto first = MaterialCompiler{}.Compile(graph);
+    auto edited = graph; edited.parameters[0].defaultValue = .8f; edited.parameters[0].displayName = "中文显示名";
+    edited.graph.GetNodes()[1].position = {500,300}; edited.renderState.twoSided = true; edited.renderState.maskCutoff = .8f;
+    auto second = MaterialCompiler{}.Compile(edited);
+    Check(first.Success() && second.Success() && first.material->canonicalProgramContent == second.material->canonicalProgramContent,
+          "layout and program ignore parameter defaults, editor position and raster uniforms");
+    edited.graph.GetNodes().back().value.x = .7f;
+    auto changed = MaterialCompiler{}.Compile(edited);
+    Check(changed.Success() && changed.material->canonicalProgramContent != first.material->canonicalProgramContent, "literal constant participates in program identity");
+    auto sorted = GraphDefinition();
+    sorted.parameters = {Declaration("Z", 1.f), Declaration("A", Vec2{2,3})};
+    auto ordered = MaterialCompiler{}.Compile(sorted); std::reverse(sorted.parameters.begin(), sorted.parameters.end());
+    auto reversed = MaterialCompiler{}.Compile(sorted);
+    Check(ordered.Success() && reversed.Success() && ordered.material->layout.numericSlots[0].name == "A" &&
+          ordered.material->canonicalProgramContent == reversed.material->canonicalProgramContent, "declaration ordering produces stable layout");
+}
+void TestLimits()
+{
+    auto graph = GraphDefinition();
+    for (int i=0;i<64;++i) graph.parameters.push_back(Declaration("P"+std::to_string(i), 0.f));
+    for (int i=0;i<8;++i) graph.parameters.push_back(Declaration("T"+std::to_string(i), std::string{}));
+    Check(MaterialCompiler{}.Compile(graph).Success(), "64 numeric plus 8 texture declarations accepted");
+    auto excess = graph; excess.parameters.push_back(Declaration("ExtraNumber", 0.f));
+    Check(!MaterialCompiler{}.Compile(excess).Success(), "65th numeric declaration rejected");
+    excess = graph; excess.parameters.push_back(Declaration("ExtraTexture", std::string{}));
+    Check(!MaterialCompiler{}.Compile(excess).Success(), "9th texture declaration rejected");
+    excess = graph; excess.parameters.push_back(excess.parameters[0]);
+    Check(!MaterialCompiler{}.Compile(excess).Success(), "duplicate parameter declaration rejected");
+    excess = GraphDefinition(); excess.parameters.push_back(Declaration("te_reserved", 0.f));
+    Check(!MaterialCompiler{}.Compile(excess).Success(), "reserved parameter declaration rejected");
+    excess = GraphDefinition(); excess.parameters.push_back(Declaration("Number", 0.f)); excess.parameters[0].sampling = TextureSampling::Normal;
+    Check(!MaterialCompiler{}.Compile(excess).Success(), "numeric parameter sampling must be Linear");
+    excess = GraphDefinition(); excess.renderState.maskCutoff = std::numeric_limits<float>::quiet_NaN();
+    Check(!MaterialCompiler{}.Compile(excess).Success(), "non-finite render settings rejected before GPU upload");
+}
+void TestOpacityDependency()
+{
+    auto graph = GraphDefinition();
+    graph.renderState.blendMode = MaterialBlendMode::Masked;
+    const auto texture = Parameter(graph,"EmissionMap",std::string("emissive.ppm"));
+    const auto sample = graph.graph.AddNode(MaterialNodeType::TextureSample,"Emission Sample"); graph.graph.Connect(texture,sample,0);
+    graph.graph.Connect(Mask(graph,sample,"xyz"),1,5);
+    graph.graph.Connect(Parameter(graph,"Alpha",.8f),1,6);
+    const auto result = MaterialCompiler{}.Compile(graph);
+    Check(result.Success() && result.material->surfaceSource.find("texture(") != std::string::npos &&
+          result.material->opacitySource.find("texture(") == std::string::npos,
+          "opacity compilation prunes emission-only texture sampling");
+    MaterialTemplateSources templates;
+    templates.files = {{"BasePass.vert","#version 430 core\n#include \"Transform.glsl\"\n"},
+        {"Transform.glsl","void main() { gl_Position=vec4(0.0); }\n"}, {"Surface.glsl","struct SurfaceData { vec3 BaseColor; };\n"},
+        {"ShadowPass.vert","#version 430 core\n#include \"Transform.glsl\"\n"},
+        {"ShadowPass.frag","#version 430 core\n/*MATERIAL_DECLARATIONS*/\n/*MATERIAL_FUNCTIONS*/\nvoid main() {}\n"}};
+    const auto shadow = MaterialCompiler{}.GeneratePass(*result.material,MaterialPass::Shadow,MaterialGeometry::Skinned,templates);
+    Check(shadow.error.empty() && shadow.fragment.find("EvaluateSurface") == std::string::npos &&
+          shadow.fragment.find("texture(") == std::string::npos && shadow.vertex.find("#define TE_GEOMETRY 1") != std::string::npos,
+          "generated shadow shader keeps only opacity and selects skinned geometry");
+    templates.files["Transform.glsl"] = "#include \"Transform.glsl\"\n";
+    Check(!MaterialCompiler{}.GeneratePass(*result.material,MaterialPass::Shadow,MaterialGeometry::Static,templates).error.empty(),
+          "cyclic shader template includes rejected");
+}
 }
 int main()
 {
@@ -184,6 +380,12 @@ int main()
     TestParentCyclesAndDepth();
     TestAssetRootPaths();
     TestMaterialDependencies();
+    TestGraphTypes();
+    TestLegacyGraphUpgrade();
+    TestReachableCycles();
+    TestDeterministicCompilation();
+    TestLimits();
+    TestOpacityDependency();
     }
     catch (const std::exception& error)
     {

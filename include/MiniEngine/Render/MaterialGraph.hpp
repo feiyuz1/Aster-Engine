@@ -45,6 +45,7 @@ struct MaterialNode
     MaterialParameterType constantType = MaterialParameterType::Vec4;
     std::string parameterName;
     std::string channelMask;
+    std::uint32_t uvIndex = 0;
 };
 struct MaterialLink
 {
@@ -78,6 +79,7 @@ class MaterialGraph
     bool Load(const std::filesystem::path &path);
     bool Parse(const std::string &source, std::string *error = nullptr);
     std::string Serialize() const;
+    bool UpgradeLegacy();
     int GetFormatVersion() const { return m_formatVersion; }
     void SetFormatVersion(int version) { m_formatVersion = version; }
     std::vector<MaterialParameterDecl> &GetParameters() { return m_parameters; }

@@ -87,6 +87,8 @@ std::shared_ptr<ResolvedMaterial> MaterialSystem::ResolveRecursive(const std::st
             {"BaseMap", old.texturePath}, {"NormalMap", old.normalTexturePath}, {"MetallicMap", old.metallicTexturePath},
             {"RoughnessMap", old.roughnessTexturePath}, {"AOMap", old.aoTexturePath}, {"EmissiveMap", old.emissiveTexturePath},
             {"PackedMap", old.packedTexturePath}, {"PackedEnabled", old.packedTexturePath.empty() ? 0.f : 1.f},
+            {"MetallicMapEnabled", old.metallicTexturePath.empty() ? 0.f : 1.f},
+            {"RoughnessMapEnabled", old.roughnessTexturePath.empty() ? 0.f : 1.f}, {"AOMapEnabled", old.aoTexturePath.empty() ? 0.f : 1.f},
             {"PackedLayout", old.packedTextureLayout == "RMA" ? 1.f : 0.f}};
         for (const auto &p : definition->parameters)
         {

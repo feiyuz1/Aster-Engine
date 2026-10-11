@@ -138,6 +138,7 @@ add_library(tinyengine STATIC
     src/Render/MaterialGraph.cpp
     src/Render/MaterialTypes.cpp
     src/Render/MaterialSystem.cpp
+    src/Render/MaterialCompiler.cpp
     src/Render/ShaderPipeline.cpp
     src/Render/SdlGlRenderDevice.cpp
     src/Physics/PhysicsWorld.cpp

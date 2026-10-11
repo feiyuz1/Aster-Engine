@@ -1,9 +1,10 @@
-﻿// 文件：src/Render/MaterialGraph.cpp
+// 文件：src/Render/MaterialGraph.cpp
 // 作用：定义可视化材质节点图并生成可供着色器管线使用的源码。
 // 约定：GPU 对象只应在拥有图形上下文的线程创建、使用和销毁。
 // 类型：实现文件。
 
 #include "MiniEngine/Render/MaterialGraph.hpp"
+#include "MiniEngine/Render/MaterialCompiler.hpp"
 
 #include "MiniEngine/Platform/Platform.hpp"
 
@@ -216,85 +217,77 @@ std::string MaterialGraph::Serialize() const
 }
 bool MaterialGraph::Save(const std::filesystem::path &path) const
 {
-    return PlatformFile::WriteAllText(path, Serialize());
+    auto graph = *this;
+    if (!graph.UpgradeLegacy()) return false;
+    return PlatformFile::WriteAllText(path, graph.Serialize());
+}
+bool MaterialGraph::UpgradeLegacy()
+{
+    if (m_formatVersion == 2) return true;
+    if (m_formatVersion != 1) return false;
+    for (const auto &node : m_nodes) m_nextId = std::max(m_nextId, node.id + 1);
+    for (auto &node : m_nodes)
+    {
+        if (node.type == MaterialNodeType::PbrOutput) node.type = MaterialNodeType::SurfaceOutput;
+        if (node.type == MaterialNodeType::Constant) node.constantType = MaterialParameterType::Vec4;
+    }
+    const auto oldNodes = m_nodes;
+    for (const auto &node : oldNodes) if (node.type == MaterialNodeType::Add || node.type == MaterialNodeType::Multiply)
+    {
+        std::uint32_t zero = 0;
+        for (std::uint32_t port=0;port<2;++port)
+            if (std::none_of(m_links.begin(),m_links.end(),[&](const auto &link) { return link.toNode == node.id && link.toInput == port; }))
+            {
+                if (!zero) { zero = AddNode(MaterialNodeType::Constant,"Legacy zero"); m_nodes.back().value = {}; }
+                m_links.push_back({zero,node.id,port,0});
+            }
+    }
+    for (const auto &node : oldNodes) if (node.type == MaterialNodeType::Texture)
+    {
+        auto name = "LegacyTexture_" + std::to_string(node.id);
+        while (std::any_of(m_parameters.begin(), m_parameters.end(), [&](const auto &p) { return p.name == name; })) name += '_';
+        MaterialParameterDecl p;
+        p.name = p.displayName = name; p.type = MaterialParameterType::Texture2D; p.defaultValue = node.texturePath; p.sampling = TextureSampling::SRgb;
+        m_parameters.push_back(std::move(p));
+        const auto parameterId = AddNode(MaterialNodeType::TextureParameter, name, node.position);
+        m_nodes.back().parameterName = name;
+        for (auto &n : m_nodes) if (n.id == node.id) { n.type = MaterialNodeType::TextureSample; n.texturePath.clear(); }
+        m_links.push_back({parameterId, node.id, 0, 0});
+    }
+    const auto oldLinks = m_links;
+    m_links.clear();
+    for (const auto &link : oldLinks)
+    {
+        const auto target = std::find_if(m_nodes.begin(), m_nodes.end(), [&](const auto &n) { return n.id == link.toNode; });
+        if (target == m_nodes.end() || target->type != MaterialNodeType::SurfaceOutput) { m_links.push_back(link); continue; }
+        if (link.toInput >= 4) return false;
+        const auto mask = AddNode(MaterialNodeType::ComponentMask, "Legacy channel");
+        m_nodes.back().channelMask = link.toInput == 0 || link.toInput == 3 ? "xyz" : "x";
+        m_links.push_back({link.fromNode, mask, 0, link.fromOutput});
+        m_links.push_back({mask, link.toNode, link.toInput == 3 ? 5u : link.toInput, 0});
+        if (link.toInput == 0)
+        {
+            const auto alpha = AddNode(MaterialNodeType::ComponentMask, "Legacy alpha");
+            m_nodes.back().channelMask = "w";
+            m_links.push_back({link.fromNode, alpha, 0, link.fromOutput});
+            m_links.push_back({alpha, link.toNode, 6, 0});
+        }
+    }
+    m_formatVersion = 2;
+    return true;
 }
 // 从输出节点反向遍历依赖并检测环；只有可达节点参与生成，孤立编辑节点不会污染 Shader。
 std::string MaterialGraph::Compile(std::vector<std::string> *errors) const
 {
-    const auto output =
-        std::find_if(m_nodes.begin(), m_nodes.end(), [](const MaterialNode &node) { return node.type == MaterialNodeType::PbrOutput; });
-    if (output == m_nodes.end())
-    {
-        if (errors)
-            errors->push_back("Material graph has no PBR Output node");
-        return {};
-    }
-    std::unordered_map<std::uint32_t, const MaterialNode *> nodes;
-    for (const auto &node : m_nodes)
-        nodes[node.id] = &node;
-    std::unordered_set<std::uint32_t> visiting;
-    std::unordered_set<std::uint32_t> cycleNodes;
-    std::function<std::string(std::uint32_t)> expression = [&](const std::uint32_t id) -> std::string {
-        const auto found = nodes.find(id);
-        if (found == nodes.end())
-            return "vec4(1.0, 0.0, 1.0, 1.0)";
-        if (!visiting.insert(id).second)
-        {
-            cycleNodes.insert(id);
-            return "vec4(1.0, 0.0, 1.0, 1.0)";
-        }
-        const MaterialNode &node = *found->second;
-        std::string result;
-        if (node.type == MaterialNodeType::Constant)
-        {
-            std::ostringstream value;
-            value << "vec4(" << node.value.x << ',' << node.value.y << ',' << node.value.z << ',' << node.value.w << ')';
-            result = value.str();
-        }
-        else if (node.type == MaterialNodeType::Texture)
-            result = "texture(uGraphTexture" + std::to_string(node.id) + ", vUv)";
-        else
-        {
-            std::string inputs[2] = {"vec4(0.0)", "vec4(0.0)"};
-            for (const auto &link : m_links)
-                if (link.toNode == id && link.toInput < 2)
-                    inputs[link.toInput] = expression(link.fromNode);
-            result = '(' + inputs[0] + (node.type == MaterialNodeType::Multiply ? " * " : " + ") + inputs[1] + ')';
-        }
-        visiting.erase(id);
-        return result;
-    };
-    std::string channels[4] = {"vec4(0.8,0.8,0.8,1.0)", "vec4(0.0)", "vec4(0.7)", "vec4(0.0)"};
-    for (const auto &link : m_links)
-        if (link.toNode == output->id && link.toInput < 4)
-            channels[link.toInput] = expression(link.fromNode);
-    if (!cycleNodes.empty())
-    {
-        if (errors)
-        {
-            std::ostringstream diagnostic;
-            diagnostic << "Material graph cycle detected at node" << (cycleNodes.size() == 1 ? " " : "s ");
-            bool first = true;
-            for (const auto id : cycleNodes)
-            {
-                diagnostic << (first ? "" : ", ") << id;
-                first = false;
-            }
-            errors->push_back(diagnostic.str());
-        }
-        return {};
-    }
-    std::ostringstream shader;
-    shader << "#version 330 core\nin vec3 vNormal; in vec3 vWorldPosition; in vec2 vUv; out vec4 outColor;\n";
-    for (const auto &node : m_nodes)
-        if (node.type == MaterialNodeType::Texture)
-            shader << "uniform sampler2D uGraphTexture" << node.id << ";\n";
-    shader << "uniform vec3 uCameraPosition;\nvoid main(){ vec4 base=" << channels[0] << "; float metallic=clamp((" << channels[1]
-           << ").x,0.0,1.0); float roughness=clamp((" << channels[2] << ").x,0.04,1.0); vec3 emissive=(" << channels[3]
-           << ").rgb; vec3 n=normalize(vNormal); vec3 l=normalize(vec3(0.4,1.0,0.3)); float ndl=max(dot(n,l),0.0); vec3 "
-              "diffuse=base.rgb*(0.08+ndl*(1.0-metallic)); vec3 v=normalize(uCameraPosition-vWorldPosition); vec3 h=normalize(v+l); float "
-              "spec=pow(max(dot(n,h),0.0),mix(128.0,4.0,roughness)); outColor=vec4(diffuse+vec3(spec)+emissive,base.a);}\n";
-    return shader.str();
+    MaterialDefinitionData definition;
+    definition.graph = *this;
+    definition.parameters = m_parameters;
+    definition.renderState = m_renderState;
+    const auto result = MaterialCompiler{}.Compile(definition);
+    if (errors)
+        for (const auto &diagnostic : result.diagnostics)
+            errors->push_back(diagnostic.message);
+    return result.Success() ? result.material->parameterSource + result.material->surfaceSource + result.material->opacitySource : std::string{};
 }
 std::vector<MaterialNode> &MaterialGraph::GetNodes()
 {

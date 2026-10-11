@@ -10,6 +10,8 @@ bool MaterialDefinitionResource::Load(const std::string &path)
     std::string error;
     if (!candidate.graph.Parse(PlatformFile::ReadAllText(std::filesystem::u8path(path)), &error))
     { SetState(hadValidData ? ResourceState::Loaded : ResourceState::Failed, error); return false; }
+    if (!candidate.graph.UpgradeLegacy())
+    { SetState(hadValidData ? ResourceState::Loaded : ResourceState::Failed,"Invalid legacy material graph"); return false; }
     candidate.parameters = candidate.graph.GetParameters();
     candidate.renderState = candidate.graph.GetRenderState();
     candidate.sourcePath = path;
@@ -34,6 +36,7 @@ MaterialDefinitionData MakeBuiltinPbrDefinition()
     number("BaseColor", Vec4{.3f, .7f, 1, 1});
     number("Metallic", 0.f); number("Roughness", .7f); number("Emissive", Vec3{});
     number("AO", 1.f); number("Opacity", 1.f); number("PackedEnabled", 0.f); number("PackedLayout", 0.f);
+    number("MetallicMapEnabled", 0.f); number("RoughnessMapEnabled", 0.f); number("AOMapEnabled", 0.f);
     const auto texture = [&](const std::string &name, TextureSampling sampling) {
         MaterialParameterDecl p;
         p.name = p.displayName = name; p.type = MaterialParameterType::Texture2D;

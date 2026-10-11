@@ -29,6 +29,7 @@
 /tests/*
 !/tests/RenderStabilityTests.cpp
 !/tests/MaterialSystemTests.cpp
+!/tests/EngineTests.cpp
 
 # 技术说明文档
 !/docs/

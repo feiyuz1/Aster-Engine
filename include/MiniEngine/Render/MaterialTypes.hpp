@@ -4,10 +4,12 @@
 #include <cstdint>
 #include <iosfwd>
 #include <map>
+#include <memory>
 #include <optional>
 #include <string>
 #include <variant>
 #include <vector>
+#include <unordered_map>
 
 namespace MiniEngine
 {
@@ -60,6 +62,42 @@ struct MaterialAssetData
     std::string definitionPath, parentPath;
     std::map<std::string, MaterialParameterValue> overrides;
     LegacyMaterialData legacyData;
+};
+struct MaterialParameterSlot
+{
+    std::string name;
+    MaterialParameterType type = MaterialParameterType::Float;
+    std::uint32_t slot = 0;
+    TextureSampling sampling = TextureSampling::Linear;
+};
+struct MaterialParameterLayout
+{
+    std::vector<MaterialParameterSlot> numericSlots, textureSlots;
+    std::string canonicalSchema;
+};
+enum class MaterialPass { Base, Shadow };
+enum class MaterialGeometry { Static, Skinned, Instanced };
+struct CompiledMaterial
+{
+    std::string parameterSource, surfaceSource, opacitySource;
+    MaterialParameterLayout layout;
+    MaterialRenderState renderState;
+    std::string canonicalProgramContent;
+    std::vector<std::string> dependencies;
+    std::uint32_t compilerVersion = 1;
+};
+struct MaterialCompileResult
+{
+    std::shared_ptr<const CompiledMaterial> material;
+    std::vector<MaterialDiagnostic> diagnostics;
+    bool Success() const { return material != nullptr; }
+};
+struct MaterialTemplateSources { std::unordered_map<std::string, std::string> files; };
+struct GeneratedShaderSources
+{
+    std::string vertex, fragment;
+    std::vector<std::string> dependencies;
+    std::string error;
 };
 
 bool IsMaterialParameterName(const std::string& name);
