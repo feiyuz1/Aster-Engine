@@ -25,9 +25,9 @@ std::string Trim(std::string value)
 
 bool Config::Load(const std::string &path)
 {
-    if (!PlatformFile::Exists(path))
+    if (!PlatformFile::Exists(std::filesystem::u8path(path)))
         return false;
-    std::istringstream stream(PlatformFile::ReadAllText(path));
+    std::istringstream stream(PlatformFile::ReadAllText(std::filesystem::u8path(path)));
     if (!stream)
         return false;
     std::string line;
@@ -49,7 +49,7 @@ bool Config::Save(const std::string &path) const
     std::ostringstream stream;
     for (const auto &pair : m_values)
         stream << pair.first << '=' << pair.second << '\n';
-    return PlatformFile::WriteAllText(path, stream.str());
+    return PlatformFile::WriteAllText(std::filesystem::u8path(path), stream.str());
 }
 
 void Config::Set(std::string key, std::string value)

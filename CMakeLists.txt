@@ -99,6 +99,8 @@ add_library(tinyengine STATIC
     src/Memory/Allocators.cpp
     src/Task/JobSystem.cpp
     src/Resource/Resource.cpp
+    src/Resource/MaterialDefinitionResource.cpp
+    src/Resource/MaterialAssetReferences.cpp
     src/Resource/AssetRegistry.cpp
     src/Resource/AssetCooker.cpp
     src/Resource/PakArchive.cpp
@@ -135,6 +137,7 @@ add_library(tinyengine STATIC
     src/Render/EnvironmentBaker.cpp
     src/Render/MaterialGraph.cpp
     src/Render/MaterialTypes.cpp
+    src/Render/MaterialSystem.cpp
     src/Render/ShaderPipeline.cpp
     src/Render/SdlGlRenderDevice.cpp
     src/Physics/PhysicsWorld.cpp

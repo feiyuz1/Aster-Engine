@@ -12,6 +12,7 @@
 #include <condition_variable>
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <mutex>
 #include <string>
 #include <unordered_map>
@@ -212,6 +213,8 @@ class MaterialResource final : public Resource
     bool Load(const std::string &path) override;
     bool Save(const std::string &path) const;
     const MaterialAssetData &GetMaterialData() const { return m_materialData; }
+    using ReferenceResolver = std::function<std::string(const std::string &, const std::string &)>;
+    bool LoadWithResolver(const std::string &path, ReferenceResolver resolver, std::size_t maxParentDepth = 32);
     /// @brief 卸载资源并释放相关缓存。
     void Unload() override;
     /// @brief 获取 `ByteSize`。
@@ -274,6 +277,8 @@ class MaterialResource final : public Resource
     bool LoadCandidate(const std::string &path);
     void CaptureLegacyData(const std::string &source);
     MaterialAssetData m_materialData;
+    ReferenceResolver m_referenceResolver;
+    std::size_t m_maxParentDepth = 32;
     Vec4 m_baseColor{0.3f, 0.7f, 1.0f, 1.0f};
     std::string m_shaderPath;
     std::string m_texturePath;

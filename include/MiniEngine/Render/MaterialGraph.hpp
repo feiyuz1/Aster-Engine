@@ -6,6 +6,7 @@
 #pragma once
 
 #include "MiniEngine/Math/Math.hpp"
+#include "MiniEngine/Render/MaterialTypes.hpp"
 
 #include <cstdint>
 #include <filesystem>
@@ -20,7 +21,18 @@ enum class MaterialNodeType
     Texture,
     Add,
     Multiply,
-    PbrOutput
+    PbrOutput,
+    SurfaceOutput,
+    ScalarParameter,
+    VectorParameter,
+    TextureParameter,
+    TextureSample,
+    TexCoord,
+    Lerp,
+    OneMinus,
+    Clamp,
+    ComponentMask,
+    NormalDecode
 };
 struct MaterialNode
 {
@@ -30,12 +42,16 @@ struct MaterialNode
     Vec2 position{};
     Vec4 value{1.0f, 1.0f, 1.0f, 1.0f};
     std::string texturePath;
+    MaterialParameterType constantType = MaterialParameterType::Vec4;
+    std::string parameterName;
+    std::string channelMask;
 };
 struct MaterialLink
 {
     std::uint32_t fromNode = 0;
     std::uint32_t toNode = 0;
     std::uint32_t toInput = 0;
+    std::uint32_t fromOutput = 0;
 };
 class MaterialGraph
 {
@@ -60,6 +76,14 @@ class MaterialGraph
     /// @param path 文件、资源或目录路径。
     /// @return 操作成功时返回 `true`，否则返回 `false`。
     bool Load(const std::filesystem::path &path);
+    bool Parse(const std::string &source, std::string *error = nullptr);
+    std::string Serialize() const;
+    int GetFormatVersion() const { return m_formatVersion; }
+    void SetFormatVersion(int version) { m_formatVersion = version; }
+    std::vector<MaterialParameterDecl> &GetParameters() { return m_parameters; }
+    const std::vector<MaterialParameterDecl> &GetParameters() const { return m_parameters; }
+    MaterialRenderState &GetRenderState() { return m_renderState; }
+    const MaterialRenderState &GetRenderState() const { return m_renderState; }
     /// @brief 保存当前数据。
     /// @param path 文件、资源或目录路径。
     /// @return 操作成功时返回 `true`，否则返回 `false`。
@@ -85,5 +109,10 @@ class MaterialGraph
     std::vector<MaterialNode> m_nodes;
     std::vector<MaterialLink> m_links;
     std::uint32_t m_nextId = 1;
+    int m_formatVersion = 1;
+    std::vector<MaterialParameterDecl> m_parameters;
+    MaterialRenderState m_renderState;
 };
+const char *MaterialNodeTypeName(MaterialNodeType type);
+bool ParseMaterialNodeType(const std::string &text, MaterialNodeType &type);
 } // 结束 MiniEngine 命名空间

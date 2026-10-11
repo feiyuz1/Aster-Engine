@@ -45,6 +45,8 @@ class AssetRegistry
     /// @brief 获取 `Assets`。
     /// @return 返回查询或处理得到的结果集合。
     std::vector<AssetInfo> GetAssets() const;
+    std::vector<std::string> GetDependents(const std::string &path) const;
+    const std::filesystem::path &GetRootPath() const { return m_root; }
     /// @brief 设置 `ImportSetting`。
     /// @param path 文件、资源或目录路径。
     /// @param key 用于查找数据的键。
@@ -77,5 +79,6 @@ class AssetRegistry
     mutable std::mutex m_mutex;
     std::unordered_map<std::string, AssetInfo> m_assets;
     std::unordered_map<std::string, std::string> m_byId;
+    std::filesystem::path m_root;
 };
 } // 结束 MiniEngine 命名空间

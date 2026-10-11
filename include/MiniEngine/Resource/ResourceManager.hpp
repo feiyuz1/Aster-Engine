@@ -71,7 +71,7 @@ class ResourceManager
             return resource->Wait() ? resource : nullptr;
         if (resource->IsReady())
             return resource;
-        if (!resource->Load(ResolvePath(key)))
+        if (!LoadResource(*resource, ResolvePath(key)))
         {
             std::lock_guard<std::mutex> lock(m_mutex);
             const auto found = m_cache.find(key);
@@ -107,10 +107,10 @@ class ResourceManager
         // 无 JobSystem 的工具环境退化为同步加载，但仍保持相同的资源状态语义。
         if (!m_jobSystem)
         {
-            resource->Load(resolvedPath);
+            LoadResource(*resource, resolvedPath);
             return resource;
         }
-        auto job = m_jobSystem->CreateJob([resource, resolvedPath]() { resource->Load(resolvedPath); }, JobPriority::High);
+        auto job = m_jobSystem->CreateJob([this, resource, resolvedPath]() { LoadResource(*resource, resolvedPath); }, JobPriority::High);
         m_jobSystem->Submit(job);
         return resource;
     }
@@ -140,8 +140,10 @@ class ResourceManager
     /// @brief 获取 `AssetRegistry`。
     /// @return 返回对应对象的引用；有效期不超过其所属对象。
     const AssetRegistry &GetAssetRegistry() const;
+    std::string ResolveAssetPath(const std::string &path, const std::string &referencingPath = {}) const;
 
   private:
+    bool LoadResource(Resource &resource, const std::string &path) const;
     /// @brief 规范化 `Path`。
     /// @param path 文件、资源或目录路径。
     /// @return 返回对应的文本或路径。

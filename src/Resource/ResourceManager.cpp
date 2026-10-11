@@ -1,4 +1,4 @@
-﻿// 文件：src/Resource/ResourceManager.cpp
+// 文件：src/Resource/ResourceManager.cpp
 // 作用：统一资源缓存、同步/异步加载、加载器扩展和回收。
 // 约定：资源对象可能异步完成，调用方必须检查状态或显式等待。
 // 类型：实现文件。
@@ -11,10 +11,16 @@
 
 namespace MiniEngine
 {
+bool ResourceManager::LoadResource(Resource &resource, const std::string &path) const
+{
+    if (auto *material = dynamic_cast<MaterialResource *>(&resource))
+        return material->LoadWithResolver(path, [this](const auto &reference, const auto &owner) { return ResolveAssetPath(reference, owner); });
+    return resource.Load(path);
+}
 void ResourceManager::Initialize(JobSystem *jobSystem, std::filesystem::path assetRoot)
 {
     m_jobSystem = jobSystem;
-    m_assetRoot = std::move(assetRoot);
+    m_assetRoot = std::filesystem::absolute(assetRoot).lexically_normal();
     m_registry.Scan(m_assetRoot);
 }
 
@@ -112,17 +118,17 @@ const AssetRegistry &ResourceManager::GetAssetRegistry() const
 
 std::string ResourceManager::NormalizePath(const std::string &path)
 {
-    return std::filesystem::path(path).lexically_normal().generic_string();
+    return std::filesystem::u8path(path).lexically_normal().generic_u8string();
 }
 
 std::string ResourceManager::ResolvePath(const std::string &path) const
 {
-    const std::filesystem::path logical(path);
+    const std::filesystem::path logical = std::filesystem::u8path(path);
     if (logical.is_absolute())
-        return logical.lexically_normal().generic_string();
+        return logical.lexically_normal().generic_u8string();
     // 已发布的相对引用必须继续从包内读取，不能转成项目目录中的散文件。
     if (PlatformFile::GetReadPolicy() == PlatformFile::ReadPolicy::MountedOnly)
-        return logical.lexically_normal().generic_string();
+        return logical.lexically_normal().generic_u8string();
     const auto root = std::filesystem::absolute(m_assetRoot).lexically_normal();
     std::filesystem::path candidate = root / logical;
     const auto first = logical.begin();
@@ -130,11 +136,24 @@ std::string ResourceManager::ResolvePath(const std::string &path) const
         candidate = root.parent_path() / logical;
     std::error_code error;
     if (std::filesystem::is_regular_file(candidate, error))
-        return candidate.lexically_normal().generic_string();
+        return candidate.lexically_normal().generic_u8string();
     // 包内资源通过 PlatformFile 的逻辑 URI 查找，不能强制转成不存在的物理绝对路径。
     if (PlatformFile::Exists(logical))
-        return logical.lexically_normal().generic_string();
-    return candidate.lexically_normal().generic_string();
+        return logical.lexically_normal().generic_u8string();
+    return candidate.lexically_normal().generic_u8string();
+}
+std::string ResourceManager::ResolveAssetPath(const std::string &path, const std::string &referencingPath) const
+{
+    if (path.empty() || path == "builtin:PBR") return path;
+    const std::filesystem::path reference = std::filesystem::u8path(path);
+    if (reference.is_absolute()) return reference.lexically_normal().generic_u8string();
+    const auto first = reference.begin();
+    const bool rootRelative = first != reference.end() && (*first == "assets" || *first == m_assetRoot.filename());
+    if (!referencingPath.empty() && !rootRelative)
+        return (std::filesystem::u8path(referencingPath).parent_path() / reference).lexically_normal().generic_u8string();
+    if (first != reference.end() && *first == "assets" && m_assetRoot.filename() != "assets")
+        return ResolvePath(reference.lexically_relative("assets").generic_u8string());
+    return ResolvePath(path);
 }
 
 std::shared_ptr<Resource> ResourceManager::LoadWithRegisteredLoaders(const std::string &path)
@@ -144,7 +163,7 @@ std::shared_ptr<Resource> ResourceManager::LoadWithRegisteredLoaders(const std::
         std::lock_guard<std::mutex> lock(m_mutex);
         loaders = m_loaders;
     }
-    const std::string extension = std::filesystem::path(path).extension().string();
+    const std::string extension = std::filesystem::u8path(path).extension().string();
     for (const auto &loader : loaders)
         if (loader && loader->CanLoad(extension))
             return loader->Load(ResolvePath(path));

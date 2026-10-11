@@ -1,4 +1,4 @@
-﻿// 文件：src/Resource/AssetRegistry.cpp
+// 文件：src/Resource/AssetRegistry.cpp
 // 作用：扫描资产元数据，维护 GUID、类型、源文件和依赖索引。
 // 约定：资源对象可能异步完成，调用方必须检查状态或显式等待。
 // 类型：实现文件。
@@ -6,6 +6,7 @@
 #include "MiniEngine/Resource/AssetRegistry.hpp"
 #include "MiniEngine/Core/Config.hpp"
 #include "MiniEngine/Platform/Platform.hpp"
+#include "MiniEngine/Resource/MaterialAssetReferences.hpp"
 
 #include <algorithm>
 #include <chrono>
@@ -74,9 +75,18 @@ std::optional<std::string> AssetType(const std::string &extension)
     return std::nullopt;
 }
 
-std::vector<std::string> InferStructuredDependencies(const std::filesystem::path &path, const std::string &type)
+std::vector<std::string> InferStructuredDependencies(const std::filesystem::path &path, const std::string &type, const std::filesystem::path &root)
 {
     std::vector<std::string> dependencies;
+    if (type == "Material" || type == "MaterialGraph")
+    {
+        for (const auto &reference : CollectMaterialReferences(PlatformFile::ReadAllText(path), type == "MaterialGraph"))
+        {
+            const auto resolved = ResolveMaterialReference(reference, path, root);
+            if (std::find(dependencies.begin(), dependencies.end(), resolved) == dependencies.end()) dependencies.push_back(resolved);
+        }
+        return dependencies;
+    }
     if (type != "BlendTree" && type != "AnimationGraph")
         return dependencies;
     std::istringstream input(PlatformFile::ReadAllText(path));
@@ -105,6 +115,7 @@ std::vector<std::string> InferStructuredDependencies(const std::filesystem::path
 void AssetRegistry::Scan(const std::filesystem::path &root, const bool createMetadata)
 {
     std::lock_guard<std::mutex> lock(m_mutex);
+    m_root = root.lexically_normal();
     m_assets.clear();
     m_byId.clear();
     if (!std::filesystem::exists(root))
@@ -123,13 +134,13 @@ void AssetRegistry::ScanAsset(const std::filesystem::directory_entry &entry, con
                    [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
     if (extension == ".meta" || extension == ".tmp" || extension == ".bak")
         return;
-    const auto metaPath = entry.path().lexically_normal().generic_string() + ".meta";
+    const auto metaPath = entry.path().lexically_normal().generic_u8string() + ".meta";
     const auto inferredType = AssetType(extension);
     // 未知文件默认不属于资产；已有的 sidecar 元数据仍可显式启用自定义资产格式。
-    if (!inferredType && !std::filesystem::is_regular_file(metaPath))
+    if (!inferredType && !std::filesystem::is_regular_file(std::filesystem::u8path(metaPath)))
         return;
     AssetInfo info;
-    info.path = entry.path().lexically_normal().generic_string();
+    info.path = entry.path().lexically_normal().generic_u8string();
     info.extension = extension;
     info.type = inferredType.value_or("Binary");
     info.byteSize = entry.file_size();
@@ -163,9 +174,9 @@ void AssetRegistry::ScanAsset(const std::filesystem::directory_entry &entry, con
             if (pair.first.rfind("import.", 0) == 0)
                 info.importSettings[pair.first.substr(7)] = pair.second;
     }
-    if (info.type == "BlendTree" || info.type == "AnimationGraph")
+    if (info.type == "BlendTree" || info.type == "AnimationGraph" || info.type == "Material" || info.type == "MaterialGraph")
     {
-        auto inferredDependencies = InferStructuredDependencies(info.path, info.type);
+        auto inferredDependencies = InferStructuredDependencies(std::filesystem::u8path(info.path), info.type, m_root);
         if (info.dependencies != inferredDependencies)
         {
             info.dependencies = std::move(inferredDependencies);
@@ -174,7 +185,7 @@ void AssetRegistry::ScanAsset(const std::filesystem::directory_entry &entry, con
     }
     if (info.id.empty())
         info.id = NewId();
-    if (createMetadata && (!std::filesystem::exists(metaPath) || migrateMetadata))
+    if (createMetadata && (!std::filesystem::exists(std::filesystem::u8path(metaPath)) || migrateMetadata))
         SaveMeta(info);
     m_byId[info.id] = info.path;
     m_assets[info.path] = info;
@@ -184,7 +195,7 @@ void AssetRegistry::UpdateMovedAsset(const std::filesystem::path &source, const 
                                      const std::vector<std::filesystem::path> &rewrittenAssets)
 {
     std::lock_guard<std::mutex> lock(m_mutex);
-    const auto found = m_assets.find(source.lexically_normal().generic_string());
+    const auto found = m_assets.find(source.lexically_normal().generic_u8string());
     if (found != m_assets.end())
     {
         m_byId.erase(found->second.id);
@@ -208,7 +219,7 @@ std::optional<AssetInfo> AssetRegistry::FindById(const std::string &id) const
 std::optional<AssetInfo> AssetRegistry::Find(const std::string &path) const
 {
     std::lock_guard<std::mutex> lock(m_mutex);
-    const auto found = m_assets.find(std::filesystem::path(path).lexically_normal().generic_string());
+    const auto found = m_assets.find(std::filesystem::u8path(path).lexically_normal().generic_u8string());
     return found == m_assets.end() ? std::nullopt : std::optional<AssetInfo>(found->second);
 }
 
@@ -219,6 +230,21 @@ std::vector<AssetInfo> AssetRegistry::GetAssets() const
     result.reserve(m_assets.size());
     for (const auto &pair : m_assets)
         result.push_back(pair.second);
+    return result;
+}
+std::vector<std::string> AssetRegistry::GetDependents(const std::string &path) const
+{
+    std::lock_guard<std::mutex> lock(m_mutex);
+    const auto key = std::filesystem::u8path(path).lexically_normal().generic_u8string();
+    std::vector<std::string> result;
+    for (const auto &entry : m_assets)
+        for (const auto &dependency : entry.second.dependencies)
+        {
+            const auto guid = m_byId.find(dependency);
+            if (std::filesystem::u8path(guid == m_byId.end() ? dependency : guid->second).lexically_normal().generic_u8string() == key)
+            { result.push_back(entry.first); break; }
+        }
+    std::sort(result.begin(), result.end());
     return result;
 }
 
@@ -240,7 +266,7 @@ bool AssetRegistry::SaveMeta(const AssetInfo &info) const
 bool AssetRegistry::SetImportSetting(const std::string &path, const std::string &key, const std::string &value)
 {
     std::lock_guard<std::mutex> lock(m_mutex);
-    const auto found = m_assets.find(std::filesystem::path(path).lexically_normal().generic_string());
+    const auto found = m_assets.find(std::filesystem::u8path(path).lexically_normal().generic_u8string());
     if (found == m_assets.end())
         return false;
     found->second.importSettings[key] = value;
@@ -250,7 +276,7 @@ bool AssetRegistry::SetImportSetting(const std::string &path, const std::string 
 bool AssetRegistry::SetDependencies(const std::string &path, std::vector<std::string> dependencies)
 {
     std::lock_guard<std::mutex> lock(m_mutex);
-    const auto found = m_assets.find(std::filesystem::path(path).lexically_normal().generic_string());
+    const auto found = m_assets.find(std::filesystem::u8path(path).lexically_normal().generic_u8string());
     if (found == m_assets.end())
         return false;
     found->second.dependencies = std::move(dependencies);
@@ -260,14 +286,14 @@ bool AssetRegistry::SetDependencies(const std::string &path, std::vector<std::st
 bool AssetRegistry::NeedsReimport(const std::string &path) const
 {
     std::lock_guard<std::mutex> lock(m_mutex);
-    const auto found = m_assets.find(std::filesystem::path(path).lexically_normal().generic_string());
+    const auto found = m_assets.find(std::filesystem::u8path(path).lexically_normal().generic_u8string());
     return found != m_assets.end() && found->second.importedStamp != Stamp(found->second.modified);
 }
 
 bool AssetRegistry::MarkImported(const std::string &path)
 {
     std::lock_guard<std::mutex> lock(m_mutex);
-    const auto found = m_assets.find(std::filesystem::path(path).lexically_normal().generic_string());
+    const auto found = m_assets.find(std::filesystem::u8path(path).lexically_normal().generic_u8string());
     if (found == m_assets.end())
         return false;
     found->second.importedStamp = Stamp(found->second.modified);

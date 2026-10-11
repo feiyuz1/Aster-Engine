@@ -1,9 +1,12 @@
 #include "MiniEngine/Resource/Resource.hpp"
 #include "MiniEngine/Platform/Platform.hpp"
+#include "MiniEngine/Render/MaterialSystem.hpp"
+#include "MiniEngine/Resource/AssetMaintenance.hpp"
 
 #include <cmath>
 #include <filesystem>
 #include <iostream>
+#include <algorithm>
 
 using namespace MiniEngine;
 namespace
@@ -18,7 +21,7 @@ bool Near(float a, float b) { return std::abs(a - b) < 0.00001f; }
 const std::string root = "Saved/MaterialTests/";
 void Write(const std::string& name, const std::string& text)
 {
-    Check(PlatformFile::WriteAllText(root + name, text), "write material fixture");
+    Check(PlatformFile::WriteAllText(std::filesystem::u8path(root + name), text), "write material fixture");
 }
 void TestLegacyMaterialCompatibility()
 {
@@ -73,12 +76,119 @@ void TestTypedMaterialRoundTrip()
     Write("truncated.mat", "TINY_MAT 2\ndefinition \"builtin:PBR\"\nparameter \"Tint\" Vec4 1 2\n");
     Check(!reopened.Load(root + "truncated.mat"), "truncated typed value rejected");
 }
+const MaterialParameterValue& Value(const ResolvedMaterial& material, const std::string& name)
+{
+    const auto& declarations = material.definition->parameters;
+    for (std::size_t i = 0; i < declarations.size(); ++i) if (declarations[i].name == name) return material.values.at(i);
+    throw std::runtime_error("Missing resolved parameter " + name);
+}
+void WriteDefinition()
+{
+    Write("assets/材质 库/paint.matgraph", "TINY_MATGRAPH 2\nsettings Lit Opaque 0 .5\n"
+        "parameter \"Tint\" Vec3 Linear .8 .7 .6\nparameter_meta \"Tint\" \"颜色\" \"外观\" 0 0 1\n"
+        "parameter \"Roughness\" Float Linear .7\nparameter \"BaseMap\" Texture2D SRgb \"../贴图 库/base.ppm\"\n"
+        "node 1 SurfaceOutput \"输出\" 100 0 Float 0 0 0 0 \"\" \"\"\n");
+    Write("assets/贴图 库/base.ppm", "P3\n1 1\n255\n255 255 255\n");
+}
+void TestThreeLevelInheritance()
+{
+    WriteDefinition();
+    Write("assets/parent.mat", "TINY_MAT 2\ndefinition \"assets/材质 库/paint.matgraph\"\nparameter \"Tint\" Vec3 1 .1 .2\n");
+    Write("assets/middle.mat", "TINY_MAT 2\nparent \"./parent.mat\"\nparameter \"Roughness\" Float .3\n");
+    Write("assets/child.mat", "TINY_MAT 2\nparent \"middle.mat\"\nparameter \"Tint\" Vec3 .1 .2 1\n");
+    ResourceManager resources;
+    resources.Initialize(nullptr, root + "assets");
+    MaterialSystem system(resources);
+    auto child = system.Resolve("assets/child.mat");
+    Check(child && Near(std::get<Vec3>(Value(*child, "Tint")).z, 1) &&
+          Near(std::get<float>(Value(*child, "Roughness")), .3f), "three level child to parent to definition precedence");
+    Write("assets/reset.mat", "TINY_MAT 2\nparent \"middle.mat\"\n");
+    auto reset = system.Resolve("assets/reset.mat");
+    Check(reset && Near(std::get<Vec3>(Value(*reset, "Tint")).x, 1), "absent child override restores inherited value");
+    Write("assets/unknown.mat", "TINY_MAT 2\ndefinition \"assets/材质 库/paint.matgraph\"\nparameter \"Unknown\" Float 1\n");
+    Check(!system.Resolve("assets/unknown.mat"), "first load rejects unknown parameter");
+    Write("assets/wrong.mat", "TINY_MAT 2\ndefinition \"assets/材质 库/paint.matgraph\"\nparameter \"Tint\" Vec4 1 1 1 1\n");
+    Check(!system.Resolve("assets/wrong.mat"), "first load rejects wrong override type");
+    auto legacy = system.Resolve(std::filesystem::absolute(root + "child.mat").generic_string());
+    Check(legacy && Near(std::get<Vec4>(Value(*legacy, "BaseColor")).x, .9f), "legacy adapter keeps false override inheritance");
+}
+void TestParentCyclesAndDepth()
+{
+    ResourceManager resources;
+    resources.Initialize(nullptr, root + "assets");
+    MaterialSystem system(resources);
+    Write("assets/a.mat", "TINY_MAT 2\nparent \"./b.mat\"\n");
+    Write("assets/b.mat", "TINY_MAT 2\nparent \"../assets/a.mat\"\n");
+    Check(!system.Resolve("assets/a.mat"), "normalized parent cycle rejected");
+    const auto& diagnostics = system.GetDiagnostics("assets/a.mat");
+    Check(!diagnostics.empty() && diagnostics.front().message.find("a.mat") != std::string::npos &&
+          diagnostics.front().message.find("b.mat") != std::string::npos, "cycle diagnostic contains complete chain");
+    for (int i = 0; i < 33; ++i)
+        Write("assets/depth" + std::to_string(i) + ".mat", "TINY_MAT 2\n" +
+              (i == 0 ? std::string("definition \"builtin:PBR\"\n") : "parent \"depth" + std::to_string(i-1) + ".mat\"\n"));
+    Check(static_cast<bool>(system.Resolve("assets/depth31.mat")), "32 instance nodes accepted");
+    Check(!system.Resolve("assets/depth32.mat"), "33 instance nodes rejected even with cached parent");
+    Write("assets/legacy0.mat", "color .9 .2 .1 1\n");
+    for (int i = 1; i < 32; ++i) Write("assets/legacy" + std::to_string(i) + ".mat", "parent legacy" + std::to_string(i-1) + ".mat\n");
+    Write("assets/mixedDepth.mat", "TINY_MAT 2\nparent \"legacy31.mat\"\n");
+    Check(!system.Resolve("assets/mixedDepth.mat"), "depth budget includes legacy nodes beneath a typed instance");
+}
+void TestAssetRootPaths()
+{
+    const auto previous = std::filesystem::current_path();
+    ResourceManager resources;
+    resources.Initialize(nullptr, root + "assets");
+    std::filesystem::current_path(previous / "build");
+    MaterialSystem system(resources);
+    auto material = system.Resolve("assets/child.mat");
+    Check(material && PlatformFile::Exists(std::filesystem::u8path(std::get<std::string>(Value(*material, "BaseMap")))),
+          "asset root and relative unicode texture survive CWD change");
+    std::filesystem::current_path(previous);
+}
+void TestMaterialDependencies()
+{
+    const auto assetRoot = std::filesystem::absolute(root + "assets");
+    AssetRegistry registry;
+    registry.Scan(assetRoot, false);
+    const auto parentPath = (assetRoot / "parent.mat").generic_string();
+    const auto graphPath = (assetRoot / std::filesystem::u8path("材质 库/paint.matgraph")).generic_u8string();
+    const auto childPath = (assetRoot / "child.mat").generic_string();
+    auto parent = registry.Find(parentPath);
+    auto graph = registry.Find(graphPath);
+    Check(parent && std::find(parent->dependencies.begin(), parent->dependencies.end(), graphPath) != parent->dependencies.end(),
+          "material indexes definition dependency");
+    Check(graph && graph->dependencies.size() == 1 && PlatformFile::Exists(std::filesystem::u8path(graph->dependencies[0])), "graph indexes default texture");
+    const auto dependents = registry.GetDependents((assetRoot / "middle.mat").generic_string());
+    Check(std::find(dependents.begin(), dependents.end(), childPath) != dependents.end(), "reverse dependency index finds child instance");
+    const auto moved = assetRoot / std::filesystem::u8path("材质 库/moved.matgraph");
+    if (std::filesystem::exists(moved)) std::filesystem::remove(moved);
+    auto movedMeta = moved; movedMeta += ".meta";
+    if (std::filesystem::exists(movedMeta)) std::filesystem::remove(movedMeta);
+    std::string error;
+    Check(AssetMaintenance::MoveAsset(registry, std::filesystem::u8path(graphPath), moved, &error), "move definition asset");
+    MaterialResource reopened;
+    Check(reopened.Load(parentPath) && reopened.GetMaterialData().definitionPath.find("moved.matgraph") != std::string::npos,
+          "asset move rewrites structured logical definition reference");
+}
 }
 int main()
 {
+    std::cout.setf(std::ios::unitbuf);
+    try
+    {
     std::filesystem::create_directories(root);
     TestLegacyMaterialCompatibility();
     TestInvalidMaterialCandidates();
     TestTypedMaterialRoundTrip();
+    TestThreeLevelInheritance();
+    TestParentCyclesAndDepth();
+    TestAssetRootPaths();
+    TestMaterialDependencies();
+    }
+    catch (const std::exception& error)
+    {
+        std::cerr << "[FAIL] unhandled test error: " << error.what() << '\n';
+        return 1;
+    }
     return failures ? 1 : 0;
 }

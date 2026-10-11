@@ -830,8 +830,14 @@ const std::string &ShaderResource::GetSource() const
 
 bool MaterialResource::Load(const std::string &path)
 {
+    return LoadWithResolver(path, {});
+}
+bool MaterialResource::LoadWithResolver(const std::string &path, ReferenceResolver resolver, std::size_t maxParentDepth)
+{
     const bool hadValidData = IsReady();
     MaterialResource candidate;
+    candidate.m_referenceResolver = std::move(resolver);
+    candidate.m_maxParentDepth = maxParentDepth;
     if (!candidate.LoadCandidate(path))
     {
         SetState(hadValidData ? ResourceState::Loaded : ResourceState::Failed, candidate.GetError());
@@ -869,7 +875,7 @@ bool MaterialResource::Save(const std::string &path) const
         std::string error;
         if (!ParseMaterialAsset(source, validated, error)) return false;
     }
-    return PlatformFile::WriteAllText(path, source);
+    return PlatformFile::WriteAllText(std::filesystem::u8path(path), source);
 }
 void MaterialResource::CaptureLegacyData(const std::string &source)
 {
@@ -898,7 +904,9 @@ bool MaterialResource::LoadCandidate(const std::string &path)
 {
     MarkLoading(path);
     static thread_local std::unordered_set<std::string> loadingMaterials;
-    const std::string normalizedPath = PlatformFile::Normalize(path).generic_string();
+    if (loadingMaterials.size() >= m_maxParentDepth)
+    { SetState(ResourceState::Failed, "Material parent chain exceeds 32 instances: " + path); return false; }
+    const std::string normalizedPath = PlatformFile::Normalize(std::filesystem::u8path(path)).generic_u8string();
     if (!loadingMaterials.insert(normalizedPath).second)
     {
         SetState(ResourceState::Failed, "Cyclic material parent: " + path);
@@ -930,7 +938,7 @@ bool MaterialResource::LoadCandidate(const std::string &path)
     m_parameters.clear();
     m_packedTexturePath.clear();
     m_packedTextureLayout = "ORM";
-    const std::string source = PlatformFile::ReadAllText(path);
+    const std::string source = PlatformFile::ReadAllText(std::filesystem::u8path(path));
     if (source.empty())
     {
         SetState(ResourceState::Failed, "Material file not found: " + path);
@@ -985,13 +993,15 @@ bool MaterialResource::LoadCandidate(const std::string &path)
     }
     if (!m_parentPath.empty())
     {
-        std::filesystem::path parent = m_parentPath;
-        if (!PlatformFile::Exists(parent))
-            parent = std::filesystem::path(path).parent_path() / parent;
+        std::filesystem::path parent = std::filesystem::u8path(m_parentPath);
+        if (m_referenceResolver)
+            parent = std::filesystem::u8path(m_referenceResolver(m_parentPath, path));
+        else if (!PlatformFile::Exists(parent))
+            parent = std::filesystem::u8path(path).parent_path() / parent;
         MaterialResource base;
-        if (!base.Load(parent.generic_string()))
+        if (!base.LoadWithResolver(parent.generic_u8string(), m_referenceResolver, m_maxParentDepth))
         {
-            SetState(ResourceState::Failed, "Cannot load material parent: " + m_parentPath);
+            SetState(ResourceState::Failed, "Cannot load material parent: " + m_parentPath + " -> " + base.GetError());
             return false;
         }
         m_baseColor = base.m_baseColor;
@@ -1105,6 +1115,10 @@ bool MaterialResource::LoadCandidate(const std::string &path)
     }
     m_metallic = std::clamp(m_metallic, 0.0f, 1.0f);
     m_roughness = std::clamp(m_roughness, 0.04f, 1.0f);
+    if (m_referenceResolver)
+        for (auto *reference : {&m_shaderPath, &m_texturePath, &m_normalTexturePath, &m_metallicTexturePath, &m_roughnessTexturePath,
+                                &m_aoTexturePath, &m_emissiveTexturePath, &m_packedTexturePath})
+            if (!reference->empty()) *reference = m_referenceResolver(*reference, path);
     CaptureLegacyData(source);
     SetState(ResourceState::Loaded);
     return true;

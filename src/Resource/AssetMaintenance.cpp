@@ -10,6 +10,7 @@
 #include "MiniEngine/Platform/Platform.hpp"
 #include "MiniEngine/Project/Project.hpp"
 #include "MiniEngine/Resource/Resource.hpp"
+#include "MiniEngine/Resource/MaterialAssetReferences.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -24,7 +25,7 @@ namespace
 {
 std::string NormalizePath(const std::filesystem::path &path)
 {
-    return path.lexically_normal().generic_string();
+    return path.lexically_normal().generic_u8string();
 }
 
 bool ReplaceAll(std::string &source, const std::string &from, const std::string &to)
@@ -134,7 +135,7 @@ std::vector<MissingAssetDependency> AssetMaintenance::FindMissingDependencies(co
         for (const auto &dependency : asset.dependencies)
         {
             // Meta 依赖既可以是稳定 GUID，也可以是路径；两种形式都是正式引用。
-            if (registry.Find(dependency) || registry.FindById(dependency) || std::filesystem::is_regular_file(dependency))
+            if (registry.Find(dependency) || registry.FindById(dependency) || std::filesystem::is_regular_file(std::filesystem::u8path(dependency)))
                 continue;
             MissingAssetDependency issue{asset.path, dependency, {}};
             const std::filesystem::path missing = dependency;
@@ -175,7 +176,9 @@ bool AssetMaintenance::RepairDependency(AssetRegistry &registry, const std::stri
 bool AssetMaintenance::MoveAsset(AssetRegistry &registry, const std::filesystem::path &source, const std::filesystem::path &destination,
                                  std::string *error)
 {
-    const std::filesystem::path oldMeta = source.string() + ".meta", newMeta = destination.string() + ".meta";
+    auto oldMeta = source, newMeta = destination;
+    oldMeta += ".meta";
+    newMeta += ".meta";
     if (!std::filesystem::is_regular_file(source) || std::filesystem::exists(destination) || std::filesystem::exists(newMeta) ||
         (std::filesystem::exists(oldMeta) && !std::filesystem::is_regular_file(oldMeta)))
     {
@@ -209,17 +212,26 @@ bool AssetMaintenance::MoveAsset(AssetRegistry &registry, const std::filesystem:
     }
     const std::string oldPath = NormalizePath(source), newPath = NormalizePath(destination);
     std::vector<std::filesystem::path> rewrittenAssets;
+    if (source.extension() == ".mat" || source.extension() == ".matgraph")
+    {
+        auto text = PlatformFile::ReadAllText(destination);
+        if (RewriteMaterialReferences(text, source.extension() == ".matgraph", source, destination, registry.GetRootPath(), oldPath, newPath))
+            PlatformFile::WriteAllText(destination, text);
+    }
     for (const auto &asset : registry.GetAssets())
     {
         if (asset.path == oldPath)
             continue;
-        std::string text = PlatformFile::ReadAllText(asset.path);
-        if (!text.empty() && ReplaceAll(text, oldPath, newPath) && PlatformFile::WriteAllText(asset.path, text))
-            rewrittenAssets.emplace_back(asset.path);
+        std::string text = PlatformFile::ReadAllText(std::filesystem::u8path(asset.path));
+        const bool changedText = asset.type == "Material" || asset.type == "MaterialGraph" ?
+            RewriteMaterialReferences(text, asset.type == "MaterialGraph", std::filesystem::u8path(asset.path), std::filesystem::u8path(asset.path), registry.GetRootPath(), oldPath, newPath) :
+            ReplaceAll(text, oldPath, newPath);
+        if (!text.empty() && changedText && PlatformFile::WriteAllText(std::filesystem::u8path(asset.path), text))
+            rewrittenAssets.emplace_back(std::filesystem::u8path(asset.path));
         auto dependencies = asset.dependencies;
         bool changed = false;
         for (auto &dependency : dependencies)
-            if (NormalizePath(dependency) == oldPath)
+            if (NormalizePath(std::filesystem::u8path(dependency)) == oldPath)
             {
                 dependency = newPath;
                 changed = true;
