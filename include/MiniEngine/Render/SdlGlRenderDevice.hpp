@@ -97,6 +97,8 @@ class SdlGlRenderDevice final : public RenderDevice
     /// @brief 设置 `EventCallback`。
     /// @param callback 满足条件时调用的回调函数。
     void SetEventCallback(std::function<void(const void *)> callback);
+    /// @brief 只在需要编辑文字时启用系统输入法，避免游戏按键被输入法接管。
+    void SetTextInputEnabled(bool enabled);
     /// @brief 设置窗口关闭请求处理器；未设置时保持运行时直接退出行为。
     void SetCloseRequestCallback(std::function<void()> callback);
     /// @brief 启用 `SceneRenderTarget`。

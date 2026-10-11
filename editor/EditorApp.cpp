@@ -694,6 +694,7 @@ bool EditorApp::Initialize(const std::filesystem::path &projectFile)
         m_engine.Shutdown();
         return false;
     }
+    m_engine.SetTextInputManagedByUi(false);
     if (!m_device->EnableSceneRenderTarget(true, 960, 540))
     {
         m_engine.Shutdown();
@@ -796,6 +797,7 @@ void EditorApp::Draw()
     {
         DrawProjectLauncher();
         ImGui::Render();
+        m_device->SetTextInputEnabled(ImGui::GetIO().WantTextInput);
         ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
         return;
     }
@@ -829,6 +831,7 @@ void EditorApp::Draw()
         Autosave();
     UpdateWindowTitle();
     ImGui::Render();
+    m_device->SetTextInputEnabled(ImGui::GetIO().WantTextInput);
     ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
 }
 

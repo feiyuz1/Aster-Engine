@@ -1876,7 +1876,7 @@ bool SdlGlRenderDevice::Initialize()
     m_impl->vertexShaderWatcher.HasChanged(m_impl->vertexShaderPath);
     m_impl->fragmentShaderWatcher.HasChanged(m_impl->fragmentShaderPath);
     SDL_GL_SetSwapInterval(1);
-    SDL_StartTextInput();
+    SDL_StopTextInput();
     glEnable(GL_DEPTH_TEST);
     glEnable(GL_CULL_FACE);
     glCullFace(GL_BACK);
@@ -2063,6 +2063,7 @@ bool SdlGlRenderDevice::PumpEvents()
     m_impl->input.textInput.clear();
     m_impl->input.uiBackspace = false;
     bool mousePressed = false;
+    std::array<bool, SDL_NUM_SCANCODES> pressedThisFrame{};
     int pressX = 0, pressY = 0;
     SDL_Event event{};
     while (SDL_PollEvent(&event))
@@ -2099,6 +2100,8 @@ bool SdlGlRenderDevice::PumpEvents()
         }
         if (event.type == SDL_TEXTINPUT)
             m_impl->input.textInput += event.text.text;
+        if (event.type == SDL_KEYDOWN && event.key.keysym.scancode >= 0 && event.key.keysym.scancode < SDL_NUM_SCANCODES)
+            pressedThisFrame[static_cast<std::size_t>(event.key.keysym.scancode)] = true;
         if (event.type == SDL_KEYDOWN && event.key.keysym.scancode == SDL_SCANCODE_BACKSPACE && event.key.repeat == 0)
             m_impl->input.uiBackspace = true;
         if (event.type == SDL_CONTROLLERDEVICEADDED && !m_impl->controller)
@@ -2111,8 +2114,12 @@ bool SdlGlRenderDevice::PumpEvents()
         }
     }
     const Uint8 *keys = SDL_GetKeyboardState(nullptr);
-    const auto axis = [keys](SDL_Scancode negative, SDL_Scancode positive) {
-        return (keys[positive] ? 1.0f : 0.0f) - (keys[negative] ? 1.0f : 0.0f);
+    // 同一帧内按下又松开的短按也要交给游戏处理，持续按住仍以 SDL 当前状态为准。
+    const auto down = [keys, &pressedThisFrame](SDL_Scancode code) {
+        return keys[code] != 0 || pressedThisFrame[static_cast<std::size_t>(code)];
+    };
+    const auto axis = [&down](SDL_Scancode negative, SDL_Scancode positive) {
+        return (down(positive) ? 1.0f : 0.0f) - (down(negative) ? 1.0f : 0.0f);
     };
     m_impl->input.moveX = axis(SDL_SCANCODE_A, SDL_SCANCODE_D);
     m_impl->input.moveY = axis(SDL_SCANCODE_F, SDL_SCANCODE_R);
@@ -2121,8 +2128,8 @@ bool SdlGlRenderDevice::PumpEvents()
     m_impl->input.rotateY = axis(SDL_SCANCODE_LEFT, SDL_SCANCODE_RIGHT);
     m_impl->input.rotateZ = axis(SDL_SCANCODE_Q, SDL_SCANCODE_E);
     m_impl->input.scale = axis(SDL_SCANCODE_X, SDL_SCANCODE_Z);
-    m_impl->input.sprint = keys[SDL_SCANCODE_LSHIFT] || keys[SDL_SCANCODE_RSHIFT];
-    m_impl->input.jump = keys[SDL_SCANCODE_SPACE] != 0;
+    m_impl->input.sprint = down(SDL_SCANCODE_LSHIFT) || down(SDL_SCANCODE_RSHIFT);
+    m_impl->input.jump = down(SDL_SCANCODE_SPACE);
     m_impl->input.primaryAction = mousePressed || (SDL_GetMouseState(nullptr, nullptr) & SDL_BUTTON(SDL_BUTTON_LEFT)) != 0;
     int cursorX = 0, cursorY = 0;
     SDL_GetMouseState(&cursorX, &cursorY);
@@ -2137,7 +2144,7 @@ bool SdlGlRenderDevice::PumpEvents()
     m_impl->input.cursorX = static_cast<float>(cursorX) * uiViewport.x / static_cast<float>(std::max(1, windowWidth));
     m_impl->input.cursorY = static_cast<float>(cursorY) * uiViewport.y / static_cast<float>(std::max(1, windowHeight));
     // 编辑器通过 SetEscapeQuits(false) 关闭平台层 ESC→退出，改由 ImGui 侧处理 ESC（清空选择/关闭弹窗）。
-    m_impl->input.quitRequested = (m_escapeQuits && keys[SDL_SCANCODE_ESCAPE] != 0);
+    m_impl->input.quitRequested = (m_escapeQuits && down(SDL_SCANCODE_ESCAPE));
     if (!m_impl->controller)
         for (int index = 0; index < SDL_NumJoysticks(); ++index)
             if (SDL_IsGameController(index))
@@ -2171,8 +2178,8 @@ bool SdlGlRenderDevice::PumpEvents()
         controllerNext = SDL_GameControllerGetButton(m_impl->controller, SDL_CONTROLLER_BUTTON_DPAD_DOWN);
         controllerAccept = SDL_GameControllerGetButton(m_impl->controller, SDL_CONTROLLER_BUTTON_A);
     }
-    const bool uiNext = keys[SDL_SCANCODE_TAB] != 0 || controllerNext,
-               uiAccept = keys[SDL_SCANCODE_RETURN] != 0 || keys[SDL_SCANCODE_SPACE] != 0 || controllerAccept;
+    const bool uiNext = down(SDL_SCANCODE_TAB) || controllerNext,
+               uiAccept = down(SDL_SCANCODE_RETURN) || down(SDL_SCANCODE_SPACE) || controllerAccept;
     m_impl->input.uiNavigateNext = uiNext && !m_impl->previousUiNext;
     m_impl->input.uiAccept = uiAccept && !m_impl->previousUiAccept;
     m_impl->previousUiNext = uiNext;
@@ -3009,6 +3016,16 @@ void *SdlGlRenderDevice::GetGlContext() const
 void SdlGlRenderDevice::SetEventCallback(std::function<void(const void *)> callback)
 {
     m_eventCallback = std::move(callback);
+}
+
+void SdlGlRenderDevice::SetTextInputEnabled(const bool enabled)
+{
+    if (!m_impl || !m_impl->window || (SDL_IsTextInputActive() == SDL_TRUE) == enabled)
+        return;
+    if (enabled)
+        SDL_StartTextInput();
+    else
+        SDL_StopTextInput();
 }
 
 void SdlGlRenderDevice::SetCloseRequestCallback(std::function<void()> callback)

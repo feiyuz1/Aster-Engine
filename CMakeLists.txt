@@ -274,7 +274,7 @@ endif()
 
 if(TINYENGINE_BUILD_TESTS)
     enable_testing()
-    # TEST HOOK: test-only observability is compiled only when the optional test targets are enabled.
+    # 只有启用测试目标时才开放测试读取接口，正常构建不会带上这些入口。
     target_compile_definitions(tinyengine PUBLIC TINYENGINE_TEST_HOOKS=1)
     add_executable(tinyengine_tests tests/EngineTests.cpp)
     target_link_libraries(tinyengine_tests PRIVATE tinyengine)
@@ -288,6 +288,10 @@ if(TINYENGINE_BUILD_TESTS)
         WORKING_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/RenderStabilityNoAssets")
     add_executable(tinyengine_scene_save_tests tests/SceneSaveTests.cpp)
     target_link_libraries(tinyengine_scene_save_tests PRIVATE tinyengine)
+    add_executable(tinyengine_platform_mount_tests tests/PlatformMountTests.cpp)
+    target_link_libraries(tinyengine_platform_mount_tests PRIVATE tinyengine)
+    add_executable(tinyengine_script_lifecycle_tests tests/ScriptLifecycleTests.cpp)
+    target_link_libraries(tinyengine_script_lifecycle_tests PRIVATE tinyengine)
     add_library(tinyengine_test_dynamic_plugin SHARED tests/TestDynamicPlugin.cpp)
     target_include_directories(tinyengine_test_dynamic_plugin PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
     add_executable(tinyengine_extended_tests tests/ExtendedRegressionTests.cpp)
@@ -309,8 +313,23 @@ if(TINYENGINE_BUILD_TESTS)
     set_tests_properties(tinyengine_core PROPERTIES WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
     add_test(NAME tinyengine_scene_save COMMAND tinyengine_scene_save_tests)
     set_tests_properties(tinyengine_scene_save PROPERTIES WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+    add_test(NAME tinyengine_platform_mount COMMAND tinyengine_platform_mount_tests)
+    set_tests_properties(tinyengine_platform_mount PROPERTIES WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+    add_test(NAME tinyengine_script_lifecycle COMMAND tinyengine_script_lifecycle_tests)
+    set_tests_properties(tinyengine_script_lifecycle PROPERTIES WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
     add_test(NAME tinyengine_extended COMMAND tinyengine_extended_tests)
     set_tests_properties(tinyengine_extended PROPERTIES WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+    if(TINYENGINE_BUILD_EDITOR)
+        add_executable(tinyengine_editor_interaction_tests tests/EditorInteractionTests.cpp editor/EditorApp.cpp)
+        target_include_directories(tinyengine_editor_interaction_tests PRIVATE editor)
+        target_link_libraries(tinyengine_editor_interaction_tests PRIVATE tinyengine tinyengine_imgui)
+        if(TINYENGINE_BUILD_IMPORTERS)
+            target_link_libraries(tinyengine_editor_interaction_tests PRIVATE tinyengine_importers)
+            target_compile_definitions(tinyengine_editor_interaction_tests PRIVATE TINYENGINE_HAS_ASSIMP=1)
+        endif()
+        add_test(NAME tinyengine_editor_interaction COMMAND tinyengine_editor_interaction_tests)
+        set_tests_properties(tinyengine_editor_interaction PROPERTIES WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+    endif()
 endif()
 
 # 只为 TinyEngine 自有源码启用 UTF-8；不能把该选项全局传给 Assimp、zlib、SDL 或 ImGui。
@@ -319,7 +338,8 @@ if(MSVC)
             tinyengine tinyengine_demo tinyengine_game tinyengine_importers tinyengine_editor
             tinyengine_asset_tool tinyengine_scene_tool tinyengine_package_tool tinyengine_commandlet
             tinyengine_tests tinyengine_render_stability_tests tinyengine_scene_save_tests tinyengine_test_dynamic_plugin tinyengine_extended_tests
-            tinyengine_import_compatibility_tests)
+            tinyengine_import_compatibility_tests tinyengine_editor_interaction_tests
+            tinyengine_platform_mount_tests tinyengine_script_lifecycle_tests)
         if(TARGET ${TINYENGINE_SOURCE_TARGET})
             # /FS 在 CMake/MSBuild 并行编译时串行化各目标的 PDB 写入，避免编译器争用。
             target_compile_options(${TINYENGINE_SOURCE_TARGET} PRIVATE /utf-8 /FS)

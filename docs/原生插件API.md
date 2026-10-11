@@ -1,6 +1,6 @@
 # TinyEngine 原生插件 ABI
 
-TinyEngine 0.26 提供 ABI v1 的稳定 C 边界，适合把原生 Gameplay、工具桥接或第三方库封装成 DLL/Shared Object。它不是 C++ Module ABI，也不会跨库传递 STL、异常、RTTI 或引擎内部类。
+TinyEngine 0.27 提供 ABI v1 的稳定 C 接口，适合将原生 Gameplay、工具桥接或第三方库封装为 DLL/Shared Object。它不是 C++ 模块 ABI，也不会跨库传递 STL、异常、RTTI 或引擎内部类。
 
 ## 1. ABI 入口
 

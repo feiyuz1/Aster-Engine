@@ -295,6 +295,11 @@ void Engine::SetGameInstance(std::unique_ptr<GameInstance> gameInstance)
     m_gameInstance = std::move(gameInstance);
 }
 
+void Engine::SetTextInputManagedByUi(const bool enabled)
+{
+    m_textInputManagedByUi = enabled;
+}
+
 ModuleManager &Engine::GetModuleManager()
 {
     return m_moduleManager;
@@ -317,6 +322,15 @@ void Engine::Tick(const float rawDeltaTime)
     const float deltaTime = m_paused ? 0.0f : rawDeltaTime * m_timeScale;
     const InputState &input = m_renderer.GetInputState();
     m_uiSystem.Update(input.cursorX, input.cursorY, input.primaryAction);
+    if (m_textInputManagedByUi)
+    {
+        if (auto *device = dynamic_cast<SdlGlRenderDevice *>(m_renderer.GetDevice()))
+        {
+            const auto *focused = m_uiSystem.Find(m_uiSystem.GetFocusedId());
+            device->SetTextInputEnabled(focused && focused->type == UIWidgetType::InputField && focused->visible &&
+                                        focused->enabled);
+        }
+    }
     if (!input.textInput.empty())
         m_uiSystem.InputText(input.textInput);
     if (input.uiBackspace)

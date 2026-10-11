@@ -1,4 +1,5 @@
 asset.id=9e5b804dc02ab948a3409495c4526b20
-asset.type=Binary
+asset.schemaVersion=2
+asset.type=Animation
 asset.importedStamp=0
 dependencies.count=0

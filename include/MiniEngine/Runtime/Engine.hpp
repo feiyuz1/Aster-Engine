@@ -112,6 +112,8 @@ class Engine : private WorldListener
     /// @brief 设置 `GameInstance`。
     /// @param gameInstance 接口所需的输入参数。
     void SetGameInstance(std::unique_ptr<GameInstance> gameInstance);
+    /// @brief 设置运行时 UI 是否负责切换文字输入；编辑器由 ImGui 自行管理。
+    void SetTextInputManagedByUi(bool enabled);
     /// @brief 获取 `ModuleManager`。
     /// @return 返回对应对象的引用；有效期不超过其所属对象。
     ModuleManager &GetModuleManager();
@@ -167,6 +169,7 @@ class Engine : private WorldListener
     Entity m_playerEntity = InvalidEntity;
     bool m_playing = false;
     bool m_projectPakMounted = false;
+    bool m_textInputManagedByUi = true;
     std::string m_editSnapshot;
 };
 } // 结束 MiniEngine 命名空间
