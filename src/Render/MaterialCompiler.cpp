@@ -383,14 +383,19 @@ bool MaterialCompiler::WriteCache(const CompiledMaterial &material,const Materia
         if (previous.empty() || previous==content) break;
     }
     const auto root=directory/key;
-    if (!PlatformFile::WriteAllTextAtomic(root/"content.key",content)) return false;
-    for (const auto &file:files) if (!PlatformFile::WriteAllTextAtomic(root/file.first,file.second)) return false;
+    const auto writeChanged=[](const std::filesystem::path &path,const std::string &source) {
+        std::error_code error;
+        if (std::filesystem::is_regular_file(path,error) && !error && PlatformFile::ReadAllText(path)==source) return true;
+        return PlatformFile::WriteAllTextAtomic(path,source);
+    };
+    if (!writeChanged(root/"content.key",content)) return false;
+    for (const auto &file:files) if (!writeChanged(root/file.first,file.second)) return false;
     std::string layout=material.layout.canonicalSchema;
     for (const auto &slot:material.layout.numericSlots) layout+=slot.name+" numeric-slot "+std::to_string(slot.slot)+'\n';
     for (const auto &slot:material.layout.textureSlots) layout+=slot.name+" texture-slot "+std::to_string(slot.slot)+'\n';
     dependencies.insert(material.dependencies.begin(),material.dependencies.end()); std::string summary;
     for (const auto &dependency:dependencies) summary+=dependency+'\n';
-    if (!PlatformFile::WriteAllTextAtomic(root/"layout.txt",layout) || !PlatformFile::WriteAllTextAtomic(root/"dependencies.txt",summary)) return false;
+    if (!writeChanged(root/"layout.txt",layout) || !writeChanged(root/"dependencies.txt",summary)) return false;
     if (cacheKey) *cacheKey=key; return true;
 }
 } // namespace MiniEngine

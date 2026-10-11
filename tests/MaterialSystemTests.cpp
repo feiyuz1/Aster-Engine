@@ -441,6 +441,15 @@ void TestCookingAndSourceCache()
     std::string first,second,third;
     Check(MaterialCompiler{}.WriteCache(*compiled.material,templates,root+"SourceCache",&first),"write generated GLSL source/layout/dependency cache");
     Check(MaterialCompiler{}.WriteCache(*compiled.material,templates,root+"SourceCache",&second) && first==second,"same template content reuses cache identity");
+#ifdef _WIN32
+    const auto cached=std::filesystem::absolute(root+"SourceCache/"+first+"/content.key");
+    const auto timestamp=std::filesystem::last_write_time(cached);
+    const auto reader=CreateFileW(cached.c_str(),GENERIC_READ,FILE_SHARE_READ|FILE_SHARE_WRITE,nullptr,OPEN_EXISTING,FILE_ATTRIBUTE_NORMAL,nullptr);
+    Check(reader!=INVALID_HANDLE_VALUE,"open an existing cache entry for reading without delete sharing");
+    const bool reused=MaterialCompiler{}.WriteCache(*compiled.material,templates,root+"SourceCache",&second);
+    if (reader!=INVALID_HANDLE_VALUE) CloseHandle(reader);
+    Check(reused && second==first && std::filesystem::last_write_time(cached)==timestamp,"reuse complete cache while readers hold existing source; leave timestamps unchanged");
+#endif
     templates.files["Lighting.glsl"]+="\n// changed include content\n";
     Check(MaterialCompiler{}.WriteCache(*compiled.material,templates,root+"SourceCache",&third) && third!=first,"included template content invalidates generated source cache");
     Check(std::filesystem::is_regular_file(std::filesystem::u8path(root+"SourceCache/"+third+"/Base-Static.frag")),"cache stores inspectable source rather than driver binaries");
