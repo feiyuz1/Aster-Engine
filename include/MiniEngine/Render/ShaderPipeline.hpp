@@ -10,6 +10,7 @@
 #include <string>
 #include <unordered_map>
 #include <vector>
+#include "MiniEngine/Render/MaterialTypes.hpp"
 
 namespace MiniEngine
 {
@@ -45,6 +46,7 @@ struct ShaderPreprocessResult
 class ShaderPipeline
 {
   public:
+    static MaterialTemplateSources LoadMaterialTemplates(const std::filesystem::path &directory = "assets/shaders/material");
     /// @brief 展开着色器包含文件和宏定义。
     /// @param path 文件、资源或目录路径。
     /// @param defines 接口所需的输入参数。

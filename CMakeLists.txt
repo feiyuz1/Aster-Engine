@@ -139,6 +139,7 @@ add_library(tinyengine STATIC
     src/Render/MaterialTypes.cpp
     src/Render/MaterialSystem.cpp
     src/Render/MaterialCompiler.cpp
+    src/Render/GlMaterialProgramCache.cpp
     src/Render/ShaderPipeline.cpp
     src/Render/SdlGlRenderDevice.cpp
     src/Physics/PhysicsWorld.cpp
@@ -156,8 +157,12 @@ target_include_directories(tinyengine PRIVATE "${TINYENGINE_STB_DIR}")
 
 # 外部着色器不可用时，内置版本仍须完整支持实例、运动矢量和分簇光照。
 # 两条路径共用同一份 GLSL，避免备用版本随渲染管线升级而过时。
-file(READ "${CMAKE_CURRENT_SOURCE_DIR}/assets/shaders/default.vert" TINYENGINE_DEFAULT_VERTEX_SHADER)
-file(READ "${CMAKE_CURRENT_SOURCE_DIR}/assets/shaders/default.frag" TINYENGINE_DEFAULT_FRAGMENT_SHADER)
+include(cmake/EmbedMaterialShaders.cmake)
+tinyengine_expand_shader("${CMAKE_CURRENT_SOURCE_DIR}/assets/shaders/default.vert" TINYENGINE_DEFAULT_VERTEX_SHADER "")
+tinyengine_expand_shader("${CMAKE_CURRENT_SOURCE_DIR}/assets/shaders/default.frag" TINYENGINE_DEFAULT_FRAGMENT_SHADER "")
+file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/generated/MiniEngine/Render")
+tinyengine_embed_material_shaders("${CMAKE_CURRENT_SOURCE_DIR}/assets/shaders/material"
+    "${CMAKE_CURRENT_BINARY_DIR}/generated/MiniEngine/Render/BuiltinMaterialShaders.hpp")
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/assets/shaders/default.vert"
     "${CMAKE_CURRENT_SOURCE_DIR}/assets/shaders/default.frag")
@@ -283,6 +288,10 @@ if(TINYENGINE_BUILD_TESTS)
     target_compile_definitions(tinyengine PUBLIC TINYENGINE_TEST_HOOKS=1)
     add_executable(tinyengine_material_tests tests/MaterialSystemTests.cpp)
     target_link_libraries(tinyengine_material_tests PRIVATE tinyengine)
+    add_executable(tinyengine_material_render_tests tests/MaterialRenderTests.cpp)
+    target_link_libraries(tinyengine_material_render_tests PRIVATE tinyengine)
+    add_test(NAME tinyengine_material_render COMMAND tinyengine_material_render_tests)
+    set_tests_properties(tinyengine_material_render PROPERTIES WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
     add_test(NAME tinyengine_material_cpu COMMAND tinyengine_material_tests)
     set_tests_properties(tinyengine_material_cpu PROPERTIES WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
     add_executable(tinyengine_tests tests/EngineTests.cpp)
@@ -346,7 +355,7 @@ if(MSVC)
     foreach(TINYENGINE_SOURCE_TARGET IN ITEMS
             tinyengine tinyengine_demo tinyengine_game tinyengine_importers tinyengine_editor
             tinyengine_asset_tool tinyengine_scene_tool tinyengine_package_tool tinyengine_commandlet
-            tinyengine_tests tinyengine_material_tests tinyengine_render_stability_tests tinyengine_scene_save_tests tinyengine_test_dynamic_plugin tinyengine_extended_tests
+            tinyengine_tests tinyengine_material_tests tinyengine_material_render_tests tinyengine_render_stability_tests tinyengine_scene_save_tests tinyengine_test_dynamic_plugin tinyengine_extended_tests
             tinyengine_import_compatibility_tests tinyengine_editor_interaction_tests
             tinyengine_platform_mount_tests tinyengine_script_lifecycle_tests)
         if(TARGET ${TINYENGINE_SOURCE_TARGET})

@@ -29,6 +29,7 @@
 /tests/*
 !/tests/RenderStabilityTests.cpp
 !/tests/MaterialSystemTests.cpp
+!/tests/MaterialRenderTests.cpp
 !/tests/EngineTests.cpp
 
 # 技术说明文档
@@ -66,3 +67,12 @@
 !/assets/shaders/default.frag.meta
 !/assets/shaders/default.vert
 !/assets/shaders/default.vert.meta
+!/assets/shaders/material/
+/assets/shaders/material/*
+!/assets/shaders/material/Surface.glsl
+!/assets/shaders/material/Lighting.glsl
+!/assets/shaders/material/VertexTransform.glsl
+!/assets/shaders/material/BasePass.vert
+!/assets/shaders/material/BasePass.frag
+!/assets/shaders/material/ShadowPass.vert
+!/assets/shaders/material/ShadowPass.frag

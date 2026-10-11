@@ -84,6 +84,7 @@ struct RenderItem
     Mat4 previousModel = Mat4::Identity();
     std::shared_ptr<MeshResource> mesh;
     std::shared_ptr<MaterialResource> material;
+    std::shared_ptr<const MaterialRenderProxy> materialProxy;
     std::shared_ptr<TextureResource> texture;
     std::shared_ptr<TextureResource> normalTexture;
     std::shared_ptr<TextureResource> metallicTexture;

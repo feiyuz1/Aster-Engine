@@ -13,6 +13,7 @@
 
 namespace MiniEngine
 {
+class TextureResource;
 enum class MaterialParameterType { Float, Vec2, Vec3, Vec4, Texture2D };
 using MaterialParameterValue = std::variant<float, Vec2, Vec3, Vec4, std::string>;
 enum class TextureSampling { SRgb, Linear, Normal };
@@ -98,6 +99,26 @@ struct GeneratedShaderSources
     std::string vertex, fragment;
     std::vector<std::string> dependencies;
     std::string error;
+};
+struct MaterialTextureBinding
+{
+    std::string parameterName;
+    std::uint32_t slot = 0;
+    std::shared_ptr<TextureResource> resource;
+    TextureSampling sampling = TextureSampling::Linear;
+    std::uint64_t version = 0;
+    std::string requestedPath;
+};
+struct MaterialRenderProxy
+{
+    std::shared_ptr<const CompiledMaterial> compiled;
+    std::vector<Vec4> numericSlots;
+    std::vector<MaterialTextureBinding> textures;
+    MaterialRenderState state;
+    std::uint64_t generation = 0, valueHash = 0;
+    std::string canonicalValueContent;
+    std::string legacyShaderPath;
+    std::map<std::string, Vec4> legacyParameters;
 };
 
 bool IsMaterialParameterName(const std::string& name);

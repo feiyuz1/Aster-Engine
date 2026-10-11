@@ -4,6 +4,7 @@
 // 类型：实现文件。
 
 #include "MiniEngine/Render/SdlGlRenderDevice.hpp"
+#include "GlMaterialProgramCache.hpp"
 
 #include "MiniEngine/Platform/Platform.hpp"
 #include "MiniEngine/Render/BuiltinShaders.hpp"
@@ -807,6 +808,7 @@ struct SdlGlRenderDevice::Impl
     SDL_GLContext context = nullptr;
     InputState input;
     FrameView view;
+    std::unique_ptr<GlMaterialProgramCache> materialPrograms;
     GLuint program = 0, shadowProgram = 0, skyProgram = 0, toneProgram = 0, presentProgram = 0, hzbProgram = 0, gtaoProgram = 0,
            gtaoFilterProgram = 0, bloomProgram = 0, taaProgram = 0, gpuCullProgram = 0, uiProgram = 0, particleProgram = 0,
            gpuParticleProgram = 0, fullScreenVao = 0, particleInstanceBuffer = 0;
@@ -1457,17 +1459,49 @@ struct SdlGlRenderDevice::Impl
         return glyphs.emplace(codepoint, glyph).first->second;
     }
 
+    bool BindCompiledMaterial(const RenderItem &item, MaterialPass pass, MaterialGeometry geometry)
+    {
+        materialPrograms->SetFrameBindings(shadowDepths,lightDataTexture,clusterDataTexture,activeShadowCascade,
+            {static_cast<float>(sceneWidth),static_cast<float>(sceneHeight)});
+        if (!materialPrograms->Bind(*item.materialProxy,view,pass,geometry))
+        {
+            const auto &diagnostics=materialPrograms->GetDiagnostics();
+            if (!diagnostics.empty()) lastShaderError=diagnostics.back().message;
+            return false;
+        }
+        materialPrograms->BindObject(item,view,geometry);
+        if (item.materialProxy->state.twoSided) glDisable(GL_CULL_FACE);
+        else { glEnable(GL_CULL_FACE); glCullFace(pass==MaterialPass::Shadow ? GL_FRONT : GL_BACK); }
+        if (pass==MaterialPass::Base && item.materialProxy->state.blendMode==MaterialBlendMode::Alpha)
+        { glEnable(GL_BLEND); glBlendFunc(GL_SRC_ALPHA,GL_ONE_MINUS_SRC_ALPHA); glDepthMask(GL_FALSE); }
+        else { glDisable(GL_BLEND); glDepthMask(GL_TRUE); }
+        return true;
+    }
+    struct LegacyReflection
+    {
+        std::vector<ShaderParameterInfo> parameters;
+        std::unordered_map<std::string, GLint> locations;
+    };
+    std::unordered_map<std::string, LegacyReflection> legacyReflection;
     void UploadMaterialParameters(const std::shared_ptr<MaterialResource> &material)
     {
         if (!material || material->GetShaderPath().empty())
             return;
-        const auto reflected = ShaderPipeline::ReflectParameters(material->GetShaderPath());
-        for (const auto &parameter : reflected)
+        auto found = legacyReflection.find(material->GetShaderPath());
+        if (found == legacyReflection.end())
+        {
+            LegacyReflection reflection;
+            reflection.parameters = ShaderPipeline::ReflectParameters(std::filesystem::u8path(material->GetShaderPath()));
+            for (const auto &p : reflection.parameters)
+                reflection.locations.emplace(p.name, GetUniformLocation(program, p.name.c_str()));
+            found = legacyReflection.emplace(material->GetShaderPath(), std::move(reflection)).first;
+        }
+        for (const auto &parameter : found->second.parameters)
         {
             const auto value = material->GetParameters().find(parameter.name);
             if (value == material->GetParameters().end() || parameter.type == ShaderParameterType::Texture)
                 continue;
-            const GLint location = GetUniformLocation(program, parameter.name.c_str());
+            const GLint location = found->second.locations.at(parameter.name);
             if (parameter.type == ShaderParameterType::Float)
                 Uniform1f(location, value->second.x);
             else if (parameter.type == ShaderParameterType::Vec2)
@@ -1708,11 +1742,11 @@ struct SdlGlRenderDevice::Impl
         return &meshes.emplace(resource->GetPath(), mesh).first->second;
     }
 
-    GLuint GetOrCreateTexture(const std::shared_ptr<TextureResource> &resource, const bool srgb)
+    GLuint GetOrCreateTexture(const std::shared_ptr<TextureResource> &resource, const bool srgb, const std::uint64_t version = 0)
     {
         if (!resource || !resource->IsReady())
             return 0;
-        const std::string key = resource->GetPath() + (srgb ? "#srgb" : "#linear");
+        const std::string key = resource->GetPath() + (srgb ? "#srgb" : "#linear") + '#' + std::to_string(version);
         const auto found = textures.find(key);
         if (found != textures.end())
             return found->second;
@@ -1735,13 +1769,13 @@ struct SdlGlRenderDevice::Impl
             switch (resource->GetCompression())
             {
             case TextureResource::Compression::BC1:
-                format = srgb || resource->IsSrgbEncoded() ? 0x8C4D : 0x83F1;
+                format = srgb ? 0x8C4D : 0x83F1;
                 break;
             case TextureResource::Compression::BC2:
-                format = srgb || resource->IsSrgbEncoded() ? 0x8C4E : 0x83F2;
+                format = srgb ? 0x8C4E : 0x83F2;
                 break;
             case TextureResource::Compression::BC3:
-                format = srgb || resource->IsSrgbEncoded() ? 0x8C4F : 0x83F3;
+                format = srgb ? 0x8C4F : 0x83F3;
                 break;
             case TextureResource::Compression::BC4:
                 format = 0x8DBB;
@@ -1753,7 +1787,7 @@ struct SdlGlRenderDevice::Impl
                 format = 0x8E8F;
                 break;
             case TextureResource::Compression::BC7:
-                format = srgb || resource->IsSrgbEncoded() ? 0x8E8D : 0x8E8C;
+                format = srgb ? 0x8E8D : 0x8E8C;
                 break;
             default:
                 break;
@@ -1872,6 +1906,10 @@ bool SdlGlRenderDevice::Initialize()
         Shutdown();
         return false;
     }
+    m_impl->materialPrograms=std::make_unique<GlMaterialProgramCache>([this](const auto &texture,bool srgb,std::uint64_t version) {
+        return m_impl->GetOrCreateTexture(texture,srgb,version);
+    });
+    if (!m_impl->materialPrograms->Initialize()) { Shutdown(); return false; }
     m_impl->GenQueries(2, m_impl->timerQueries);
     m_impl->vertexShaderWatcher.HasChanged(m_impl->vertexShaderPath);
     m_impl->fragmentShaderWatcher.HasChanged(m_impl->fragmentShaderPath);
@@ -1901,6 +1939,7 @@ void SdlGlRenderDevice::Shutdown()
         return;
     if (m_impl->context)
     {
+        m_impl->materialPrograms.reset();
         m_impl->DestroySceneTarget();
         m_impl->DestroyShadowTarget();
         if (m_impl->timerQueries[0])
@@ -2253,6 +2292,19 @@ void SdlGlRenderDevice::BeginShadowPass(const FrameView &view, const std::size_t
 
 void SdlGlRenderDevice::DrawShadow(const RenderItem &item)
 {
+    if (item.materialProxy && item.materialProxy->legacyShaderPath.empty())
+    {
+        const auto geometry=item.skinMatrices.empty() ? MaterialGeometry::Static : MaterialGeometry::Skinned;
+        if (!m_impl->BindCompiledMaterial(item,MaterialPass::Shadow,geometry)) return;
+        const auto *compiledMesh=m_impl->GetOrCreateMesh(item.mesh);
+        if (!compiledMesh) return;
+        m_impl->BindVertexArray(compiledMesh->vao);
+        glDrawElements(GL_TRIANGLES,compiledMesh->indexCount,GL_UNSIGNED_INT,nullptr);
+        m_impl->BindVertexArray(0);
+        return;
+    }
+    m_impl->UseProgram(m_impl->shadowProgram);
+    glEnable(GL_CULL_FACE); glCullFace(GL_FRONT);
     const auto *mesh = m_impl->GetOrCreateMesh(item.mesh);
     if (!mesh)
         return;
@@ -2417,6 +2469,19 @@ void SdlGlRenderDevice::DrawSkybox()
 
 void SdlGlRenderDevice::Draw(const RenderItem &item)
 {
+    if (item.materialProxy && item.materialProxy->legacyShaderPath.empty())
+    {
+        const auto geometry=item.skinMatrices.empty() ? MaterialGeometry::Static : MaterialGeometry::Skinned;
+        if (!m_impl->BindCompiledMaterial(item,MaterialPass::Base,geometry)) return;
+        const auto *compiledMesh=m_impl->GetOrCreateMesh(item.mesh);
+        if (!compiledMesh) return;
+        m_impl->BindVertexArray(compiledMesh->vao);
+        glDrawElements(GL_TRIANGLES,compiledMesh->indexCount,GL_UNSIGNED_INT,nullptr);
+        m_impl->BindVertexArray(0);
+        return;
+    }
+    m_impl->UseProgram(m_impl->program);
+    glEnable(GL_CULL_FACE); glCullFace(GL_BACK);
     if (item.transparent)
     {
         glEnable(GL_BLEND);
@@ -2465,13 +2530,13 @@ void SdlGlRenderDevice::Draw(const RenderItem &item)
     bindTexture(item.roughnessTexture, 4, false, m_impl->roughnessTextureLocation, m_impl->hasRoughnessTextureLocation);
     bindTexture(item.aoTexture, 5, false, m_impl->aoTextureLocation, m_impl->hasAoTextureLocation);
     bindTexture(item.emissiveTexture, 6, true, m_impl->emissiveTextureLocation, m_impl->hasEmissiveTextureLocation);
-    bindTexture(item.packedTexture, 13, false, m_impl->packedTextureLocation, m_impl->hasPackedTextureLocation);
+    bindTexture(item.packedTexture, 7, false, m_impl->packedTextureLocation, m_impl->hasPackedTextureLocation);
     m_impl->Uniform1i(m_impl->packedLayoutRmaLocation, item.material && item.material->GetPackedTextureLayout() == "RMA" ? 1 : 0);
     const auto irradiance = m_impl->view.environmentIrradiance ? m_impl->view.environmentIrradiance : m_impl->view.environmentTexture;
     const auto prefilter = m_impl->view.environmentPrefilter ? m_impl->view.environmentPrefilter : m_impl->view.environmentTexture;
-    bindTexture(irradiance, 7, false, m_impl->environmentIrradianceLocation, -1);
-    bindTexture(prefilter, 11, false, m_impl->environmentPrefilterLocation, -1);
-    bindTexture(m_impl->view.environmentBrdfLut, 12, false, m_impl->environmentBrdfLocation, -1);
+    bindTexture(irradiance, 11, false, m_impl->environmentIrradianceLocation, -1);
+    bindTexture(prefilter, 12, false, m_impl->environmentPrefilterLocation, -1);
+    bindTexture(m_impl->view.environmentBrdfLut, 13, false, m_impl->environmentBrdfLocation, -1);
     m_impl->Uniform1i(m_impl->hasEnvironmentLocation, irradiance && prefilter && m_impl->view.environmentBrdfLut && irradiance->IsReady() &&
                                                               prefilter->IsReady() && m_impl->view.environmentBrdfLut->IsReady()
                                                           ? 1
@@ -2600,13 +2665,13 @@ void SdlGlRenderDevice::DrawInstanced(const std::vector<RenderItem> &items)
     bindTexture(first.roughnessTexture, 4, false, m_impl->roughnessTextureLocation, m_impl->hasRoughnessTextureLocation);
     bindTexture(first.aoTexture, 5, false, m_impl->aoTextureLocation, m_impl->hasAoTextureLocation);
     bindTexture(first.emissiveTexture, 6, true, m_impl->emissiveTextureLocation, m_impl->hasEmissiveTextureLocation);
-    bindTexture(first.packedTexture, 13, false, m_impl->packedTextureLocation, m_impl->hasPackedTextureLocation);
+    bindTexture(first.packedTexture, 7, false, m_impl->packedTextureLocation, m_impl->hasPackedTextureLocation);
     m_impl->Uniform1i(m_impl->packedLayoutRmaLocation, first.material && first.material->GetPackedTextureLayout() == "RMA" ? 1 : 0);
     const auto irradiance = m_impl->view.environmentIrradiance ? m_impl->view.environmentIrradiance : m_impl->view.environmentTexture;
     const auto prefilter = m_impl->view.environmentPrefilter ? m_impl->view.environmentPrefilter : m_impl->view.environmentTexture;
-    bindTexture(irradiance, 7, false, m_impl->environmentIrradianceLocation, -1);
-    bindTexture(prefilter, 11, false, m_impl->environmentPrefilterLocation, -1);
-    bindTexture(m_impl->view.environmentBrdfLut, 12, false, m_impl->environmentBrdfLocation, -1);
+    bindTexture(irradiance, 11, false, m_impl->environmentIrradianceLocation, -1);
+    bindTexture(prefilter, 12, false, m_impl->environmentPrefilterLocation, -1);
+    bindTexture(m_impl->view.environmentBrdfLut, 13, false, m_impl->environmentBrdfLocation, -1);
     m_impl->Uniform1i(m_impl->hasEnvironmentLocation, irradiance && prefilter && m_impl->view.environmentBrdfLut && irradiance->IsReady() &&
                                                               prefilter->IsReady() && m_impl->view.environmentBrdfLut->IsReady()
                                                           ? 1
@@ -3071,7 +3136,10 @@ int SdlGlRenderDevice::GetSceneTargetHeight() const
 }
 bool SdlGlRenderDevice::ReloadShaders()
 {
-    return m_impl && m_impl->ReloadDefaultShadersFromFiles();
+    if (!m_impl || !m_impl->ReloadDefaultShadersFromFiles()) return false;
+    m_impl->legacyReflection.clear();
+    m_impl->materialPrograms->SetTemplates(ShaderPipeline::LoadMaterialTemplates());
+    return true;
 }
 bool SdlGlRenderDevice::ValidateShader(const std::string &path)
 {
@@ -3185,4 +3253,28 @@ bool SdlGlRenderDevice::IsControllerConnected() const
 {
     return m_impl && m_impl->controller && SDL_GameControllerGetAttached(m_impl->controller) == SDL_TRUE;
 }
+#ifdef TINYENGINE_TEST_HOOKS
+std::vector<Vec4> SdlGlRenderDevice::ReadHdrAttachmentForTests(std::size_t attachment) const
+{
+    if (!m_impl || !m_impl->sceneFramebuffer || attachment > 2) return {};
+    GLint previousFramebuffer = 0, previousReadBuffer = 0;
+    glGetIntegerv(0x8CA6, &previousFramebuffer);
+    glGetIntegerv(GL_READ_BUFFER, &previousReadBuffer);
+    m_impl->BindFramebuffer(GL_FRAMEBUFFER, m_impl->sceneFramebuffer);
+    glReadBuffer(GL_COLOR_ATTACHMENT0 + static_cast<GLenum>(attachment));
+    std::vector<Vec4> pixels(static_cast<std::size_t>(m_impl->sceneWidth) * m_impl->sceneHeight);
+    glReadPixels(0,0,m_impl->sceneWidth,m_impl->sceneHeight,GL_RGBA,GL_FLOAT,pixels.data());
+    m_impl->BindFramebuffer(GL_FRAMEBUFFER, static_cast<GLuint>(previousFramebuffer));
+    glReadBuffer(static_cast<GLenum>(previousReadBuffer));
+    return pixels;
+}
+std::size_t SdlGlRenderDevice::GetMaterialProgramCompileCountForTests(MaterialPass pass) const
+{
+    return m_impl && m_impl->materialPrograms ? m_impl->materialPrograms->GetCompileCount(pass) : 0;
+}
+#endif
 } // namespace MiniEngine
+
+#ifdef TINYENGINE_TEST_HOOKS
+namespace MiniEngine { const std::vector<MaterialDiagnostic> &SdlGlRenderDevice::GetMaterialDiagnosticsForTests() const { return m_impl->materialPrograms->GetDiagnostics(); } }
+#endif

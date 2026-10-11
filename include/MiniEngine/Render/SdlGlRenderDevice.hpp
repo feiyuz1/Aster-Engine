@@ -199,6 +199,11 @@ class SdlGlRenderDevice final : public RenderDevice
     /// @brief 获取 `DpiScale`。
     /// @return 返回当前显示 DPI 相对 96 的缩放比例。
     float GetDpiScale() const;
+#ifdef TINYENGINE_TEST_HOOKS
+    std::vector<Vec4> ReadHdrAttachmentForTests(std::size_t attachment = 0) const;
+    std::size_t GetMaterialProgramCompileCountForTests(MaterialPass pass = MaterialPass::Base) const;
+    const std::vector<MaterialDiagnostic> &GetMaterialDiagnosticsForTests() const;
+#endif
 
   private:
     struct Impl;

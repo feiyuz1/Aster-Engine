@@ -5,6 +5,7 @@
 
 #include "MiniEngine/Render/ShaderPipeline.hpp"
 #include "MiniEngine/Platform/Platform.hpp"
+#include "MiniEngine/Render/BuiltinMaterialShaders.hpp"
 
 #include <algorithm>
 #include <iomanip>
@@ -15,6 +16,23 @@
 
 namespace MiniEngine
 {
+MaterialTemplateSources ShaderPipeline::LoadMaterialTemplates(const std::filesystem::path &directory)
+{
+    const std::map<std::string,const char *> builtins = {
+        {"Surface.glsl",BuiltinMaterialShaders::Surface_glsl}, {"Lighting.glsl",BuiltinMaterialShaders::Lighting_glsl},
+        {"VertexTransform.glsl",BuiltinMaterialShaders::VertexTransform_glsl}, {"BasePass.vert",BuiltinMaterialShaders::BasePass_vert},
+        {"BasePass.frag",BuiltinMaterialShaders::BasePass_frag}, {"ShadowPass.vert",BuiltinMaterialShaders::ShadowPass_vert},
+        {"ShadowPass.frag",BuiltinMaterialShaders::ShadowPass_frag}};
+    MaterialTemplateSources sources;
+    for (const auto &entry : builtins)
+    {
+        auto text = PlatformFile::ReadAllText(directory / std::filesystem::u8path(entry.first));
+        if (text.empty()) text = entry.second;
+        text.erase(std::remove(text.begin(),text.end(),'\r'),text.end());
+        sources.files.emplace(entry.first,std::move(text));
+    }
+    return sources;
+}
 namespace
 {
 std::uint64_t Hash(const std::string &text)

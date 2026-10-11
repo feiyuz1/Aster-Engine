@@ -1,4 +1,4 @@
-﻿// 文件：src/Resource/Resource.cpp
+// 文件：src/Resource/Resource.cpp
 // 作用：定义资源状态机以及纹理、网格、材质和着色器的运行时数据。
 // 约定：资源对象可能异步完成，调用方必须检查状态或显式等待。
 // 类型：实现文件。
@@ -358,8 +358,8 @@ bool TextureResource::Load(const std::string &path)
     m_compression = Compression::None;
     m_mipLevels.clear();
     m_srgbEncoded = false;
-    const auto bytes = PlatformFile::ReadAllBytes(path);
-    std::string extension = std::filesystem::path(path).extension().string();
+    const auto bytes = PlatformFile::ReadAllBytes(std::filesystem::u8path(path));
+    std::string extension = std::filesystem::u8path(path).extension().generic_u8string();
     std::transform(extension.begin(), extension.end(), extension.begin(),
                    [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
     if ((extension == ".dds" && LoadDds(bytes, m_width, m_height, m_compression, m_srgbEncoded, m_mipLevels, m_data)) ||
@@ -528,7 +528,7 @@ bool TextureResource::IsSrgbEncoded() const
 bool MeshResource::Load(const std::string &path)
 {
     MarkLoading(path);
-    const auto bytes = PlatformFile::ReadAllBytes(path);
+    const auto bytes = PlatformFile::ReadAllBytes(std::filesystem::u8path(path));
     const bool compiledMeshV1 = bytes.size() >= 8 && std::equal(bytes.begin(), bytes.begin() + 8, "TNYMSH1\0");
     const bool compiledMeshV2 = bytes.size() >= 8 && std::equal(bytes.begin(), bytes.begin() + 8, "TNYMSH2\0");
     if (compiledMeshV1 || compiledMeshV2)
