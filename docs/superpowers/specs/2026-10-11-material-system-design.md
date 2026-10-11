@@ -1,6 +1,6 @@
 # TinyEngine 简化材质系统设计
 
-日期：2026-10-11。状态：规划稿，尚未实施。
+日期：2026-10-11。本文保存实施前确定的设计；任务 1–8 已实现，验收结果见 `docs/材质系统验收.md`。
 
 ## 1. 目标与已确定范围
 
@@ -16,7 +16,7 @@
 - 旧 `.mat`、`TINY_MATGRAPH 1`、Assimp 导入、Demo.scene 和现有渲染稳定性测试必须继续工作。
 - GPU 对象只在持有 OpenGL 上下文的线程创建、替换和销毁。
 - 第一版只支持 Surface 域、UV0、Float/Vec2/Vec3/Vec4/Texture2D 参数；最多 64 个数值参数、8 个材质纹理参数。
-- 本次交付设计与实施计划；产品代码、构建文件和已有素材尚未修改。
+- 本文为设计基线；产品实现、构建与测试结果由实施计划和验收记录追踪。
 
 ## 2. 本机 UE 5.3.2 的参考位置
 
@@ -36,7 +36,7 @@
 
 UE 同时包含传统表达式编译和新的 HLSL 生成路径。第一版借鉴它们共同的边界，不复制两套编译器、复杂 ShaderMap 或线程系统。
 
-## 3. 当前 TinyEngine 的基础与缺口
+## 3. 实施前 TinyEngine 的基础与缺口
 
 - `include/MiniEngine/Resource/Resource.hpp:205`：MaterialResource 已保存固定 PBR 字段、parent、override 和自定义 Vec4 参数。
 - `src/Resource/Resource.cpp:830`：加载时递归继承；未写 override 的子属性可以直接覆盖父属性，显式 `override property 0` 禁止该覆盖。迁移时要保留这一旧格式语义。
