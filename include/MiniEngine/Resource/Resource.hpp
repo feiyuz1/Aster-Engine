@@ -6,6 +6,7 @@
 #pragma once
 
 #include "MiniEngine/Math/Math.hpp"
+#include "MiniEngine/Render/MaterialTypes.hpp"
 
 #include <atomic>
 #include <condition_variable>
@@ -209,6 +210,8 @@ class MaterialResource final : public Resource
     /// @param path 文件、资源或目录路径。
     /// @return 操作成功时返回 `true`，否则返回 `false`。
     bool Load(const std::string &path) override;
+    bool Save(const std::string &path) const;
+    const MaterialAssetData &GetMaterialData() const { return m_materialData; }
     /// @brief 卸载资源并释放相关缓存。
     void Unload() override;
     /// @brief 获取 `ByteSize`。
@@ -268,6 +271,9 @@ class MaterialResource final : public Resource
     const std::string &GetPackedTextureLayout() const;
 
   private:
+    bool LoadCandidate(const std::string &path);
+    void CaptureLegacyData(const std::string &source);
+    MaterialAssetData m_materialData;
     Vec4 m_baseColor{0.3f, 0.7f, 1.0f, 1.0f};
     std::string m_shaderPath;
     std::string m_texturePath;

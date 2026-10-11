@@ -13,6 +13,7 @@
 #include <cfloat>
 #include <cmath>
 #include <filesystem>
+#include <iomanip>
 #include <limits>
 #include <sstream>
 #include <unordered_map>
@@ -829,6 +830,72 @@ const std::string &ShaderResource::GetSource() const
 
 bool MaterialResource::Load(const std::string &path)
 {
+    const bool hadValidData = IsReady();
+    MaterialResource candidate;
+    if (!candidate.LoadCandidate(path))
+    {
+        SetState(hadValidData ? ResourceState::Loaded : ResourceState::Failed, candidate.GetError());
+        return false;
+    }
+    MarkLoading(path);
+    m_baseColor = candidate.m_baseColor;
+    m_metallic = candidate.m_metallic;
+    m_roughness = candidate.m_roughness;
+    m_emissive = candidate.m_emissive;
+    m_transparent = candidate.m_transparent;
+    m_shaderPath = std::move(candidate.m_shaderPath);
+    m_texturePath = std::move(candidate.m_texturePath);
+    m_normalTexturePath = std::move(candidate.m_normalTexturePath);
+    m_metallicTexturePath = std::move(candidate.m_metallicTexturePath);
+    m_roughnessTexturePath = std::move(candidate.m_roughnessTexturePath);
+    m_aoTexturePath = std::move(candidate.m_aoTexturePath);
+    m_emissiveTexturePath = std::move(candidate.m_emissiveTexturePath);
+    m_parentPath = std::move(candidate.m_parentPath);
+    m_overrides = std::move(candidate.m_overrides);
+    m_parameters = std::move(candidate.m_parameters);
+    m_packedTexturePath = std::move(candidate.m_packedTexturePath);
+    m_packedTextureLayout = std::move(candidate.m_packedTextureLayout);
+    m_materialData = std::move(candidate.m_materialData);
+    SetState(ResourceState::Loaded);
+    return true;
+}
+bool MaterialResource::Save(const std::string &path) const
+{
+    if (!IsReady()) return false;
+    const auto source = SerializeMaterialAsset(m_materialData);
+    if (m_materialData.formatVersion == 2)
+    {
+        MaterialAssetData validated;
+        std::string error;
+        if (!ParseMaterialAsset(source, validated, error)) return false;
+    }
+    return PlatformFile::WriteAllText(path, source);
+}
+void MaterialResource::CaptureLegacyData(const std::string &source)
+{
+    m_materialData = {};
+    m_materialData.parentPath = m_parentPath;
+    auto &data = m_materialData.legacyData;
+    data.baseColor = m_baseColor;
+    data.metallic = m_metallic;
+    data.roughness = m_roughness;
+    data.emissive = m_emissive;
+    data.transparent = m_transparent;
+    data.shaderPath = m_shaderPath;
+    data.texturePath = m_texturePath;
+    data.normalTexturePath = m_normalTexturePath;
+    data.metallicTexturePath = m_metallicTexturePath;
+    data.roughnessTexturePath = m_roughnessTexturePath;
+    data.aoTexturePath = m_aoTexturePath;
+    data.emissiveTexturePath = m_emissiveTexturePath;
+    data.packedTexturePath = m_packedTexturePath;
+    data.packedTextureLayout = m_packedTextureLayout;
+    data.overrideFlags.insert(m_overrides.begin(), m_overrides.end());
+    data.parameters.insert(m_parameters.begin(), m_parameters.end());
+    data.source = source;
+}
+bool MaterialResource::LoadCandidate(const std::string &path)
+{
     MarkLoading(path);
     static thread_local std::unordered_set<std::string> loadingMaterials;
     const std::string normalizedPath = PlatformFile::Normalize(path).generic_string();
@@ -863,12 +930,26 @@ bool MaterialResource::Load(const std::string &path)
     m_parameters.clear();
     m_packedTexturePath.clear();
     m_packedTextureLayout = "ORM";
-    m_packedTextureLayout = "ORM";
     const std::string source = PlatformFile::ReadAllText(path);
     if (source.empty())
     {
         SetState(ResourceState::Failed, "Material file not found: " + path);
         return false;
+    }
+    std::istringstream headerStream(source);
+    std::string header;
+    headerStream >> header;
+    if (header == "TINY_MAT")
+    {
+        std::string error;
+        if (!ParseMaterialAsset(source, m_materialData, error))
+        {
+            SetState(ResourceState::Failed, error);
+            return false;
+        }
+        m_parentPath = m_materialData.parentPath;
+        SetState(ResourceState::Loaded);
+        return true;
     }
     {
         std::istringstream parentStream(source);
@@ -876,7 +957,7 @@ bool MaterialResource::Load(const std::string &path)
         while (parentStream >> parentKey)
             if (parentKey == "parent")
             {
-                parentStream >> m_parentPath;
+                parentStream >> std::quoted(m_parentPath);
                 break;
             }
             else
@@ -940,7 +1021,7 @@ bool MaterialResource::Load(const std::string &path)
         if (key == "parent")
         {
             std::string ignored;
-            stream >> ignored;
+            stream >> std::quoted(ignored);
         }
         else if (key == "override")
         {
@@ -973,7 +1054,7 @@ bool MaterialResource::Load(const std::string &path)
                  key == "aoTexture" || key == "emissiveTexture" || key == "packedTexture")
         {
             std::string value;
-            stream >> value;
+            stream >> std::quoted(value);
             if (applies(key))
             {
                 if (key == "shader")
@@ -1024,11 +1105,13 @@ bool MaterialResource::Load(const std::string &path)
     }
     m_metallic = std::clamp(m_metallic, 0.0f, 1.0f);
     m_roughness = std::clamp(m_roughness, 0.04f, 1.0f);
+    CaptureLegacyData(source);
     SetState(ResourceState::Loaded);
     return true;
 }
 void MaterialResource::Unload()
 {
+    m_materialData = {};
     m_shaderPath.clear();
     m_texturePath.clear();
     m_normalTexturePath.clear();

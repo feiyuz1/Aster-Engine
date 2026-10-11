@@ -134,6 +134,7 @@ add_library(tinyengine STATIC
     src/Render/ClusteredLighting.cpp
     src/Render/EnvironmentBaker.cpp
     src/Render/MaterialGraph.cpp
+    src/Render/MaterialTypes.cpp
     src/Render/ShaderPipeline.cpp
     src/Render/SdlGlRenderDevice.cpp
     src/Physics/PhysicsWorld.cpp
@@ -276,6 +277,10 @@ if(TINYENGINE_BUILD_TESTS)
     enable_testing()
     # 只有启用测试目标时才开放测试读取接口，正常构建不会带上这些入口。
     target_compile_definitions(tinyengine PUBLIC TINYENGINE_TEST_HOOKS=1)
+    add_executable(tinyengine_material_tests tests/MaterialSystemTests.cpp)
+    target_link_libraries(tinyengine_material_tests PRIVATE tinyengine)
+    add_test(NAME tinyengine_material_cpu COMMAND tinyengine_material_tests)
+    set_tests_properties(tinyengine_material_cpu PROPERTIES WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
     add_executable(tinyengine_tests tests/EngineTests.cpp)
     target_link_libraries(tinyengine_tests PRIVATE tinyengine)
     add_executable(tinyengine_render_stability_tests tests/RenderStabilityTests.cpp)
@@ -337,7 +342,7 @@ if(MSVC)
     foreach(TINYENGINE_SOURCE_TARGET IN ITEMS
             tinyengine tinyengine_demo tinyengine_game tinyengine_importers tinyengine_editor
             tinyengine_asset_tool tinyengine_scene_tool tinyengine_package_tool tinyengine_commandlet
-            tinyengine_tests tinyengine_render_stability_tests tinyengine_scene_save_tests tinyengine_test_dynamic_plugin tinyengine_extended_tests
+            tinyengine_tests tinyengine_material_tests tinyengine_render_stability_tests tinyengine_scene_save_tests tinyengine_test_dynamic_plugin tinyengine_extended_tests
             tinyengine_import_compatibility_tests tinyengine_editor_interaction_tests
             tinyengine_platform_mount_tests tinyengine_script_lifecycle_tests)
         if(TARGET ${TINYENGINE_SOURCE_TARGET})
