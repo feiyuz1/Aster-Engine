@@ -67,6 +67,7 @@ FrameView View()
 Vec4 Draw(SdlGlRenderDevice &device, RenderItem &item, const FrameView &view)
 {
     device.BeginFrame(view); device.Draw(item);
+    if (!device.GetLastShaderError().empty()) std::cout << "Material draw diagnostic: " << device.GetLastShaderError() << '\n';
     const auto hdr=device.ReadHdrAttachmentForTests(0);
     Check(hdr.size()==64*64,"read real linear HDR target");
     if (hdr.size()!=64*64) return {};
@@ -150,6 +151,52 @@ void TestTextureBudget(SdlGlRenderDevice &device, RenderItem &item)
     if (active) active(GL_TEXTURE0);
     Check(glGetError()==GL_NO_ERROR,"material binding and draws generate no GL errors");
 }
+void TestPassClippingAndState(SdlGlRenderDevice &device,RenderItem &item)
+{
+    auto graph=ColorDefinition(); graph.renderState.blendMode=MaterialBlendMode::Masked; graph.renderState.twoSided=true;
+    auto uv=graph.graph.AddNode(MaterialNodeType::TexCoord,"UV");
+    auto x=graph.graph.AddNode(MaterialNodeType::ComponentMask,"X"); graph.graph.GetNodes().back().channelMask="x";
+    graph.graph.Connect(uv,x,0); graph.graph.Connect(x,1,6);
+    item.materialProxy=Proxy(graph); Draw(device,item,View()); auto hdr=device.ReadHdrAttachmentForTests(0);
+    Check(hdr[32*64+20].x<.02f && hdr[32*64+44].x>.9f,"Masked Base clips UV hole and keeps solid half");
+    device.BeginShadowPass(View(),0); device.DrawShadow(item);
+    auto left=device.ReadShadowDepthForTests(640,1024), right=device.ReadShadowDepthForTests(1408,1024); device.EndShadowPass();
+    Check(left>.99f && right<.6f,"Masked Shadow clips the same UV hole");
+    auto opaque=ColorDefinition(); opaque.renderState.twoSided=true; item.materialProxy=Proxy(opaque); item.model=ScaleMatrix({-1,1,1});
+    auto back=Draw(device,item,View()); opaque.renderState.twoSided=false; item.materialProxy=Proxy(opaque); auto culled=Draw(device,item,View());
+    opaque.renderState.twoSided=true; item.materialProxy=Proxy(opaque); auto again=Draw(device,item,View());
+    Check(back.x>.9f && culled.x<.02f && again.x>.9f,"TwoSided state alternates without leaking cull state");
+    item.model=Mat4::Identity();
+}
+void TestGeometryAndPbr(SdlGlRenderDevice &device,RenderItem &item)
+{
+    item.materialProxy=Proxy(ColorDefinition());
+    device.BeginFrame(View()); device.DrawInstanced({item,item}); auto hdr=device.ReadHdrAttachmentForTests(0);
+    Check(hdr[32*64+32].x>.9f,"Instanced compiled material survives compute culling and rebinding");
+    auto weighted=std::make_shared<MeshResource>(); weighted->Load(root+"weighted.mesh"); auto mesh=item.mesh; item.mesh=weighted;
+    item.skinMatrices={TranslationMatrix({.7f,0,0})}; Draw(device,item,View()); hdr=device.ReadHdrAttachmentForTests(0);
+    Check(hdr[32*64+10].x<.02f && hdr[32*64+50].x>.9f,"Skinned Base uses current bone transform");
+    auto two=std::make_shared<MaterialRenderProxy>(*item.materialProxy); two->state.twoSided=true; item.materialProxy=two;
+    device.BeginShadowPass(View(),0); device.DrawShadow(item);
+    Check(device.ReadShadowDepthForTests(320,1024)>.99f && device.ReadShadowDepthForTests(1600,1024)<.6f,"Skinned Shadow uses the same current bone transform"); device.EndShadowPass();
+    item.mesh=mesh; item.skinMatrices.clear(); item.material=std::make_shared<MaterialResource>(); item.material->Load(root+"pbr.mat");
+    auto view=View(); view.lights[0].intensity=3; view.lights[0].direction={0,0,-1};
+    item.materialProxy.reset(); auto old=Draw(device,item,view); auto oldAmbient=device.ReadHdrAttachmentForTests(2)[32*64+32];
+    ResourceManager resources; resources.Initialize(nullptr,root); MaterialSystem system(resources); item.materialProxy=system.BuildProxy("assets/pbr.mat");
+    auto unified=Draw(device,item,view); auto ambient=device.ReadHdrAttachmentForTests(2)[32*64+32];
+    const auto relative=[](float a,float b) { return std::abs(a-b)/std::max(.01f,std::abs(a)); };
+    Check(relative(old.x,unified.x)<.01f && relative(old.y,unified.y)<.01f && relative(old.z,unified.z)<.01f && relative(oldAmbient.x,ambient.x)<.01f,"fixed PBR and unified PBR match linear HDR within one percent");
+    auto graph=ColorDefinition(); graph.renderState.shadingModel=MaterialShadingModel::Lit; graph.parameters[0].defaultValue=Vec4{.4f,.2f,.1f,1};
+    for (auto port:{1u,2u,5u})
+    {
+        auto id=graph.graph.AddNode(MaterialNodeType::Constant,"PBR value"); auto &node=graph.graph.GetNodes().back();
+        node.constantType=port==5 ? MaterialParameterType::Vec3 : MaterialParameterType::Float;
+        node.value=port==1 ? Vec4{.6f,0,0,0} : port==2 ? Vec4{.35f,0,0,0} : Vec4{.1f,.05f,.02f,0}; graph.graph.Connect(id,1,port);
+    }
+    item.materialProxy=Proxy(graph); const auto graphPixel=Draw(device,item,view);
+    Check(relative(old.x,graphPixel.x)<.01f && relative(old.y,graphPixel.y)<.01f && relative(old.z,graphPixel.z)<.01f,"node graph PBR matches fixed PBR HDR within one percent");
+    resources.Shutdown(); item.material.reset();
+}
 }
 int main()
 {
@@ -160,6 +207,10 @@ int main()
             "vt 0 0\nvt 1 0\nvt 1 1\nvt 0 1\nvn 0 0 1\nf 1/1/1 2/2/1 3/3/1\nf 1/1/1 3/3/1 4/4/1\n");
         PlatformFile::WriteAllText(root+"gray.ppm","P3\n1 1\n255\n128 128 128\n");
         PlatformFile::WriteAllText(root+"dark.ppm","P3\n1 1\n255\n64 64 64\n");
+        auto weightedSource=PlatformFile::ReadAllText(root+"quad.mesh");
+        weightedSource.insert(weightedSource.find("f 1/"),"vw 1 0 1 0 0 0 0 0 0\nvw 2 0 1 0 0 0 0 0 0\nvw 3 0 1 0 0 0 0 0 0\nvw 4 0 1 0 0 0 0 0 0\n");
+        PlatformFile::WriteAllText(root+"weighted.mesh",weightedSource);
+        PlatformFile::WriteAllText(root+"pbr.mat","color .4 .2 .1 1\nmetallic .6\nroughness .35\nemissive .1 .05 .02\n");
         SdlGlRenderDevice device(64,64,"Material GPU tests");
         Check(device.Initialize(),"initialize real OpenGL 4.3 context"); if (failures) return 1;
         SDL_HideWindow(static_cast<SDL_Window *>(device.GetNativeWindow()));
@@ -167,6 +218,7 @@ int main()
         device.EnableSceneRenderTarget(true,64,64); device.SetTaaEnabled(false); device.SetBloomEnabled(false); device.SetGtaoEnabled(false); device.SetFxaaEnabled(false);
         RenderItem item; item.mesh=std::make_shared<MeshResource>(); Check(item.mesh->Load(root+"quad.mesh"),"load GPU test quad");
         TestSharedPrograms(device,item); TestParameterUpload(device,item); TestTextureSemantics(device,item); TestFallbackTexture(device,item); TestTextureBudget(device,item);
+        TestPassClippingAndState(device,item); TestGeometryAndPbr(device,item);
         device.Shutdown();
     }
     catch (const std::exception &error) { std::cerr << "[FAIL] " << error.what() << '\n'; return 1; }

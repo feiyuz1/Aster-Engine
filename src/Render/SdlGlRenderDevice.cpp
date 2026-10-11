@@ -2326,6 +2326,17 @@ void SdlGlRenderDevice::DrawShadowInstanced(const std::vector<RenderItem> &items
 {
     if (items.empty())
         return;
+    if (items.front().materialProxy && items.front().materialProxy->legacyShaderPath.empty())
+    {
+        if (!m_impl->BindCompiledMaterial(items.front(),MaterialPass::Shadow,MaterialGeometry::Instanced)) return;
+        auto *mesh=const_cast<Impl::GpuMesh *>(m_impl->GetOrCreateMesh(items.front().mesh)); if (!mesh) return;
+        std::vector<Mat4> models; for (const auto &item:items) models.push_back(item.model);
+        m_impl->BindVertexArray(mesh->vao); m_impl->BindBuffer(GL_ARRAY_BUFFER,mesh->instanceBuffer);
+        m_impl->BufferData(GL_ARRAY_BUFFER,static_cast<GLsizeiptr>(models.size()*sizeof(Mat4)),models.data(),GL_DYNAMIC_DRAW);
+        m_impl->DrawElementsInstanced(GL_TRIANGLES,mesh->indexCount,GL_UNSIGNED_INT,nullptr,static_cast<GLsizei>(models.size()));
+        m_impl->BindVertexArray(0); return;
+    }
+    m_impl->UseProgram(m_impl->shadowProgram); glEnable(GL_CULL_FACE); glCullFace(GL_FRONT);
     auto *mesh = const_cast<Impl::GpuMesh *>(m_impl->GetOrCreateMesh(items.front().mesh));
     if (!mesh)
         return;
@@ -2563,6 +2574,8 @@ void SdlGlRenderDevice::DrawInstanced(const std::vector<RenderItem> &items)
         return;
     glDisable(GL_BLEND);
     glDepthMask(GL_TRUE);
+    if (items.front().materialProxy && items.front().materialProxy->legacyShaderPath.empty())
+        if (!m_impl->BindCompiledMaterial(items.front(),MaterialPass::Base,MaterialGeometry::Instanced)) return;
     auto *mesh = const_cast<Impl::GpuMesh *>(m_impl->GetOrCreateMesh(items.front().mesh));
     if (!mesh)
         return;
@@ -2636,6 +2649,16 @@ void SdlGlRenderDevice::DrawInstanced(const std::vector<RenderItem> &items)
         m_impl->BufferData(GL_ARRAY_BUFFER, static_cast<GLsizeiptr>(previousModels.size() * sizeof(Mat4)), previousModels.data(),
                            GL_DYNAMIC_DRAW);
     }
+    if (items.front().materialProxy && items.front().materialProxy->legacyShaderPath.empty())
+    {
+        // Compute culling changes program and texture bindings; restore the complete material/frame bindings.
+        if (!m_impl->BindCompiledMaterial(items.front(),MaterialPass::Base,MaterialGeometry::Instanced)) { m_impl->BindVertexArray(0); return; }
+        m_impl->BindVertexArray(mesh->vao);
+        if (gpuCulled) { m_impl->BindBuffer(0x8F3F,mesh->indirectBuffer); m_impl->DrawElementsIndirect(GL_TRIANGLES,GL_UNSIGNED_INT,nullptr); m_impl->BindBuffer(0x8F3F,0); }
+        else m_impl->DrawElementsInstanced(GL_TRIANGLES,mesh->indexCount,GL_UNSIGNED_INT,nullptr,static_cast<GLsizei>(models.size()));
+        m_impl->BindVertexArray(0); return;
+    }
+    m_impl->UseProgram(m_impl->program); glEnable(GL_CULL_FACE); glCullFace(GL_BACK);
     m_impl->Uniform1i(m_impl->instancedLocation, 1);
     m_impl->UniformMatrix4fv(m_impl->modelLocation, 1, GL_FALSE, Mat4::Identity().Data());
     m_impl->UniformMatrix4fv(m_impl->previousModelLocation, 1, GL_FALSE, Mat4::Identity().Data());
@@ -3160,6 +3183,19 @@ bool SdlGlRenderDevice::ValidateShader(const std::string &path)
     m_impl->lastShaderError.clear();
     return true;
 }
+bool SdlGlRenderDevice::ValidateMaterial(const CompiledMaterial &material,std::vector<MaterialDiagnostic> &diagnostics)
+{
+    if (!m_impl || !m_impl->materialPrograms) return false;
+    const auto before=m_impl->materialPrograms->GetDiagnostics().size();
+    bool valid=true;
+    for (const auto pass:{MaterialPass::Base,MaterialPass::Shadow})
+        for (const auto geometry:{MaterialGeometry::Static,MaterialGeometry::Skinned,MaterialGeometry::Instanced})
+            valid=m_impl->materialPrograms->GetOrCreate(material,pass,geometry)!=nullptr && valid;
+    const auto &all=m_impl->materialPrograms->GetDiagnostics();
+    diagnostics.insert(diagnostics.end(),all.begin()+before,all.end());
+    if (!valid && diagnostics.empty()) diagnostics.push_back({MaterialDiagnosticSeverity::Error,{},0,-1,"Material GPU validation failed (cached failure)"});
+    return valid;
+}
 void SdlGlRenderDevice::SetExposure(const float exposure)
 {
     if (m_impl)
@@ -3277,4 +3313,13 @@ std::size_t SdlGlRenderDevice::GetMaterialProgramCompileCountForTests(MaterialPa
 
 #ifdef TINYENGINE_TEST_HOOKS
 namespace MiniEngine { const std::vector<MaterialDiagnostic> &SdlGlRenderDevice::GetMaterialDiagnosticsForTests() const { return m_impl->materialPrograms->GetDiagnostics(); } }
+#endif
+#ifdef TINYENGINE_TEST_HOOKS
+namespace MiniEngine {
+float SdlGlRenderDevice::ReadShadowDepthForTests(int x,int y,std::size_t cascade) const {
+    GLint old=0; glGetIntegerv(GL_FRAMEBUFFER_BINDING,&old);
+    m_impl->BindFramebuffer(GL_FRAMEBUFFER,m_impl->shadowFramebuffers[std::min<std::size_t>(cascade,2)]);
+    float depth=1; glReadPixels(x,y,1,1,GL_DEPTH_COMPONENT,GL_FLOAT,&depth);
+    m_impl->BindFramebuffer(GL_FRAMEBUFFER,static_cast<GLuint>(old)); return depth;
+} }
 #endif

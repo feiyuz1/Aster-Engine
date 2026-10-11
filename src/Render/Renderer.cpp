@@ -165,7 +165,7 @@ Aabb TransformBounds(const Aabb &bounds, const Mat4 &matrix)
 std::vector<std::vector<RenderItem>> BuildInstanceBatches(const std::vector<RenderItem> &items)
 {
     std::vector<std::vector<RenderItem>> batches;
-    std::unordered_map<std::string, std::size_t> lookup;
+    std::unordered_map<std::size_t, std::vector<std::size_t>> lookup;
     for (const auto &item : items)
     {
         if (item.transparent || !item.skinMatrices.empty() || !item.mesh)
@@ -173,15 +173,21 @@ std::vector<std::vector<RenderItem>> BuildInstanceBatches(const std::vector<Rend
             batches.push_back({item});
             continue;
         }
-        const std::string key = item.mesh->GetPath() + "|" + (item.material ? item.material->GetPath() : std::string{});
-        const auto found = lookup.find(key);
-        if (found == lookup.end())
+        const auto key=std::hash<std::string>{}(item.mesh->GetPath()) ^ (item.materialProxy ? item.materialProxy->valueHash : std::hash<std::string>{}(item.material ? item.material->GetPath() : std::string{}));
+        auto &candidates=lookup[key];
+        const auto found=std::find_if(candidates.begin(),candidates.end(),[&](auto index) {
+            const auto &first=batches[index].front();
+            if (first.mesh->GetPath()!=item.mesh->GetPath() || bool(first.materialProxy)!=bool(item.materialProxy)) return false;
+            if (item.materialProxy) return first.materialProxy->canonicalValueContent==item.materialProxy->canonicalValueContent;
+            return (first.material ? first.material->GetPath() : std::string{})==(item.material ? item.material->GetPath() : std::string{});
+        });
+        if (found == candidates.end())
         {
-            lookup[key] = batches.size();
+            candidates.push_back(batches.size());
             batches.push_back({item});
         }
         else
-            batches[found->second].push_back(item);
+            batches[*found].push_back(item);
     }
     return batches;
 }
@@ -207,7 +213,11 @@ void Renderer::SetLogger(Logger *logger)
 void Renderer::SetResourceManager(ResourceManager *resources)
 {
     m_resources = resources;
+    m_materialSystem = resources ? std::make_unique<MaterialSystem>(*resources) : nullptr;
+    m_dynamicMaterials.clear();
 }
+void Renderer::SetDynamicMaterial(Entity entity, std::shared_ptr<DynamicMaterialInstance> instance)
+{ if (instance) m_dynamicMaterials[entity]=std::move(instance); else m_dynamicMaterials.erase(entity); }
 
 bool Renderer::Initialize(std::unique_ptr<RenderDevice> device)
 {
@@ -223,6 +233,7 @@ void Renderer::Shutdown()
     m_lastCulled = 0;
     m_renderGraph.Reset();
     m_previousModels.clear();
+    m_dynamicMaterials.clear();
     m_hasPreviousView = false;
     m_frameNumber = 0;
     if (m_device)
@@ -245,6 +256,8 @@ const InputState &Renderer::GetInputState() const
 // 在提交 GPU 前拍平 ECS 数据，并在这里完成视锥、LOD、遮挡候选和材质资源解析。
 void Renderer::BuildRenderQueue(World &world)
 {
+    for (auto it=m_dynamicMaterials.begin();it!=m_dynamicMaterials.end();)
+        if (!world.IsAlive(it->first)) it=m_dynamicMaterials.erase(it); else ++it;
     m_renderQueue.Clear();
     m_shadowItems.clear();
     m_lastCulled = 0;
@@ -419,7 +432,9 @@ void Renderer::BuildRenderQueue(World &world)
         if (!sceneVisible && !castsShadow)
             return;
         auto material = m_resources->Load<MaterialResource>(meshComponent.materialPath);
-        const bool transparent = material && material->IsTransparent();
+        const auto dynamic=m_dynamicMaterials.find(entity);
+        auto proxy=m_materialSystem->BuildProxy(meshComponent.materialPath,dynamic==m_dynamicMaterials.end() ? nullptr : dynamic->second.get());
+        const bool transparent = proxy && proxy->state.blendMode==MaterialBlendMode::Alpha;
         RenderItem item;
         item.entity = entity;
         item.distanceToCamera = distance;
@@ -430,6 +445,7 @@ void Renderer::BuildRenderQueue(World &world)
         if (animation)
             item.skinMatrices = animation->skinMatrices;
         item.mesh = std::move(mesh);
+        item.materialProxy=std::move(proxy);
         item.transparent = transparent;
         if (material)
         {

@@ -194,11 +194,11 @@ std::string BuiltinSurface(const MaterialParameterLayout &layout, bool opacity)
     if (opacity) return "float EvaluateOpacity(vec2 uv) { return clamp(" + alpha + ",0.0,1.0); }\n";
     std::ostringstream out;
     out << "SurfaceData EvaluateSurface(vec2 uv) {\n    SurfaceData s;\n"
-        << "    vec3 packed = " << number("PackedEnabled") << ".x > 0.5 ? " << texture("PackedMap") << ".rgb : vec3(1.0);\n"
+        << "    vec3 te_packedChannels = " << number("PackedEnabled") << ".x > 0.5 ? " << texture("PackedMap") << ".rgb : vec3(1.0);\n"
         << "    s.BaseColor = " << number("BaseColor") << ".rgb * " << texture("BaseMap") << ".rgb;\n"
-        << "    s.Metallic = clamp(" << number("Metallic") << ".x * (" << number("MetallicMapEnabled") << ".x > 0.5 ? " << texture("MetallicMap") << ".b : packed.b),0.0,1.0);\n"
-        << "    s.Roughness = clamp(" << number("Roughness") << ".x * (" << number("RoughnessMapEnabled") << ".x > 0.5 ? " << texture("RoughnessMap") << ".g : (" << number("PackedLayout") << ".x > 0.5 ? packed.r : packed.g)),0.04,1.0);\n"
-        << "    s.AO = clamp(" << number("AO") << ".x * (" << number("AOMapEnabled") << ".x > 0.5 ? " << texture("AOMap") << ".r : (" << number("PackedLayout") << ".x > 0.5 ? packed.g : packed.r)),0.0,1.0);\n"
+        << "    s.Metallic = clamp(" << number("Metallic") << ".x * (" << number("MetallicMapEnabled") << ".x > 0.5 ? " << texture("MetallicMap") << ".b : te_packedChannels.b),0.0,1.0);\n"
+        << "    s.Roughness = clamp(" << number("Roughness") << ".x * (" << number("RoughnessMapEnabled") << ".x > 0.5 ? " << texture("RoughnessMap") << ".g : (" << number("PackedLayout") << ".x > 0.5 ? te_packedChannels.r : te_packedChannels.g)),0.04,1.0);\n"
+        << "    s.AO = clamp(" << number("AO") << ".x * (" << number("AOMapEnabled") << ".x > 0.5 ? " << texture("AOMap") << ".r : (" << number("PackedLayout") << ".x > 0.5 ? te_packedChannels.g : te_packedChannels.r)),0.0,1.0);\n"
         << "    s.NormalTS = " << texture("NormalMap") << ".xyz * 2.0 - 1.0;\n"
         << "    s.Emissive = " << number("Emissive") << ".xyz * " << texture("EmissiveMap") << ".rgb;\n"
         << "    s.Opacity = clamp(" << alpha << ",0.0,1.0);\n    return s;\n}\n";

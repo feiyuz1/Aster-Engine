@@ -1,7 +1,10 @@
 #include "MiniEngine/Render/MaterialSystem.hpp"
+#include "MiniEngine/Render/MaterialCompiler.hpp"
 #include "MiniEngine/Platform/Platform.hpp"
 #include <algorithm>
 #include <sstream>
+#include <iomanip>
+#include <limits>
 
 namespace MiniEngine
 {
@@ -24,6 +27,85 @@ std::string ChainText(const std::vector<std::string> &chain, const std::string &
 }
 }
 MaterialSystem::MaterialSystem(ResourceManager &resources) : m_resources(resources) {}
+bool DynamicMaterialInstance::SetParameter(const std::string &name, const MaterialParameterValue &value)
+{
+    const auto p=std::find_if(m_schema.begin(),m_schema.end(),[&](const auto &p) { return p.name==name; });
+    if (p==m_schema.end() || p->type!=GetMaterialParameterType(value) || !IsFiniteMaterialValue(value)) return false;
+    m_overrides[name]=value; ++m_revision; return true;
+}
+bool DynamicMaterialInstance::ClearOverride(const std::string &name)
+{ if (!m_overrides.erase(name)) return false; ++m_revision; return true; }
+std::shared_ptr<DynamicMaterialInstance> MaterialSystem::CreateDynamicInstance(const std::string &path)
+{
+    const auto resolved=Resolve(path);
+    if (!resolved) return {};
+    return std::shared_ptr<DynamicMaterialInstance>(new DynamicMaterialInstance(m_resources.ResolveAssetPath(path),resolved->definition->parameters));
+}
+std::shared_ptr<const MaterialRenderProxy> MaterialSystem::BuildProxy(const std::string &assetPath, DynamicMaterialInstance *dynamic)
+{
+    const auto path=m_resources.ResolveAssetPath(assetPath);
+    if (dynamic && dynamic->m_path!=path) return {};
+    if (!dynamic) { const auto found=m_proxies.find(path); if (found!=m_proxies.end()) return found->second; }
+    auto resolved=Resolve(path);
+    if (dynamic && resolved && dynamic->m_cachedGeneration==resolved->generation && dynamic->m_cachedRevision==dynamic->m_revision) return dynamic->m_proxy;
+    std::shared_ptr<const CompiledMaterial> compiled;
+    if (resolved)
+    {
+        const auto found=m_compiledDefinitions.find(resolved->definition.get());
+        if (found!=m_compiledDefinitions.end()) compiled=found->second;
+        else
+        {
+            const auto result=MaterialCompiler{}.Compile(*resolved->definition);
+            auto &diagnostics=m_diagnostics[path]; diagnostics.insert(diagnostics.end(),result.diagnostics.begin(),result.diagnostics.end());
+            if (result.Success())
+            {
+                compiled=m_compiled.emplace(result.material->canonicalProgramContent,result.material).first->second;
+                m_compiledDefinitions.emplace(resolved->definition.get(),compiled);
+            }
+        }
+    }
+    if (!compiled)
+    {
+        auto fallback=MakeBuiltinPbrDefinition(); fallback.renderState.shadingModel=MaterialShadingModel::Unlit;
+        fallback.graph.GetRenderState()=fallback.renderState;
+        auto effective=std::make_shared<ResolvedMaterial>(); effective->definition=std::make_shared<MaterialDefinitionData>(fallback);
+        for (const auto &p:fallback.parameters) effective->values.push_back(p.name=="BaseColor" ? MaterialParameterValue(Vec4{1,0,1,1}) : p.defaultValue);
+        effective->generation=m_nextGeneration++;
+        resolved=effective; compiled=MaterialCompiler{}.Compile(fallback).material;
+    }
+    auto proxy=std::make_shared<MaterialRenderProxy>(); proxy->compiled=compiled; proxy->state=resolved->definition->renderState;
+    proxy->generation=resolved->generation; proxy->legacyShaderPath=resolved->legacyShaderPath; proxy->legacyParameters=resolved->legacyParameters;
+    std::map<std::string,MaterialParameterValue> values;
+    const auto &parameters=resolved->definition->parameters;
+    for (std::size_t i=0;i<parameters.size();++i) values.emplace(parameters[i].name,resolved->values[i]);
+    if (dynamic)
+    {
+        dynamic->m_schema=parameters;
+        for (const auto &entry:dynamic->m_overrides)
+        {
+            const auto declaration=std::find_if(parameters.begin(),parameters.end(),[&](const auto &p) { return p.name==entry.first; });
+            if (declaration!=parameters.end() && declaration->type==GetMaterialParameterType(entry.second)) values[entry.first]=entry.second;
+        }
+    }
+    if (resolved->definition->sourcePath=="builtin:PBR")
+        for (const auto &entry:std::map<std::string,std::string>{{"PackedEnabled","PackedMap"},{"MetallicMapEnabled","MetallicMap"},{"RoughnessMapEnabled","RoughnessMap"},{"AOMapEnabled","AOMap"}})
+            values[entry.first]=std::get<std::string>(values.at(entry.second)).empty() ? 0.f : 1.f;
+    std::ostringstream identity; identity << std::setprecision(std::numeric_limits<float>::max_digits10);
+    identity << compiled->canonicalProgramContent << '\n' << proxy->state.twoSided << ' ' << proxy->state.maskCutoff << '\n' << proxy->legacyShaderPath << '\n';
+    for (const auto &slot:compiled->layout.numericSlots)
+    { const auto &value=values.at(slot.name); proxy->numericSlots.push_back(MaterialNumericSlot(value)); WriteMaterialValue(identity,value); identity << '\n'; }
+    for (const auto &slot:compiled->layout.textureSlots)
+    {
+        const auto texturePath=m_resources.ResolveAssetPath(std::get<std::string>(values.at(slot.name)),path);
+        auto texture=texturePath.empty() ? nullptr : m_resources.Load<TextureResource>(texturePath);
+        proxy->textures.push_back({slot.name,slot.slot,texture,slot.sampling,0,texturePath}); identity << std::quoted(texturePath) << '\n';
+    }
+    for (const auto &p:proxy->legacyParameters) identity << p.first << ' ' << p.second.x << ' ' << p.second.y << ' ' << p.second.z << ' ' << p.second.w << '\n';
+    proxy->canonicalValueContent=identity.str(); proxy->valueHash=std::hash<std::string>{}(proxy->canonicalValueContent);
+    if (dynamic) { dynamic->m_cachedGeneration=resolved->generation; dynamic->m_cachedRevision=dynamic->m_revision; dynamic->m_proxy=proxy; }
+    else m_proxies[path]=proxy;
+    return proxy;
+}
 std::shared_ptr<const MaterialDefinitionData> MaterialSystem::LoadDefinition(const std::string &path, std::vector<MaterialDiagnostic> &diagnostics)
 {
     const auto found = m_definitions.find(path);

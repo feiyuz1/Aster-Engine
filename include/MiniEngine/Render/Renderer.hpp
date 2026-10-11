@@ -8,6 +8,7 @@
 #include "MiniEngine/Math/Math.hpp"
 #include "MiniEngine/Render/ClusteredLighting.hpp"
 #include "MiniEngine/Render/RenderGraph.hpp"
+#include "MiniEngine/Render/MaterialSystem.hpp"
 #include "MiniEngine/Resource/Resource.hpp"
 #include "MiniEngine/Types.hpp"
 #include "MiniEngine/UI/UISystem.hpp"
@@ -123,6 +124,7 @@ class RenderDevice
   public:
     /// @brief 析构 `RenderDevice` 对象并释放其持有资源。
     virtual ~RenderDevice() = default;
+    virtual bool ValidateMaterial(const CompiledMaterial &, std::vector<MaterialDiagnostic> &) { return true; }
     /// @brief 初始化对象及其依赖资源。
     /// @return 操作成功时返回 `true`，否则返回 `false`。
     virtual bool Initialize() = 0;
@@ -296,6 +298,8 @@ class Renderer
     /// @brief 设置 `ResourceManager`。
     /// @param resources 相关文件、资源或目录路径。
     void SetResourceManager(ResourceManager *resources);
+    MaterialSystem &GetMaterialSystem() { return *m_materialSystem; }
+    void SetDynamicMaterial(Entity entity, std::shared_ptr<DynamicMaterialInstance> instance);
     /// @brief 初始化对象及其依赖资源。
     /// @param device 接口所需的输入参数。
     /// @return 操作成功时返回 `true`，否则返回 `false`。
@@ -357,6 +361,8 @@ class Renderer
   private:
     Logger *m_logger = nullptr;
     ResourceManager *m_resources = nullptr;
+    std::unique_ptr<MaterialSystem> m_materialSystem;
+    std::unordered_map<Entity, std::shared_ptr<DynamicMaterialInstance>> m_dynamicMaterials;
     std::unique_ptr<RenderDevice> m_device;
     RenderQueue m_renderQueue;
     std::vector<RenderItem> m_shadowItems;

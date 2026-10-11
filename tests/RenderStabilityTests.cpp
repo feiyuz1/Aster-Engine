@@ -201,6 +201,17 @@ int main(int argc, char **argv)
     const auto secondShadow = renderer.GetFrameView().shadowViewProjections[0];
     Check(std::abs(firstShadow.At(0, 3) - secondShadow.At(0, 3)) < 1e-8f && std::abs(firstShadow.At(1, 3) - secondShadow.At(1, 3)) < 1e-8f,
           "sub-texel camera movement keeps shadow XY projection stable");
+    world.DestroyEntity(object);
+    auto a=world.CreateEntity("DynamicA"), b=world.CreateEntity("DynamicB");
+    for (auto e:{a,b}) { world.AddComponent(e,MeshComponent{mesh,material}); world.GetComponent<TransformComponent>(e)->position={0,0,-5}; }
+    auto red=renderer.GetMaterialSystem().CreateDynamicInstance(material), blue=renderer.GetMaterialSystem().CreateDynamicInstance(material);
+    red->SetParameter("BaseColor",Vec4{1,0,0,1}); blue->SetParameter("BaseColor",Vec4{0,0,1,1});
+    renderer.SetDynamicMaterial(a,red); renderer.SetDynamicMaterial(b,blue); renderer.RenderFrame(world);
+    Check(renderer.GetLastDrawCallCount()==2,"same asset with different dynamic values does not batch");
+    blue->SetParameter("BaseColor",Vec4{1,0,0,1}); renderer.RenderFrame(world);
+    Check(renderer.GetLastDrawCallCount()==1,"same effective dynamic values share one batch");
+    std::weak_ptr<DynamicMaterialInstance> destroyed=blue; blue.reset(); world.DestroyEntity(b); renderer.RenderFrame(world);
+    Check(destroyed.expired(),"destroyed entity releases its generation-keyed dynamic instance");
     renderer.Shutdown();
 
     // 真实 OpenGL：两块相同网格触发 GPU 实例剔除，测试快速转向的第一帧。

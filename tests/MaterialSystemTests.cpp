@@ -366,6 +366,26 @@ void TestOpacityDependency()
     Check(!MaterialCompiler{}.GeneratePass(*result.material,MaterialPass::Shadow,MaterialGeometry::Static,templates).error.empty(),
           "cyclic shader template includes rejected");
 }
+void TestDynamicIsolation()
+{
+    ResourceManager resources; resources.Initialize(nullptr,root);
+    MaterialSystem system(resources);
+    Write("dynamic.mat", "TINY_MAT 2\ndefinition \"builtin:PBR\"\n");
+    auto red=system.CreateDynamicInstance("assets/dynamic.mat"), blue=system.CreateDynamicInstance("assets/dynamic.mat");
+    Check(red && blue,"create dynamic instances from one asset");
+    if (!red || !blue) return;
+    Check(red->SetParameter("BaseColor",Vec4{1,0,0,1}) && blue->SetParameter("BaseColor",Vec4{0,0,1,1}),"set independent typed colors");
+    const auto revision=red->GetRevision();
+    Check(!red->SetParameter("BaseColor",.5f) && !red->SetParameter("Missing",1.f) && red->GetRevision()==revision,"bad setters keep revision unchanged");
+    auto a=system.BuildProxy("assets/dynamic.mat",red.get()), b=system.BuildProxy("assets/dynamic.mat",blue.get());
+    Check(a && b && a->compiled==b->compiled && a->canonicalValueContent!=b->canonicalValueContent,"same program, separate complete material identities");
+    Check(system.BuildProxy("assets/dynamic.mat",red.get())==a,"unchanged dynamic instance reuses immutable snapshot");
+    red->SetParameter("BaseColor",Vec4{0,0,1,1});
+    Check(system.BuildProxy("assets/dynamic.mat",red.get())->canonicalValueContent==b->canonicalValueContent,"equal values can batch across instances");
+    red->ClearOverride("BaseColor");
+    Check(system.BuildProxy("assets/dynamic.mat",red.get())->canonicalValueContent==system.BuildProxy("assets/dynamic.mat")->canonicalValueContent,"reset restores inherited values");
+    resources.Shutdown();
+}
 }
 int main()
 {
@@ -386,6 +406,7 @@ int main()
     TestDeterministicCompilation();
     TestLimits();
     TestOpacityDependency();
+    TestDynamicIsolation();
     }
     catch (const std::exception& error)
     {

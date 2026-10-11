@@ -29,6 +29,8 @@ struct GlMaterialProgramCache::Impl
     std::unordered_set<std::string> failed, warned;
     std::vector<MaterialDiagnostic> diagnostics;
     std::array<std::size_t,2> count{};
+    struct FastEntry { std::weak_ptr<const CompiledMaterial> owner; std::array<GlMaterialProgram *,6> variants{}; };
+    std::unordered_map<const CompiledMaterial *,FastEntry> fast;
     GLuint numericBuffer = 0, fallback[2]{};
     std::array<std::uint32_t,3> shadows{};
     std::uint32_t lightData = 0, clusterData = 0;
@@ -129,7 +131,7 @@ bool GlMaterialProgramCache::Initialize()
     p.templates = ShaderPipeline::LoadMaterialTemplates();
     return true;
 }
-void GlMaterialProgramCache::SetTemplates(MaterialTemplateSources sources) { m_impl->templates = std::move(sources); }
+void GlMaterialProgramCache::SetTemplates(MaterialTemplateSources sources) { m_impl->templates = std::move(sources); m_impl->fast.clear(); }
 void GlMaterialProgramCache::SetFrameBindings(const std::array<std::uint32_t,3> &shadows,std::uint32_t lightData,std::uint32_t clusterData,
                                             std::size_t cascade,Vec2 viewport)
 { m_impl->shadows=shadows; m_impl->lightData=lightData; m_impl->clusterData=clusterData; m_impl->cascade=cascade; m_impl->viewport=viewport; }
@@ -160,7 +162,11 @@ bool GlMaterialProgramCache::Bind(const MaterialRenderProxy &proxy,const FrameVi
 {
     auto &p = *m_impl;
     if (!proxy.compiled || proxy.numericSlots.size()!=proxy.compiled->layout.numericSlots.size() || proxy.numericSlots.size()>64) return false;
-    p.current = GetOrCreate(*proxy.compiled,pass,geometry); if (!p.current) return false;
+    auto &entry=p.fast[proxy.compiled.get()];
+    if (entry.owner.lock()!=proxy.compiled) { entry=Impl::FastEntry{}; entry.owner=proxy.compiled; }
+    const auto variant=static_cast<std::size_t>(pass)*3+static_cast<std::size_t>(geometry);
+    if (!entry.variants[variant]) entry.variants[variant]=GetOrCreate(*proxy.compiled,pass,geometry);
+    p.current=entry.variants[variant]; if (!p.current) return false;
     p.UseProgram(p.current->handle);
     std::array<Vec4,64> slots{}; std::copy(proxy.numericSlots.begin(),proxy.numericSlots.end(),slots.begin());
     p.BindBuffer(GL_UNIFORM_BUFFER,p.numericBuffer); p.BufferSubData(GL_UNIFORM_BUFFER,0,sizeof(slots),slots.data());

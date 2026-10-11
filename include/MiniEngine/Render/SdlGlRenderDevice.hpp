@@ -27,6 +27,7 @@ class SdlGlRenderDevice final : public RenderDevice
     /// @brief 初始化对象及其依赖资源。
     /// @return 操作成功时返回 `true`，否则返回 `false`。
     bool Initialize() override;
+    bool ValidateMaterial(const CompiledMaterial &, std::vector<MaterialDiagnostic> &) override;
     /// @brief 停止服务并释放对象持有的资源。
     void Shutdown() override;
     /// @brief 轮询平台事件并更新输入状态。
@@ -203,6 +204,7 @@ class SdlGlRenderDevice final : public RenderDevice
     std::vector<Vec4> ReadHdrAttachmentForTests(std::size_t attachment = 0) const;
     std::size_t GetMaterialProgramCompileCountForTests(MaterialPass pass = MaterialPass::Base) const;
     const std::vector<MaterialDiagnostic> &GetMaterialDiagnosticsForTests() const;
+    float ReadShadowDepthForTests(int x,int y,std::size_t cascade=0) const;
 #endif
 
   private:
