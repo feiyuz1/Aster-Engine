@@ -1562,7 +1562,9 @@ void EditorApp::DrawInspector()
                         output << "parameter " << parameter.first << ' ' << parameter.second.x << ' ' << parameter.second.y << ' '
                                << parameter.second.z << ' ' << parameter.second.w << '\n';
                     output << "blend " << (transparent ? "alpha" : "opaque") << '\n';
-                    if (PlatformFile::WriteAllText(asset->path, output.str()) && m_engine.GetContext().resourceManager->Reload(asset->path))
+                    MaterialAssetData draft; draft.legacyData.source=output.str();
+                    const auto result=m_engine.GetContext().renderer->GetMaterialSystem().ApplyInstanceDraft(asset->path,draft,[this](const auto &compiled,auto &diagnostics) { return !m_device || m_device->ValidateMaterial(compiled,diagnostics); });
+                    if (result.success)
                         m_messages.emplace_back(std::string(Localize("Material saved: ", "材质已保存：")) + asset->path);
                     else
                         m_messages.emplace_back(std::string(Localize("Failed to save material: ", "材质保存失败：")) + asset->path);
@@ -3957,13 +3959,24 @@ void EditorApp::DrawMaterialGraphEditor()
             if (m_materialAssetEditor.Open(asset->path,resource.GetMaterialData(),schema)) m_openMaterialAsset=asset->path;
         }
     }
-    m_materialGraphEditor.SetSaveRequest([this](const auto &path,const auto &data,auto &diagnostics) {
-        const auto result=MaterialCompiler{}.Compile(data); diagnostics=result.diagnostics;
-        if (!result.Success() || (m_device && !m_device->ValidateMaterial(*result.material,diagnostics))) return false;
-        auto graph=data.graph; graph.GetParameters()=data.parameters; graph.GetRenderState()=data.renderState;
-        return graph.Save(std::filesystem::u8path(path));
+    const auto validator=[this](const auto &compiled,auto &diagnostics) { return !m_device || m_device->ValidateMaterial(compiled,diagnostics); };
+    if (!m_materialAssetEditor.GetPath().empty())
+    {
+        const auto &draft=m_materialAssetEditor.GetDraft();
+        const auto parent=system.Resolve(resources->ResolveAssetPath(draft.parentPath.empty() ? draft.definitionPath : draft.parentPath,m_materialAssetEditor.GetPath()));
+        if (parent) { auto schema=parent->definition->parameters; for (std::size_t i=0;i<schema.size();++i) schema[i].defaultValue=parent->values[i]; m_materialAssetEditor.SetSchema(std::move(schema)); }
+    }
+    m_materialGraphEditor.SetSaveRequest([&system,validator](const auto &path,const auto &data,auto &diagnostics) {
+        const auto result=system.ApplyDefinitionDraft(path,data,validator); diagnostics=result.diagnostics; return result.success;
     });
-    m_materialAssetEditor.SetSaveRequest([](const auto &path,const auto &data,auto &) { return PlatformFile::WriteAllText(std::filesystem::u8path(path),SerializeMaterialAsset(data)); });
+    m_materialAssetEditor.SetSaveRequest([&system,validator](const auto &path,const auto &data,auto &diagnostics) {
+        const auto result=system.ApplyInstanceDraft(path,data,validator); diagnostics=result.diagnostics; return result.success;
+    });
+    if (asset && (asset->type=="Material" || asset->type=="MaterialGraph") && ImGui::GetIO().KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_R))
+    {
+        const auto result=system.Reload(asset->path,validator);
+        for (const auto &d:result.diagnostics) m_messages.push_back(d.message);
+    }
     m_materialGraphEditor.Draw(); m_materialAssetEditor.Draw();
     ImGui::Begin("##MaterialExitHost",nullptr,ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoInputs);
     if (m_requestMaterialExitPopup) { ImGui::OpenPopup("Unsaved materials"); m_requestMaterialExitPopup=false; }

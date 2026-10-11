@@ -832,12 +832,13 @@ bool MaterialResource::Load(const std::string &path)
 {
     return LoadWithResolver(path, {});
 }
-bool MaterialResource::LoadWithResolver(const std::string &path, ReferenceResolver resolver, std::size_t maxParentDepth)
+bool MaterialResource::LoadWithResolver(const std::string &path, ReferenceResolver resolver, std::size_t maxParentDepth, SourceReader reader)
 {
     const bool hadValidData = IsReady();
     MaterialResource candidate;
     candidate.m_referenceResolver = std::move(resolver);
     candidate.m_maxParentDepth = maxParentDepth;
+    candidate.m_sourceReader=std::move(reader);
     if (!candidate.LoadCandidate(path))
     {
         SetState(hadValidData ? ResourceState::Loaded : ResourceState::Failed, candidate.GetError());
@@ -938,7 +939,7 @@ bool MaterialResource::LoadCandidate(const std::string &path)
     m_parameters.clear();
     m_packedTexturePath.clear();
     m_packedTextureLayout = "ORM";
-    const std::string source = PlatformFile::ReadAllText(std::filesystem::u8path(path));
+    const std::string source = m_sourceReader ? m_sourceReader(path) : PlatformFile::ReadAllText(std::filesystem::u8path(path));
     if (source.empty())
     {
         SetState(ResourceState::Failed, "Material file not found: " + path);
@@ -999,7 +1000,7 @@ bool MaterialResource::LoadCandidate(const std::string &path)
         else if (!PlatformFile::Exists(parent))
             parent = std::filesystem::u8path(path).parent_path() / parent;
         MaterialResource base;
-        if (!base.LoadWithResolver(parent.generic_u8string(), m_referenceResolver, m_maxParentDepth))
+        if (!base.LoadWithResolver(parent.generic_u8string(), m_referenceResolver, m_maxParentDepth,m_sourceReader))
         {
             SetState(ResourceState::Failed, "Cannot load material parent: " + m_parentPath + " -> " + base.GetError());
             return false;

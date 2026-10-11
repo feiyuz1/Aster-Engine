@@ -42,6 +42,8 @@ void MaterialAssetEditor::Draw()
         for (const auto &p:m_parameters)
         {
             if (p.name=="PackedEnabled" || p.name=="MetallicMapEnabled" || p.name=="RoughnessMapEnabled" || p.name=="AOMapEnabled") continue;
+            const auto override=m_draft.overrides.find(p.name);
+            if (override!=m_draft.overrides.end() && GetMaterialParameterType(override->second)!=p.type) continue;
             ImGui::PushID(p.name.c_str());
             bool enabled=m_draft.overrides.count(p.name)!=0;
             if (ImGui::Checkbox("Override",&enabled)) { if (enabled) SetOverride(p.name,p.defaultValue); else ResetOverride(p.name); }

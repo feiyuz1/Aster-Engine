@@ -386,6 +386,44 @@ void TestDynamicIsolation()
     Check(system.BuildProxy("assets/dynamic.mat",red.get())->canonicalValueContent==system.BuildProxy("assets/dynamic.mat")->canonicalValueContent,"reset restores inherited values");
     resources.Shutdown();
 }
+void TestReloadPublication()
+{
+    MaterialDefinitionData definition; definition.graph.SetFormatVersion(2); definition.sourcePath=root+"reload.matgraph";
+    definition.graph.AddNode(MaterialNodeType::SurfaceOutput,"Surface");
+    MaterialParameterDecl tint; tint.name="Tint"; tint.type=MaterialParameterType::Vec3; tint.defaultValue=Vec3{1,0,0}; definition.parameters={tint};
+    const auto node=definition.graph.AddNode(MaterialNodeType::VectorParameter,"Tint"); definition.graph.GetNodes().back().parameterName="Tint"; definition.graph.Connect(node,1,0);
+    definition.graph.GetParameters()=definition.parameters; Write("reload.matgraph",definition.graph.Serialize());
+    Write("reloadA.mat","TINY_MAT 2\ndefinition \"reload.matgraph\"\n");
+    Write("reloadB.mat","TINY_MAT 2\nparent \"reloadA.mat\"\nparameter \"Tint\" Vec3 0 0 1\n");
+    ResourceManager resources; resources.Initialize(nullptr,root); MaterialSystem system(resources);
+    const auto a=system.BuildProxy("assets/reloadA.mat"), b=system.BuildProxy("assets/reloadB.mat");
+    const auto disk=PlatformFile::ReadAllText(root+"reload.matgraph"); definition.parameters[0].defaultValue=Vec3{0,1,0};
+    const auto reject=[](const auto &,auto &diagnostics) { diagnostics.push_back({MaterialDiagnosticSeverity::Error,{},0,-1,"injected GPU candidate failure"}); return false; };
+    Check(!system.ApplyDefinitionDraft("assets/reload.matgraph",definition,reject).success && system.BuildProxy("assets/reloadA.mat")==a && PlatformFile::ReadAllText(root+"reload.matgraph")==disk,"failed candidate keeps code/layout/values/textures/generation and disk together");
+    const auto accept=[](const auto &,auto &) { return true; };
+    Check(system.ApplyDefinitionDraft("assets/reload.matgraph",definition,accept).success,"valid parent draft publishes");
+    const auto changed=system.BuildProxy("assets/reloadA.mat"), kept=system.BuildProxy("assets/reloadB.mat");
+    std::cout << "Reload evidence: " << a->generation << " -> " << changed->generation << " values " << changed->numericSlots[0].x << ',' << changed->numericSlots[0].y << ',' << kept->numericSlots[0].z << " same program " << (changed->compiled==a->compiled) << '\n';
+    Check(changed->compiled==a->compiled && changed->numericSlots[0].y==1 && kept->numericSlots[0].z==1 && changed->generation!=a->generation,"default changes reuse code, update unoverridden descendants and preserve child overrides");
+    definition.parameters[0].type=MaterialParameterType::Float; definition.parameters[0].defaultValue=.25f; definition.graph.GetNodes()[1].type=MaterialNodeType::ScalarParameter;
+    Check(system.ApplyDefinitionDraft("assets/reload.matgraph",definition,accept).success,"schema change can publish with old effective overrides inactive");
+    Check(Near(system.BuildProxy("assets/reloadB.mat")->numericSlots[0].x,.25f) && !system.GetDiagnostics("assets/reloadB.mat").empty(),"mismatched old override becomes inactive and new default applies");
+    Write("newInvalid.mat","TINY_MAT 2\ndefinition \"reload.matgraph\"\nparameter \"Unknown\" Float 1\n");
+    Check(!system.Resolve("assets/newInvalid.mat"),"unknown override on first load remains an error");
+    auto dynamic=system.CreateDynamicInstance("assets/reloadA.mat"); dynamic->SetParameter("Tint",.8f);
+    definition.parameters.clear(); definition.graph.GetNodes().resize(1); definition.graph.GetLinks().clear();
+    Check(system.ApplyDefinitionDraft("assets/reload.matgraph",definition,accept).success && !dynamic->SetParameter("Tint",.7f),"parameter deletion updates live dynamic schema");
+    Check(system.BuildProxy("assets/reloadB.mat")->numericSlots.empty() && !system.GetDiagnostics("assets/reloadB.mat").empty() && system.BuildProxy("assets/reloadA.mat",dynamic.get())->numericSlots.empty(),"deleted declarations deactivate asset and dynamic overrides coherently");
+    const auto active=system.BuildProxy("assets/reloadA.mat"); Write("reload.matgraph","TINY_MATGRAPH 999\n");
+    Check(!system.Reload("assets/reload.matgraph",accept).success && system.BuildProxy("assets/reloadA.mat")==active,"broken external edit retains prior snapshot");
+    Write("transaction.mat","color .9 .2 .1 1\n"); auto resource=resources.Load<MaterialResource>("assets/transaction.mat"); Write("transaction.mat","TINY_MAT 999\n");
+    Check(resource && !resources.Reload("assets/transaction.mat") && resource->IsReady() && Near(resource->GetBaseColor().x,.9f),"generic material reload avoids clearing a valid resource before validation");
+    Write("legacyDraft.mat","color .9 .2 .1 1\n"); const auto legacy=system.BuildProxy("assets/legacyDraft.mat");
+    MaterialAssetData oldDraft; oldDraft.legacyData.source="color .1 .8 .2 1\n";
+    Check(!system.ApplyInstanceDraft("assets/legacyDraft.mat",oldDraft,reject).success && system.BuildProxy("assets/legacyDraft.mat")==legacy,"legacy editor draft also rolls back before disk write");
+    Check(system.ApplyInstanceDraft("assets/legacyDraft.mat",oldDraft,accept).success && PlatformFile::ReadAllText(root+"legacyDraft.mat")==oldDraft.legacyData.source,"legacy editor publishes from memory through the same transaction");
+    resources.Shutdown();
+}
 }
 int main()
 {
@@ -407,6 +445,7 @@ int main()
     TestLimits();
     TestOpacityDependency();
     TestDynamicIsolation();
+    TestReloadPublication();
     }
     catch (const std::exception& error)
     {

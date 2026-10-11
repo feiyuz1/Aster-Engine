@@ -197,6 +197,38 @@ void TestGeometryAndPbr(SdlGlRenderDevice &device,RenderItem &item)
     Check(relative(old.x,graphPixel.x)<.01f && relative(old.y,graphPixel.y)<.01f && relative(old.z,graphPixel.z)<.01f,"node graph PBR matches fixed PBR HDR within one percent");
     resources.Shutdown(); item.material.reset();
 }
+void TestGpuCandidateRollback(SdlGlRenderDevice &device,RenderItem &item)
+{
+    auto graph=ColorDefinition(); graph.graph.GetParameters()=graph.parameters; graph.graph.GetRenderState()=graph.renderState;
+    PlatformFile::WriteAllText(root+"reload.matgraph",graph.graph.Serialize());
+    PlatformFile::WriteAllText(root+"reload.mat","TINY_MAT 2\ndefinition \"reload.matgraph\"\n");
+    ResourceManager resources; resources.Initialize(nullptr,root); MaterialSystem system(resources);
+    auto active=system.BuildProxy("assets/reload.mat"); item.materialProxy=active; auto red=Draw(device,item,View());
+    const auto disk=PlatformFile::ReadAllText(root+"reload.matgraph"); graph.parameters[0].defaultValue=Vec4{0,1,0,1};
+    const auto result=system.ApplyDefinitionDraft("assets/reload.matgraph",graph,[&](const auto &compiled,auto &diagnostics) {
+        auto invalid=compiled; invalid.surfaceSource+="\nthis_is_invalid_glsl;\n"; return device.ValidateMaterial(invalid,diagnostics);
+    });
+    item.materialProxy=system.BuildProxy("assets/reload.mat"); const auto retained=Draw(device,item,View());
+    Check(!result.success && !result.diagnostics.empty() && item.materialProxy==active && Near(red.x,retained.x) && PlatformFile::ReadAllText(root+"reload.matgraph")==disk,"real GPU compile failure rolls back disk and complete live snapshot");
+    const auto accept=[&](const auto &compiled,auto &diagnostics) { return device.ValidateMaterial(compiled,diagnostics); };
+    Check(system.ApplyDefinitionDraft("assets/reload.matgraph",graph,accept).success,"fixed GPU candidate publishes all geometry/pass variants");
+    const auto programs=device.GetMaterialProgramCompileCountForTests(MaterialPass::Base); graph.parameters[0].defaultValue=Vec4{0,0,1,1};
+    Check(system.ApplyDefinitionDraft("assets/reload.matgraph",graph,accept).success && device.GetMaterialProgramCompileCountForTests(MaterialPass::Base)==programs,"default-only publication reuses GPU programs");
+    item.materialProxy=system.BuildProxy("assets/reload.mat"); auto blue=Draw(device,item,View()); Check(blue.z>.9f,"published child actually renders new parent default");
+    auto invalid=std::make_shared<CompiledMaterial>(*item.materialProxy->compiled); invalid->surfaceSource+="\ninvalid_first_load;\n";
+    auto broken=std::make_shared<MaterialRenderProxy>(*item.materialProxy); broken->compiled=invalid; item.materialProxy=broken;
+    const auto pink=Draw(device,item,View()); Check(pink.x>.9f && pink.z>.9f && pink.y<.02f,"first GPU failure renders magenta fallback");
+    auto textured=TextureDefinition(TextureSampling::Linear); textured.parameters[0].defaultValue=std::string("snapshot.ppm"); textured.graph.GetParameters()=textured.parameters; textured.graph.GetRenderState()=textured.renderState;
+    PlatformFile::WriteAllText(root+"textured.matgraph",textured.graph.Serialize()); PlatformFile::WriteAllText(root+"snapshot.ppm","P3\n1 1\n255\n64 64 64\n");
+    item.materialProxy=system.BuildProxy("assets/textured.matgraph"); const auto textureBefore=item.materialProxy; auto dark=Draw(device,item,View());
+    const auto texturePrograms=device.GetMaterialProgramCompileCountForTests(MaterialPass::Base);
+    PlatformFile::WriteAllText(root+"snapshot.ppm","P3\n1 1\n255\n192 192 192\n");
+    Check(system.Reload("assets/textured.matgraph",accept).success,"reload validates a same-path texture content replacement");
+    item.materialProxy=system.BuildProxy("assets/textured.matgraph"); const auto light=Draw(device,item,View());
+    Check(Near(dark.x,64.f/255) && Near(light.x,192.f/255) && textureBefore->textures[0].version!=item.materialProxy->textures[0].version,"new texture content publishes independently while old snapshot retains its resource");
+    Check(device.GetMaterialProgramCompileCountForTests(MaterialPass::Base)<=texturePrograms+2,"texture replacement only validates missing geometry variants");
+    resources.Shutdown();
+}
 }
 int main()
 {
@@ -219,6 +251,7 @@ int main()
         RenderItem item; item.mesh=std::make_shared<MeshResource>(); Check(item.mesh->Load(root+"quad.mesh"),"load GPU test quad");
         TestSharedPrograms(device,item); TestParameterUpload(device,item); TestTextureSemantics(device,item); TestFallbackTexture(device,item); TestTextureBudget(device,item);
         TestPassClippingAndState(device,item); TestGeometryAndPbr(device,item);
+        TestGpuCandidateRollback(device,item);
         device.Shutdown();
     }
     catch (const std::exception &error) { std::cerr << "[FAIL] " << error.what() << '\n'; return 1; }

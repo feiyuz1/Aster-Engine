@@ -214,7 +214,8 @@ class MaterialResource final : public Resource
     bool Save(const std::string &path) const;
     const MaterialAssetData &GetMaterialData() const { return m_materialData; }
     using ReferenceResolver = std::function<std::string(const std::string &, const std::string &)>;
-    bool LoadWithResolver(const std::string &path, ReferenceResolver resolver, std::size_t maxParentDepth = 32);
+    using SourceReader=std::function<std::string(const std::string &)>;
+    bool LoadWithResolver(const std::string &path, ReferenceResolver resolver, std::size_t maxParentDepth = 32, SourceReader reader = {});
     /// @brief 卸载资源并释放相关缓存。
     void Unload() override;
     /// @brief 获取 `ByteSize`。
@@ -278,6 +279,7 @@ class MaterialResource final : public Resource
     void CaptureLegacyData(const std::string &source);
     MaterialAssetData m_materialData;
     ReferenceResolver m_referenceResolver;
+    SourceReader m_sourceReader;
     std::size_t m_maxParentDepth = 32;
     Vec4 m_baseColor{0.3f, 0.7f, 1.0f, 1.0f};
     std::string m_shaderPath;

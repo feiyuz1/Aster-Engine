@@ -6,6 +6,7 @@
 #include "MiniEngine/Resource/ResourceManager.hpp"
 
 #include "MiniEngine/Platform/Platform.hpp"
+#include "MiniEngine/Resource/MaterialDefinitionResource.hpp"
 
 #include <filesystem>
 
@@ -83,12 +84,12 @@ bool ResourceManager::Reload(const std::string &path)
     {
         std::lock_guard<std::mutex> lock(m_mutex);
         const auto found = m_cache.find(key);
-        if (found == m_cache.end())
-            return false;
-        resource = found->second;
+        if (found != m_cache.end()) resource=found->second;
+        else for (const auto &entry:m_cache) if (ResolvePath(entry.first)==ResolvePath(key)) { resource=entry.second; break; }
+        if (!resource) return false;
     }
-    resource->Unload();
-    return resource->Load(ResolvePath(key));
+    if (!dynamic_cast<MaterialResource *>(resource.get()) && !dynamic_cast<MaterialDefinitionResource *>(resource.get())) resource->Unload();
+    return LoadResource(*resource,ResolvePath(key));
 }
 
 std::size_t ResourceManager::GetCachedResourceCount() const
@@ -132,6 +133,7 @@ std::string ResourceManager::ResolvePath(const std::string &path) const
     const auto root = std::filesystem::absolute(m_assetRoot).lexically_normal();
     std::filesystem::path candidate = root / logical;
     const auto first = logical.begin();
+    if (first!=logical.end() && *first=="assets" && root.filename()!="assets") candidate=root/logical.lexically_relative("assets");
     if (first != logical.end() && *first == root.filename())
         candidate = root.parent_path() / logical;
     std::error_code error;

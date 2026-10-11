@@ -1459,6 +1459,7 @@ struct SdlGlRenderDevice::Impl
         return glyphs.emplace(codepoint, glyph).first->second;
     }
 
+    std::shared_ptr<const MaterialRenderProxy> errorMaterial;
     bool BindCompiledMaterial(const RenderItem &item, MaterialPass pass, MaterialGeometry geometry)
     {
         materialPrograms->SetFrameBindings(shadowDepths,lightDataTexture,clusterDataTexture,activeShadowCascade,
@@ -1467,7 +1468,20 @@ struct SdlGlRenderDevice::Impl
         {
             const auto &diagnostics=materialPrograms->GetDiagnostics();
             if (!diagnostics.empty()) lastShaderError=diagnostics.back().message;
-            return false;
+            if (item.materialProxy==errorMaterial) return false;
+            if (!errorMaterial)
+            {
+                const auto definition=MakeBuiltinPbrDefinition(); auto unlit=definition; unlit.renderState.shadingModel=MaterialShadingModel::Unlit;
+                auto proxy=std::make_shared<MaterialRenderProxy>(); proxy->compiled=MaterialCompiler{}.Compile(unlit).material;
+                proxy->state=unlit.renderState; proxy->state.twoSided=true;
+                for (const auto &slot:proxy->compiled->layout.numericSlots)
+                {
+                    const auto p=std::find_if(definition.parameters.begin(),definition.parameters.end(),[&](const auto &p) { return p.name==slot.name; });
+                    proxy->numericSlots.push_back(slot.name=="BaseColor" ? Vec4{1,0,1,1} : MaterialNumericSlot(p->defaultValue));
+                }
+                errorMaterial=proxy;
+            }
+            auto fallback=item; fallback.materialProxy=errorMaterial; return BindCompiledMaterial(fallback,pass,geometry);
         }
         materialPrograms->BindObject(item,view,geometry);
         if (item.materialProxy->state.twoSided) glDisable(GL_CULL_FACE);
