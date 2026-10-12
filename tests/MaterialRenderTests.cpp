@@ -230,6 +230,65 @@ void TestGpuCandidateRollback(SdlGlRenderDevice &device,RenderItem &item)
     Check(device.GetMaterialProgramCompileCountForTests(MaterialPass::Base)<=texturePrograms+2,"texture replacement only validates missing geometry variants");
     resources.Shutdown();
 }
+void TestGpuGenerationLifetime(SdlGlRenderDevice &device,RenderItem &item)
+{
+    auto graph=ColorDefinition(); graph.parameters.clear(); graph.graph.GetNodes().resize(1); graph.graph.GetLinks().clear();
+    const auto constant=graph.graph.AddNode(MaterialNodeType::Constant,"Color"); const auto mask=graph.graph.AddNode(MaterialNodeType::ComponentMask,"RGB"); graph.graph.GetNodes().back().channelMask="xyz";
+    graph.graph.Connect(constant,mask,0); graph.graph.Connect(mask,1,0);
+    std::vector<GLuint> handles,textureHandles; std::shared_ptr<MaterialRenderProxy> retainedProgram,retainedTexture;
+    for (int i=0;i<24;++i)
+    {
+        graph.graph.GetNodes()[1].value.x=.013f*(i+1); auto proxy=Proxy(graph); std::vector<MaterialDiagnostic> diagnostics;
+        Check(device.ValidateMaterial(*proxy->compiled,diagnostics),"validate an edited literal across all six variants");
+        item.materialProxy=proxy; device.BeginFrame(View()); device.Draw(item); GLint handle=0; glGetIntegerv(GL_CURRENT_PROGRAM,&handle); handles.push_back(handle); device.EndFrame();
+        if (i==0) retainedProgram=proxy;
+    }
+    for (int i=0;i<24;++i)
+    {
+        auto proxy=Proxy(TextureDefinition(TextureSampling::Linear)); auto texture=std::make_shared<TextureResource>(); texture->Load(root+"gray.ppm");
+        proxy->textures[0].resource=texture; proxy->textures[0].version=10000+i; item.materialProxy=proxy;
+        device.BeginFrame(View()); device.Draw(item); GLint handle=0; glGetIntegerv(GL_TEXTURE_BINDING_2D,&handle); textureHandles.push_back(handle); device.EndFrame();
+        if (i==0) retainedTexture=proxy;
+    }
+    item.materialProxy.reset(); for (int i=0;i<4;++i) { device.BeginFrame(View()); device.EndFrame(); }
+    const auto isProgram=reinterpret_cast<PFNGLISPROGRAMPROC>(SDL_GL_GetProcAddress("glIsProgram"));
+    Check(isProgram(handles[0]) && glIsTexture(textureHandles[0]),"old GPU objects remain valid while a snapshot still owns them");
+    retainedProgram.reset(); retainedTexture.reset(); for (int i=0;i<4;++i) { device.BeginFrame(View()); device.EndFrame(); }
+    Check(std::count_if(handles.begin(),handles.end(),[&](GLuint id) { return isProgram(id); })<=4,"repeated edits retire obsolete GL programs after snapshot release");
+    Check(std::count_if(textureHandles.begin(),textureHandles.end(),[](GLuint id) { return glIsTexture(id); })<=1,"repeated texture versions retire after snapshot release at frame boundaries");
+}
+void TestLegacyResolvedPasses(SdlGlRenderDevice &device,RenderItem &item)
+{
+    PlatformFile::WriteAllText(root+"compat.frag","uniform vec2 uClusterDepthRange;\n");
+    PlatformFile::WriteAllText(root+"compat.mat","color 0 0 0 1\nemissive 1 0 0\nblend alpha\nshader compat.frag\n");
+    PlatformFile::WriteAllText(root+"compatChild.mat","TINY_MAT 2\nparent \"compat.mat\"\nparameter \"Emissive\" Vec3 0 1 0\n");
+    ResourceManager resources; resources.Initialize(nullptr,root); MaterialSystem system(resources);
+    item.material=resources.Load<MaterialResource>("assets/compatChild.mat"); item.materialProxy=system.BuildProxy("assets/compatChild.mat"); item.transparent=true;
+    const auto child=Draw(device,item,View()); Check(child.y>.95f && child.x<.02f,"legacy shader branch uses resolved typed child values");
+    auto dynamic=system.CreateDynamicInstance("assets/compat.mat"); dynamic->SetParameter("Emissive",Vec3{0,0,1});
+    item.material=resources.Load<MaterialResource>("assets/compat.mat"); item.materialProxy=system.BuildProxy("assets/compat.mat",dynamic.get());
+    const auto blue=Draw(device,item,View()); Check(blue.z>.95f && blue.x<.02f,"legacy shader branch uses independent dynamic values");
+    device.BeginFrame(View()); device.DrawInstanced({item,item}); const auto instanced=device.ReadHdrAttachmentForTests(0)[32*64+32];
+    Check(instanced.z>.95f && instanced.x<.02f,"legacy shader instancing uses effective dynamic snapshot");
+    dynamic->SetParameter("EmissiveMap",std::string("assets/dark.ppm")); item.materialProxy=system.BuildProxy("assets/compat.mat",dynamic.get());
+    const auto textured=Draw(device,item,View()); Check(Near(textured.z,.05127f,.008f),"legacy shader uses effective texture overrides with declared sampling");
+    item.model=ScaleMatrix({-1,1,1});
+    device.BeginShadowPass(View(),0); glDisable(GL_CULL_FACE); device.DrawShadow(item); const auto opaqueShadow=device.ReadShadowDepthForTests(1024,1024); device.EndShadowPass();
+    Check(opaqueShadow<.6f,"legacy shadow opacity fixture casts before transparent override");
+    dynamic->SetParameter("BaseColor",Vec4{0,0,0,0}); item.materialProxy=system.BuildProxy("assets/compat.mat",dynamic.get());
+    device.BeginShadowPass(View(),0); glDisable(GL_CULL_FACE); device.DrawShadow(item); const auto shadow=device.ReadShadowDepthForTests(1024,1024); device.EndShadowPass();
+    device.BeginShadowPass(View(),0); glDisable(GL_CULL_FACE); device.DrawShadowInstanced({item,item}); const auto instancedShadow=device.ReadShadowDepthForTests(1024,1024); device.EndShadowPass();
+    Check(shadow>.99f && instancedShadow>.99f,"legacy shadow paths consume effective opacity from dynamic snapshot");
+    item.model=Mat4::Identity();
+    PlatformFile::WriteAllText(root+"compat.mat","color 0 0 0 1\nshader compat.frag\nparameter uClusterDepthRange .2 .7 0 0\n"); system.Reload("assets/compat.mat");
+    item.materialProxy=system.BuildProxy("assets/compatChild.mat"); item.material=resources.Load<MaterialResource>("assets/compatChild.mat"); item.transparent=false;
+    Draw(device,item,View()); GLint program=0; glGetIntegerv(GL_CURRENT_PROGRAM,&program);
+    const auto location=reinterpret_cast<PFNGLGETUNIFORMLOCATIONPROC>(SDL_GL_GetProcAddress("glGetUniformLocation"));
+    const auto read=reinterpret_cast<PFNGLGETUNIFORMFVPROC>(SDL_GL_GetProcAddress("glGetUniformfv")); float range[2]{};
+    const auto uniform=location(program,"uClusterDepthRange"); if (uniform>=0) read(program,uniform,range);
+    Check(uniform>=0 && Near(range[0],.2f) && Near(range[1],.7f),"typed legacy child preserves reflected custom uniform behavior");
+    item.materialProxy.reset(); resources.Shutdown();
+}
 void TestPackagedWorkingDirectory(SdlGlRenderDevice &device,RenderItem &item)
 {
     auto graph=TextureDefinition(TextureSampling::Linear); graph.parameters[0].defaultValue=std::string("gray.ppm"); graph.graph.GetParameters()=graph.parameters; graph.graph.GetRenderState()=graph.renderState;
@@ -268,6 +327,8 @@ int main()
         TestSharedPrograms(device,item); TestParameterUpload(device,item); TestTextureSemantics(device,item); TestFallbackTexture(device,item); TestTextureBudget(device,item);
         TestPassClippingAndState(device,item); TestGeometryAndPbr(device,item);
         TestGpuCandidateRollback(device,item);
+        TestGpuGenerationLifetime(device,item);
+        TestLegacyResolvedPasses(device,item);
         TestPackagedWorkingDirectory(device,item);
         device.Shutdown();
     }

@@ -103,6 +103,12 @@ bool ParseMaterialAsset(const std::string& source, MaterialAssetData& data, std:
             auto& path = key == "definition" ? candidate.definitionPath : candidate.parentPath;
             valid = path.empty() && static_cast<bool>(fields >> std::quoted(path)) && !path.empty();
         }
+        else if (key == "validated_override")
+        {
+            std::string name,typeName; MaterialParameterType type;
+            valid=static_cast<bool>(fields>>std::quoted(name)>>typeName) && IsMaterialParameterName(name) && ParseMaterialParameterType(typeName,type) && !candidate.validatedOverrideTypes.count(name);
+            if (valid) candidate.validatedOverrideTypes.emplace(name,type);
+        }
         else if (key == "parameter" || key == "texture")
         {
             std::string name, typeName;
@@ -140,6 +146,9 @@ std::string SerializeMaterialAsset(const MaterialAssetData& data)
         WriteMaterialValue(out, entry.second);
         out << '\n';
     }
+    for (const auto &entry:data.validatedOverrideTypes)
+        if (data.overrides.count(entry.first) && GetMaterialParameterType(data.overrides.at(entry.first))==entry.second)
+            out << "validated_override " << std::quoted(entry.first) << ' ' << MaterialParameterTypeName(entry.second) << '\n';
     return out.str();
 }
 } // namespace MiniEngine

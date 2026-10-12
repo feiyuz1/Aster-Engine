@@ -6,6 +6,7 @@
 #include "MiniEngine/ECS/SceneSerializer.hpp"
 #include "MiniEngine/Render/SdlGlRenderDevice.hpp"
 #include "MiniEngine/Project/ProjectPackager.hpp"
+#include "MiniEngine/Resource/PakArchive.hpp"
 #define SDL_MAIN_HANDLED
 #include <SDL.h>
 #include <imgui.h>
@@ -790,6 +791,53 @@ struct EditorInteractionTests
         Frame([&] { asset.Draw(); editor.Draw(); });
         Check(editor.IsDirty(),"actual ImGui material modules retain draft state");
     }
+    void MaterialTexturePortability()
+    {
+        const auto directory=std::filesystem::absolute("Saved/EditorPortable"); const auto assets=directory/"assets";
+        std::filesystem::create_directories(assets); PlatformFile::WriteAllText(assets/"white.ppm","P3\n1 1\n255\n255 255 255\n");
+        MaterialAssetData data; data.formatVersion=2; data.definitionPath="builtin:PBR";
+        auto schema=MakeBuiltinPbrDefinition().parameters;
+        for (auto &p:schema) if (p.name=="BaseMap") p.defaultValue=(assets/"white.ppm").generic_u8string();
+        MaterialAssetEditor editor; editor.Open((assets/"child.mat").generic_u8string(),data,schema);
+        editor.SetSaveRequest([](const auto &path,const auto &draft,auto &) { return PlatformFile::WriteAllText(std::filesystem::u8path(path),SerializeMaterialAsset(draft)); });
+        Frame([&] { editor.Draw(); }); Frame([&] { editor.Draw(); });
+        auto window=ImGui::FindWindowByName("Material instance / 材质实例");
+        ImGui::ActivateItemByID(ImHashStr("Override",0,ImHashStr("BaseMap",0,window->ID))); Frame([&] { editor.Draw(); });
+        Check(editor.GetDraft().overrides.count("BaseMap") && !std::filesystem::u8path(std::get<std::string>(editor.GetDraft().overrides.at("BaseMap"))).is_absolute(),"actual inherited texture checkbox stores a portable reference");
+        Check(editor.Save(),"save inherited texture override");
+        Check(PakArchive::PackDirectory(directory,directory.parent_path()/"EditorPortable.tpak"),"package checkbox-created override");
+        const auto unavailable=directory/"assets-unavailable"; std::filesystem::remove_all(unavailable); std::filesystem::rename(assets,unavailable);
+        ResourceManager resources; resources.Initialize(nullptr,assets); PlatformFile::ClearMounts(); PlatformFile::MountPak(directory.parent_path()/"EditorPortable.tpak"); PlatformFile::SetReadPolicy(PlatformFile::ReadPolicy::MountedOnly);
+        MaterialSystem system(resources); const auto proxy=system.BuildProxy("assets/child.mat");
+        const bool loaded=std::any_of(proxy->textures.begin(),proxy->textures.end(),[](const auto &t) { return t.parameterName=="BaseMap" && t.resource; });
+        PlatformFile::ClearMounts(); resources.Shutdown(); std::filesystem::rename(unavailable,assets);
+        Check(loaded,"checkbox-created texture resolves from package with original sources unavailable");
+    }
+    void MaterialExternalReload()
+    {
+        const auto assets=std::filesystem::absolute("Saved/EditorReload/assets");
+        auto definition=MakeBuiltinPbrDefinition(); PlatformFile::WriteAllText(assets/"parent.matgraph",definition.graph.Serialize());
+        MaterialAssetData data; data.formatVersion=2; data.definitionPath="parent.matgraph"; data.overrides["Roughness"]=.2f;
+        PlatformFile::WriteAllText(assets/"child.mat",SerializeMaterialAsset(data));
+        ResourceManager resources; resources.Initialize(nullptr,assets); Renderer renderer; renderer.SetResourceManager(&resources);
+        EditorApp app; auto &context=const_cast<EngineContext &>(app.m_engine.GetContext()); context.resourceManager=&resources; context.renderer=&renderer;
+        const auto select=[&](const std::string &name) { for (const auto &a:resources.GetAssetRegistry().GetAssets()) if (std::filesystem::u8path(a.path).filename()==name) app.m_selectedAsset=a.path; };
+        const auto draw=[&] { app.DrawMaterialGraphEditor(); };
+        const auto reload=[&] { auto &io=ImGui::GetIO(); io.AddKeyEvent(ImGuiMod_Ctrl,true); io.AddKeyEvent(ImGuiKey_R,true); Frame(draw); io.AddKeyEvent(ImGuiKey_R,false); io.AddKeyEvent(ImGuiMod_Ctrl,false); Frame(draw); };
+        select("child.mat"); Frame(draw); data.overrides["Roughness"]=.8f; PlatformFile::WriteAllText(assets/"child.mat",SerializeMaterialAsset(data)); reload();
+        Check(app.m_materialAssetEditor.Save(),"save clean instance after external Ctrl+R");
+        MaterialResource loaded; loaded.Load((assets/"child.mat").generic_u8string());
+        Check(std::get<float>(loaded.GetMaterialData().overrides.at("Roughness"))==.8f,"Ctrl+R refreshes clean instance draft and saved baseline");
+        select("parent.matgraph"); Frame(draw); definition.graph.GetParameters()[1].defaultValue=.6f; PlatformFile::WriteAllText(assets/"parent.matgraph",definition.graph.Serialize()); reload();
+        Check(app.m_materialGraphEditor.Save(),"save clean graph after external Ctrl+R");
+        MaterialDefinitionResource saved; saved.Load((assets/"parent.matgraph").generic_u8string());
+        Check(std::get<float>(saved.GetData().parameters[1].defaultValue)==.6f,"Ctrl+R refreshes clean graph draft");
+        select("child.mat"); Frame(draw); app.m_materialAssetEditor.SetOverride("Roughness",.5f); data.overrides["Roughness"]=.9f; PlatformFile::WriteAllText(assets/"child.mat",SerializeMaterialAsset(data)); reload();
+        Check(app.m_materialAssetEditor.IsDirty() && std::get<float>(app.m_materialAssetEditor.GetDraft().overrides.at("Roughness"))==.5f && !app.m_materialAssetEditor.Save(),"dirty external reload retains draft and blocks stale overwrite with conflict");
+        app.m_materialAssetEditor.Discard();
+        Check(std::get<float>(app.m_materialAssetEditor.GetDraft().overrides.at("Roughness"))==.9f,"discard after reload restores latest external baseline");
+        context.renderer=nullptr; context.resourceManager=nullptr; renderer.Shutdown(); resources.Shutdown();
+    }
     void MaterialWorkflowGpu()
     {
         const auto root=std::filesystem::absolute("Saved/MaterialWorkflow"); const auto assets=root/"assets"; std::filesystem::create_directories(assets);
@@ -849,6 +897,8 @@ int main()
         tests.ShaderDocuments();
         tests.WindowClose();
         tests.MaterialDocuments();
+        tests.MaterialTexturePortability();
+        tests.MaterialExternalReload();
         tests.MaterialWorkflowGpu();
         std::cout << tests.checks << " interaction checks passed\n";
         return 0;

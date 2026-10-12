@@ -4,6 +4,7 @@
 #include <SDL.h>
 #include <SDL_opengl.h>
 #include <array>
+#include <algorithm>
 #include <type_traits>
 #include <unordered_set>
 
@@ -29,6 +30,7 @@ struct GlMaterialProgramCache::Impl
     std::unordered_set<std::string> failed, warned;
     std::vector<MaterialDiagnostic> diagnostics;
     std::array<std::size_t,2> count{};
+    std::uint64_t frame=0;
     struct FastEntry { std::weak_ptr<const CompiledMaterial> owner; std::array<GlMaterialProgram *,6> variants{}; };
     std::unordered_map<const CompiledMaterial *,FastEntry> fast;
     GLuint numericBuffer = 0, fallback[2]{};
@@ -132,6 +134,27 @@ bool GlMaterialProgramCache::Initialize()
     return true;
 }
 void GlMaterialProgramCache::SetTemplates(MaterialTemplateSources sources) { m_impl->templates = std::move(sources); m_impl->fast.clear(); }
+void GlMaterialProgramCache::RetireUnused()
+{
+    auto &p=*m_impl; ++p.frame;
+    std::unordered_set<GlMaterialProgram *> live;
+    for (auto it=p.fast.begin();it!=p.fast.end();)
+    {
+        if (it->second.owner.expired()) it=p.fast.erase(it);
+        else { for (auto *variant:it->second.variants) if (variant) live.insert(variant); ++it; }
+    }
+    std::vector<std::pair<std::uint64_t,std::string>> unused;
+    for (const auto &entry:p.programs) if (!live.count(entry.second.get())) unused.emplace_back(entry.second->lastUsedFrame,entry.first);
+    std::sort(unused.begin(),unused.end());
+    for (std::size_t i=0;i<unused.size();++i)
+        if (p.frame>unused[i].first+2 || i+64<unused.size())
+        {
+            const auto entry=p.programs.find(unused[i].second);
+            if (p.current==entry->second.get()) p.current=nullptr;
+            p.DeleteProgram(entry->second->handle); p.programs.erase(entry);
+        }
+    if (p.failed.size()>64) p.failed.clear();
+}
 bool GlMaterialProgramCache::ValidateTemplates(const MaterialTemplateSources &sources)
 {
     auto &p=*m_impl; auto previous=p.templates; p.templates=sources;
@@ -151,7 +174,7 @@ GlMaterialProgram *GlMaterialProgramCache::GetOrCreate(const CompiledMaterial &m
     auto &p = *m_impl;
     const auto shaders = MaterialCompiler{}.GeneratePass(material,pass,geometry,p.templates);
     const auto key = material.canonicalProgramContent + '\n' + shaders.vertex + '\n' + shaders.fragment;
-    const auto found = p.programs.find(key); if (found != p.programs.end()) return found->second.get();
+    const auto found = p.programs.find(key); if (found != p.programs.end()) { found->second->lastUsedFrame=p.frame; return found->second.get(); }
     if (p.failed.count(key)) return nullptr;
     if (!shaders.error.empty()) { p.Error(shaders.error); p.failed.insert(key); return nullptr; }
     const GLuint vertex = p.CompileStage(GL_VERTEX_SHADER,shaders.vertex);
@@ -167,6 +190,7 @@ GlMaterialProgram *GlMaterialProgramCache::GetOrCreate(const CompiledMaterial &m
     }
     if (!success || !p.ValidateLayout(handle,material.layout)) { p.DeleteProgram(handle); p.failed.insert(key); return nullptr; }
     auto program = std::make_unique<GlMaterialProgram>(); program->handle=handle; program->pass=pass; program->geometry=geometry;
+    program->lastUsedFrame=p.frame;
     auto *result=program.get(); p.programs.emplace(key,std::move(program)); ++p.count[static_cast<std::size_t>(pass)]; return result;
 }
 bool GlMaterialProgramCache::Bind(const MaterialRenderProxy &proxy,const FrameView &view,MaterialPass pass,MaterialGeometry geometry)
@@ -178,6 +202,7 @@ bool GlMaterialProgramCache::Bind(const MaterialRenderProxy &proxy,const FrameVi
     const auto variant=static_cast<std::size_t>(pass)*3+static_cast<std::size_t>(geometry);
     if (!entry.variants[variant]) entry.variants[variant]=GetOrCreate(*proxy.compiled,pass,geometry);
     p.current=entry.variants[variant]; if (!p.current) return false;
+    p.current->lastUsedFrame=p.frame;
     p.UseProgram(p.current->handle);
     std::array<Vec4,64> slots{}; std::copy(proxy.numericSlots.begin(),proxy.numericSlots.end(),slots.begin());
     p.BindBuffer(GL_UNIFORM_BUFFER,p.numericBuffer); p.BufferSubData(GL_UNIFORM_BUFFER,0,sizeof(slots),slots.data());

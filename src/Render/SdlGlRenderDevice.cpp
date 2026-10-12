@@ -965,6 +965,7 @@ struct SdlGlRenderDevice::Impl
     std::unordered_map<std::string, GpuMesh> meshes;
     std::unordered_map<std::string, GLuint> textures;
     std::unordered_map<std::string, std::size_t> textureBytes;
+    std::unordered_map<std::string,std::weak_ptr<TextureResource>> materialTextureOwners;
     std::unordered_map<std::string, std::shared_ptr<TextureResource>> uiTextureResources;
     std::size_t gpuMemoryBudget = 512ull * 1024ull * 1024ull;
 
@@ -998,6 +999,7 @@ struct SdlGlRenderDevice::Impl
         for (const auto &pair : textures)
             glDeleteTextures(1, &pair.second);
         textures.clear();
+        materialTextureOwners.clear();
         textureBytes.clear();
         uiTextureResources.clear();
     }
@@ -1497,33 +1499,49 @@ struct SdlGlRenderDevice::Impl
         std::unordered_map<std::string, GLint> locations;
     };
     std::unordered_map<std::string, LegacyReflection> legacyReflection;
-    void UploadMaterialParameters(const std::shared_ptr<MaterialResource> &material)
+    Vec4 EffectiveNumeric(const RenderItem &item,const char *name,const Vec4 fallback) const
     {
-        if (!material || material->GetShaderPath().empty())
-            return;
-        auto found = legacyReflection.find(material->GetShaderPath());
+        if (item.materialProxy && item.materialProxy->compiled)
+            for (const auto &slot:item.materialProxy->compiled->layout.numericSlots)
+                if (slot.name==name && slot.slot<item.materialProxy->numericSlots.size()) return item.materialProxy->numericSlots[slot.slot];
+        return fallback;
+    }
+    GLuint LegacyTexture(const RenderItem &item,const std::shared_ptr<TextureResource> &fallback,const int unit,const bool srgb)
+    {
+        static const char *names[]={"BaseMap",nullptr,"NormalMap","MetallicMap","RoughnessMap","AOMap","EmissiveMap","PackedMap"};
+        if (item.materialProxy && unit>=0 && unit<8 && names[unit])
+            for (const auto &texture:item.materialProxy->textures)
+                if (texture.parameterName==names[unit]) return GetOrCreateTexture(texture.resource,texture.sampling==TextureSampling::SRgb,texture.version);
+        return GetOrCreateTexture(fallback,srgb);
+    }
+    void UploadMaterialParameters(const std::shared_ptr<MaterialResource> &material,const MaterialRenderProxy *proxy=nullptr)
+    {
+        const std::string shader=proxy ? proxy->legacyShaderPath : material ? material->GetShaderPath() : "";
+        if (shader.empty()) return;
+        auto found = legacyReflection.find(shader);
         if (found == legacyReflection.end())
         {
             LegacyReflection reflection;
-            reflection.parameters = ShaderPipeline::ReflectParameters(std::filesystem::u8path(material->GetShaderPath()));
+            reflection.parameters = ShaderPipeline::ReflectParameters(std::filesystem::u8path(shader));
             for (const auto &p : reflection.parameters)
                 reflection.locations.emplace(p.name, GetUniformLocation(program, p.name.c_str()));
-            found = legacyReflection.emplace(material->GetShaderPath(), std::move(reflection)).first;
+            found = legacyReflection.emplace(shader, std::move(reflection)).first;
         }
         for (const auto &parameter : found->second.parameters)
         {
-            const auto value = material->GetParameters().find(parameter.name);
-            if (value == material->GetParameters().end() || parameter.type == ShaderParameterType::Texture)
-                continue;
+            const Vec4 *value=nullptr;
+            if (proxy) { const auto parameterValue=proxy->legacyParameters.find(parameter.name); if (parameterValue!=proxy->legacyParameters.end()) value=&parameterValue->second; }
+            else if (material) { const auto parameterValue=material->GetParameters().find(parameter.name); if (parameterValue!=material->GetParameters().end()) value=&parameterValue->second; }
+            if (!value || parameter.type==ShaderParameterType::Texture) continue;
             const GLint location = found->second.locations.at(parameter.name);
             if (parameter.type == ShaderParameterType::Float)
-                Uniform1f(location, value->second.x);
+                Uniform1f(location, value->x);
             else if (parameter.type == ShaderParameterType::Vec2)
-                Uniform2f(location, value->second.x, value->second.y);
+                Uniform2f(location, value->x, value->y);
             else if (parameter.type == ShaderParameterType::Vec3)
-                Uniform3f(location, value->second.x, value->second.y, value->second.z);
+                Uniform3f(location, value->x, value->y, value->z);
             else if (parameter.type == ShaderParameterType::Vec4)
-                Uniform4f(location, value->second.x, value->second.y, value->second.z, value->second.w);
+                Uniform4f(location, value->x, value->y, value->z, value->w);
         }
     }
 
@@ -1761,6 +1779,7 @@ struct SdlGlRenderDevice::Impl
         if (!resource || !resource->IsReady())
             return 0;
         const std::string key = resource->GetPath() + (srgb ? "#srgb" : "#linear") + '#' + std::to_string(version);
+        if (version) materialTextureOwners[key]=resource;
         const auto found = textures.find(key);
         if (found != textures.end())
             return found->second;
@@ -1825,7 +1844,19 @@ struct SdlGlRenderDevice::Impl
         glBindTexture(GL_TEXTURE_2D, 0);
         textures[key] = texture;
         textureBytes[key] = requiredBytes;
+        if (version) materialTextureOwners[key]=resource;
         return texture;
+    }
+    void RetireMaterialTextures()
+    {
+        for (auto it=materialTextureOwners.begin();it!=materialTextureOwners.end();)
+            if (it->second.expired())
+            {
+                const auto texture=textures.find(it->first);
+                if (texture!=textures.end()) { glDeleteTextures(1,&texture->second); textures.erase(texture); }
+                textureBytes.erase(it->first); it=materialTextureOwners.erase(it);
+            }
+            else ++it;
     }
 
     GLuint GetOrCreateUiTexture(const std::string &path)
@@ -2306,7 +2337,7 @@ void SdlGlRenderDevice::BeginShadowPass(const FrameView &view, const std::size_t
 
 void SdlGlRenderDevice::DrawShadow(const RenderItem &item)
 {
-    if (item.materialProxy && item.materialProxy->legacyShaderPath.empty())
+    if (item.materialProxy)
     {
         const auto geometry=item.skinMatrices.empty() ? MaterialGeometry::Static : MaterialGeometry::Skinned;
         if (!m_impl->BindCompiledMaterial(item,MaterialPass::Shadow,geometry)) return;
@@ -2340,7 +2371,7 @@ void SdlGlRenderDevice::DrawShadowInstanced(const std::vector<RenderItem> &items
 {
     if (items.empty())
         return;
-    if (items.front().materialProxy && items.front().materialProxy->legacyShaderPath.empty())
+    if (items.front().materialProxy)
     {
         if (!m_impl->BindCompiledMaterial(items.front(),MaterialPass::Shadow,MaterialGeometry::Instanced)) return;
         auto *mesh=const_cast<Impl::GpuMesh *>(m_impl->GetOrCreateMesh(items.front().mesh)); if (!mesh) return;
@@ -2384,6 +2415,8 @@ void SdlGlRenderDevice::EndShadowPass()
 // 保存本帧公共常量并准备离屏颜色、深度和运动矢量目标，后处理统一从这些目标读取。
 void SdlGlRenderDevice::BeginFrame(const FrameView &view)
 {
+    if (m_impl->materialPrograms) m_impl->materialPrograms->RetireUnused();
+    m_impl->RetireMaterialTextures();
     if (view.resetTemporalHistory)
         m_impl->historyValid = false;
     m_impl->view = view;
@@ -2507,7 +2540,7 @@ void SdlGlRenderDevice::Draw(const RenderItem &item)
     }
     m_impl->UseProgram(m_impl->program);
     glEnable(GL_CULL_FACE); glCullFace(GL_BACK);
-    if (item.transparent)
+    if (item.materialProxy ? item.materialProxy->state.blendMode==MaterialBlendMode::Alpha : item.transparent)
     {
         glEnable(GL_BLEND);
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
@@ -2522,10 +2555,12 @@ void SdlGlRenderDevice::Draw(const RenderItem &item)
     if (!mesh)
         return;
     const Mat4 mvp = m_impl->view.projection * m_impl->view.view * item.model;
-    const Vec4 color = item.material ? item.material->GetBaseColor() : Vec4{0.3f, 0.7f, 1.0f, 1.0f};
-    const float metallic = item.material ? item.material->GetMetallic() : 0.0f;
-    const float roughness = item.material ? item.material->GetRoughness() : 0.7f;
-    const Vec3 emissive = item.material ? item.material->GetEmissive() : Vec3{};
+    auto color=m_impl->EffectiveNumeric(item,"BaseColor",item.material ? item.material->GetBaseColor() : Vec4{.3f,.7f,1,1});
+    color.w*=m_impl->EffectiveNumeric(item,"Opacity",{1,0,0,0}).x;
+    const float metallic=m_impl->EffectiveNumeric(item,"Metallic",{item.material ? item.material->GetMetallic() : 0,0,0,0}).x;
+    const float roughness=m_impl->EffectiveNumeric(item,"Roughness",{item.material ? item.material->GetRoughness() : .7f,0,0,0}).x;
+    const auto oldEmissive=item.material ? item.material->GetEmissive() : Vec3{};
+    const auto emissive=m_impl->EffectiveNumeric(item,"Emissive",{oldEmissive.x,oldEmissive.y,oldEmissive.z,0});
     m_impl->UniformMatrix4fv(m_impl->mvpLocation, 1, GL_FALSE, mvp.Data());
     m_impl->Uniform1i(m_impl->instancedLocation, 0);
     std::array<Mat4, 64> identityBones;
@@ -2540,10 +2575,10 @@ void SdlGlRenderDevice::Draw(const RenderItem &item)
     m_impl->Uniform1f(m_impl->metallicLocation, metallic);
     m_impl->Uniform1f(m_impl->roughnessLocation, roughness);
     m_impl->Uniform3f(m_impl->emissiveLocation, emissive.x, emissive.y, emissive.z);
-    m_impl->UploadMaterialParameters(item.material);
+    m_impl->UploadMaterialParameters(item.material,item.materialProxy.get());
     auto bindTexture = [&](const std::shared_ptr<TextureResource> &resource, const int unit, const bool srgb, const GLint samplerLocation,
                            const GLint enabledLocation) {
-        const GLuint texture = m_impl->GetOrCreateTexture(resource, srgb);
+        const GLuint texture = m_impl->LegacyTexture(item,resource,unit,srgb);
         m_impl->ActiveTexture(GL_TEXTURE0 + unit);
         glBindTexture(GL_TEXTURE_2D, texture);
         m_impl->Uniform1i(samplerLocation, unit);
@@ -2556,7 +2591,7 @@ void SdlGlRenderDevice::Draw(const RenderItem &item)
     bindTexture(item.aoTexture, 5, false, m_impl->aoTextureLocation, m_impl->hasAoTextureLocation);
     bindTexture(item.emissiveTexture, 6, true, m_impl->emissiveTextureLocation, m_impl->hasEmissiveTextureLocation);
     bindTexture(item.packedTexture, 7, false, m_impl->packedTextureLocation, m_impl->hasPackedTextureLocation);
-    m_impl->Uniform1i(m_impl->packedLayoutRmaLocation, item.material && item.material->GetPackedTextureLayout() == "RMA" ? 1 : 0);
+    m_impl->Uniform1i(m_impl->packedLayoutRmaLocation,m_impl->EffectiveNumeric(item,"PackedLayout",{item.material && item.material->GetPackedTextureLayout()=="RMA" ? 1.f : 0.f,0,0,0}).x>.5f ? 1 : 0);
     const auto irradiance = m_impl->view.environmentIrradiance ? m_impl->view.environmentIrradiance : m_impl->view.environmentTexture;
     const auto prefilter = m_impl->view.environmentPrefilter ? m_impl->view.environmentPrefilter : m_impl->view.environmentTexture;
     bindTexture(irradiance, 11, false, m_impl->environmentIrradianceLocation, -1);
@@ -2681,16 +2716,18 @@ void SdlGlRenderDevice::DrawInstanced(const std::vector<RenderItem> &items)
         bone = Mat4::Identity();
     m_impl->UniformMatrix4fv(m_impl->bonesLocation, static_cast<GLsizei>(identityBones.size()), GL_FALSE, identityBones[0].Data());
     const auto &first = items.front();
-    const Vec4 color = first.material ? first.material->GetBaseColor() : Vec4{0.3f, 0.7f, 1.0f, 1.0f};
-    const Vec3 emissive = first.material ? first.material->GetEmissive() : Vec3{};
+    auto color=m_impl->EffectiveNumeric(first,"BaseColor",first.material ? first.material->GetBaseColor() : Vec4{.3f,.7f,1,1});
+    color.w*=m_impl->EffectiveNumeric(first,"Opacity",{1,0,0,0}).x;
+    const auto oldEmissive=first.material ? first.material->GetEmissive() : Vec3{};
+    const auto emissive=m_impl->EffectiveNumeric(first,"Emissive",{oldEmissive.x,oldEmissive.y,oldEmissive.z,0});
     m_impl->Uniform4f(m_impl->baseColorLocation, color.x, color.y, color.z, color.w);
-    m_impl->Uniform1f(m_impl->metallicLocation, first.material ? first.material->GetMetallic() : 0.0f);
-    m_impl->Uniform1f(m_impl->roughnessLocation, first.material ? first.material->GetRoughness() : 0.7f);
+    m_impl->Uniform1f(m_impl->metallicLocation,m_impl->EffectiveNumeric(first,"Metallic",{first.material ? first.material->GetMetallic() : 0,0,0,0}).x);
+    m_impl->Uniform1f(m_impl->roughnessLocation,m_impl->EffectiveNumeric(first,"Roughness",{first.material ? first.material->GetRoughness() : .7f,0,0,0}).x);
     m_impl->Uniform3f(m_impl->emissiveLocation, emissive.x, emissive.y, emissive.z);
-    m_impl->UploadMaterialParameters(first.material);
+    m_impl->UploadMaterialParameters(first.material,first.materialProxy.get());
     const auto bindTexture = [&](const std::shared_ptr<TextureResource> &resource, const int unit, const bool srgb,
                                  const GLint samplerLocation, const GLint enabledLocation) {
-        const GLuint texture = m_impl->GetOrCreateTexture(resource, srgb);
+        const GLuint texture = m_impl->LegacyTexture(first,resource,unit,srgb);
         m_impl->ActiveTexture(GL_TEXTURE0 + unit);
         glBindTexture(GL_TEXTURE_2D, texture);
         m_impl->Uniform1i(samplerLocation, unit);
@@ -2703,7 +2740,7 @@ void SdlGlRenderDevice::DrawInstanced(const std::vector<RenderItem> &items)
     bindTexture(first.aoTexture, 5, false, m_impl->aoTextureLocation, m_impl->hasAoTextureLocation);
     bindTexture(first.emissiveTexture, 6, true, m_impl->emissiveTextureLocation, m_impl->hasEmissiveTextureLocation);
     bindTexture(first.packedTexture, 7, false, m_impl->packedTextureLocation, m_impl->hasPackedTextureLocation);
-    m_impl->Uniform1i(m_impl->packedLayoutRmaLocation, first.material && first.material->GetPackedTextureLayout() == "RMA" ? 1 : 0);
+    m_impl->Uniform1i(m_impl->packedLayoutRmaLocation,m_impl->EffectiveNumeric(first,"PackedLayout",{first.material && first.material->GetPackedTextureLayout()=="RMA" ? 1.f : 0.f,0,0,0}).x>.5f ? 1 : 0);
     const auto irradiance = m_impl->view.environmentIrradiance ? m_impl->view.environmentIrradiance : m_impl->view.environmentTexture;
     const auto prefilter = m_impl->view.environmentPrefilter ? m_impl->view.environmentPrefilter : m_impl->view.environmentTexture;
     bindTexture(irradiance, 11, false, m_impl->environmentIrradianceLocation, -1);

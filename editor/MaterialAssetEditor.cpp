@@ -22,7 +22,15 @@ bool MaterialAssetEditor::SetOverride(const std::string &name,const MaterialPara
 {
     const auto p=std::find_if(m_parameters.begin(),m_parameters.end(),[&](const auto &p) { return p.name==name; });
     if (p==m_parameters.end() || p->type!=GetMaterialParameterType(value) || !IsFiniteMaterialValue(value)) return false;
-    m_draft.overrides[name]=value; m_dirty=true; return true;
+    auto stored=value;
+    if (auto texture=std::get_if<std::string>(&stored); texture && !texture->empty() && std::filesystem::u8path(*texture).is_absolute())
+    {
+        std::error_code error;
+        const auto relative=std::filesystem::relative(std::filesystem::u8path(*texture),std::filesystem::absolute(std::filesystem::u8path(m_path)).parent_path(),error);
+        if (error || relative.is_absolute()) return false;
+        *texture=relative.generic_u8string();
+    }
+    m_draft.overrides[name]=std::move(stored); m_dirty=true; return true;
 }
 bool MaterialAssetEditor::ResetOverride(const std::string &name)
 { if (!m_draft.overrides.erase(name)) return false; m_dirty=true; return true; }

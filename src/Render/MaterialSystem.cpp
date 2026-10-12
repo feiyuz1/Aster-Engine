@@ -61,7 +61,9 @@ std::shared_ptr<const MaterialRenderProxy> MaterialSystem::BuildProxy(const std:
             auto &diagnostics=m_diagnostics[path]; diagnostics.insert(diagnostics.end(),result.diagnostics.begin(),result.diagnostics.end());
             if (result.Success())
             {
-                compiled=m_compiled.emplace(result.material->canonicalProgramContent,result.material).first->second;
+                auto &cached=m_compiled[result.material->canonicalProgramContent]; compiled=cached.lock();
+                if (!compiled) { compiled=result.material; cached=compiled; }
+                for (auto it=m_compiled.begin();it!=m_compiled.end();) if (it->second.expired()) it=m_compiled.erase(it); else ++it;
                 m_compiledDefinitions.emplace(resolved->definition.get(),compiled);
             }
         }
@@ -156,6 +158,7 @@ std::shared_ptr<const MaterialDefinitionData> MaterialSystem::LoadDefinition(con
 std::shared_ptr<ResolvedMaterial> MaterialSystem::ResolveRecursive(const std::string &path, std::vector<std::string> &chain,
                                                                  std::vector<MaterialDiagnostic> &diagnostics)
 {
+    m_resolutionTrace.push_back(path);
     if (path == "builtin:PBR" || std::filesystem::u8path(path).extension() == ".matgraph")
     {
         auto definition = LoadDefinition(path, diagnostics);
@@ -216,10 +219,22 @@ std::shared_ptr<ResolvedMaterial> MaterialSystem::ResolveRecursive(const std::st
         {
             const auto parentPath=m_resources.ResolveAssetPath(legacy.GetParentPath(),path);
             auto parent=ResolveRecursive(parentPath,chain,diagnostics); if (!parent) return {};
-            resolved->dependencies=parent->dependencies; resolved->dependencies.push_back(parentPath);
+            *resolved=*parent; resolved->dependencies.push_back(parentPath);
+            std::unordered_set<std::string> written; std::istringstream lines(source); std::string line;
+            while (std::getline(lines,line)) { std::istringstream fields(line); std::string field; if (fields>>field) written.insert(field); }
+            const auto enabled=[&](const std::string &field) { const auto flag=old.overrideFlags.find(field); return written.count(field) && (flag==old.overrideFlags.end() || flag->second); };
+            const std::map<std::string,std::string> fields={{"BaseColor","color"},{"Metallic","metallic"},{"Roughness","roughness"},{"Emissive","emissive"},{"BaseMap","texture"},{"NormalMap","normalTexture"},{"MetallicMap","metallicTexture"},{"RoughnessMap","roughnessTexture"},{"AOMap","aoTexture"},{"EmissiveMap","emissiveTexture"},{"PackedMap","packedTexture"},{"PackedLayout","packedLayout"}};
+            for (std::size_t i=0;i<resolved->definition->parameters.size();++i)
+            {
+                const auto &declaration=resolved->definition->parameters[i]; const auto field=fields.find(declaration.name); const auto value=values.find(declaration.name);
+                if (field!=fields.end() && value!=values.end() && enabled(field->second) && declaration.type==GetMaterialParameterType(value->second)) resolved->values[i]=value->second;
+            }
+            if (enabled("shader")) resolved->legacyShaderPath=old.shaderPath;
+            for (const auto &entry:old.parameters) resolved->legacyParameters[entry.first]=entry.second;
+            if (enabled("blend") || (enabled("color") && old.baseColor.w<1))
+            { auto adjusted=std::make_shared<MaterialDefinitionData>(*resolved->definition); adjusted->renderState.blendMode=old.transparent ? MaterialBlendMode::Alpha : MaterialBlendMode::Opaque; adjusted->graph.GetRenderState()=adjusted->renderState; resolved->definition=adjusted; }
         }
-        resolved->legacyShaderPath = old.shaderPath;
-        resolved->legacyParameters = old.parameters;
+        else { resolved->legacyShaderPath = old.shaderPath; resolved->legacyParameters = old.parameters; }
         return resolved;
     }
     MaterialAssetData data;
@@ -238,7 +253,8 @@ std::shared_ptr<ResolvedMaterial> MaterialSystem::ResolveRecursive(const std::st
         if (declaration == parameters.end() || declaration->type != GetMaterialParameterType(entry.second))
         {
             const auto old=m_activeOverrideTypes.find(path);
-            if (m_allowInactive && old!=m_activeOverrideTypes.end() && old->second.count(entry.first) && old->second.at(entry.first)==GetMaterialParameterType(entry.second))
+            const auto persisted=data.validatedOverrideTypes.find(entry.first);
+            if ((persisted!=data.validatedOverrideTypes.end() && persisted->second==GetMaterialParameterType(entry.second)) || (m_allowInactive && old!=m_activeOverrideTypes.end() && old->second.count(entry.first) && old->second.at(entry.first)==GetMaterialParameterType(entry.second)))
             { diagnostics.push_back({MaterialDiagnosticSeverity::Warning,path,0,-1,"Inactive override after schema change: "+entry.first}); continue; }
             Error(diagnostics, path, "Unknown or mismatched material parameter: " + entry.first); return {};
         }
@@ -265,20 +281,44 @@ MaterialReloadResult MaterialSystem::PublishCandidate(const std::string &path,co
     MaterialReloadResult result;
     const auto old=m_resolved.find(path); if (old!=m_resolved.end()) result.effectiveGeneration=old->second->generation;
     if (path=="builtin:PBR") { Error(result.diagnostics,path,"Builtin definitions cannot be saved or reloaded"); return result; }
+    // Capture previously valid schemas for the whole registered dependency
+    // closure, including instances absent from the currently rendered scene.
+    Resolve(path);
+    std::unordered_set<std::string> closure{Identity(path)};
+    const auto registered=m_resources.GetAssetRegistry().GetAssets();
+    bool expanded=true;
+    while (expanded)
+    {
+        expanded=false;
+        for (const auto &asset:registered)
+        {
+            if (asset.type!="Material" && asset.type!="MaterialGraph") continue;
+            const auto dependent=m_resources.ResolveAssetPath(asset.path);
+            if (closure.count(Identity(dependent))) continue;
+            if (std::any_of(asset.dependencies.begin(),asset.dependencies.end(),[&](const auto &dependency) { return closure.count(Identity(m_resources.ResolveAssetPath(dependency)))!=0; }))
+            { closure.insert(Identity(dependent)); Resolve(dependent); expanded=true; }
+        }
+    }
     std::vector<std::string> affected{path};
     for (const auto &entry:m_resolved)
         if (entry.first!=path && std::any_of(entry.second->dependencies.begin(),entry.second->dependencies.end(),[&](const auto &p) { return Identity(p)==Identity(path); })) affected.push_back(entry.first);
+    for (const auto &entry:m_dependencyAttempts)
+        if (std::find(affected.begin(),affected.end(),entry.first)==affected.end() && std::any_of(entry.second.begin(),entry.second.end(),[&](const auto &p) { return Identity(p)==Identity(path); })) affected.push_back(entry.first);
     auto candidate=*this;
     candidate.m_definitions.clear(); candidate.m_compiledDefinitions.clear(); candidate.m_allowInactive=true;
     candidate.m_refreshTextures=true;
     for (const auto &p:affected) { candidate.m_resolved.erase(p); candidate.m_proxies.erase(p); candidate.m_diagnostics.erase(p); }
+    for (auto it=candidate.m_compiled.begin();it!=candidate.m_compiled.end();) if (it->second.expired()) it=candidate.m_compiled.erase(it); else ++it;
     if (source) candidate.m_candidateSources[path]=*source;
     std::unordered_set<std::string> validated;
     for (const auto &p:affected)
     {
         const auto resolved=candidate.Resolve(p);
         if (!resolved)
-        { const auto &errors=candidate.GetDiagnostics(p); result.diagnostics.insert(result.diagnostics.end(),errors.begin(),errors.end()); break; }
+        {
+            if (p!=path && !m_resolved.count(p)) { candidate.BuildProxy(p); continue; }
+            const auto &errors=candidate.GetDiagnostics(p); result.diagnostics.insert(result.diagnostics.end(),errors.begin(),errors.end()); break;
+        }
         const auto compiled=MaterialCompiler{}.Compile(*resolved->definition);
         result.diagnostics.insert(result.diagnostics.end(),resolved->diagnostics.begin(),resolved->diagnostics.end());
         result.diagnostics.insert(result.diagnostics.end(),compiled.diagnostics.begin(),compiled.diagnostics.end());
@@ -290,11 +330,44 @@ MaterialReloadResult MaterialSystem::PublishCandidate(const std::string &path,co
     const bool allBuilt=std::all_of(affected.begin(),affected.end(),[&](const auto &p) { return candidate.m_proxies.count(p)!=0; });
     const bool errors=std::any_of(result.diagnostics.begin(),result.diagnostics.end(),[](const auto &d) { return d.severity==MaterialDiagnosticSeverity::Error; });
     if (!allBuilt || errors) { m_diagnostics[path]=result.diagnostics; return result; }
-    if (source && !PlatformFile::WriteAllTextAtomic(std::filesystem::u8path(path),*source))
-    { Error(result.diagnostics,path,"Unable to atomically save material candidate"); m_diagnostics[path]=result.diagnostics; return result; }
+    std::map<std::string,std::string> writes;
+    if (source) writes[path]=*source;
+    for (const auto &entry:candidate.m_activeOverrideTypes)
+    {
+        const auto pending=writes.find(entry.first);
+        const auto text=pending==writes.end() ? PlatformFile::ReadAllText(std::filesystem::u8path(entry.first)) : pending->second;
+        MaterialAssetData data; std::string error;
+        if (!ParseMaterialAsset(text,data,error)) continue;
+        bool changed=false;
+        for (const auto &type:entry.second)
+            if (data.overrides.count(type.first) && GetMaterialParameterType(data.overrides.at(type.first))==type.second && (!data.validatedOverrideTypes.count(type.first) || data.validatedOverrideTypes.at(type.first)!=type.second))
+            { data.validatedOverrideTypes[type.first]=type.second; changed=true; }
+        if (changed) writes[entry.first]=SerializeMaterialAsset(data);
+    }
+    struct SavedFile { std::string path,text; bool existed; };
+    std::vector<SavedFile> written;
+    for (const auto &entry:writes)
+    {
+        const auto previous=PlatformFile::ReadAllText(std::filesystem::u8path(entry.first));
+        const bool existed=PlatformFile::Exists(std::filesystem::u8path(entry.first));
+        if (previous==entry.second) continue;
+        if (!PlatformFile::WriteAllTextAtomic(std::filesystem::u8path(entry.first),entry.second))
+        {
+            Error(result.diagnostics,entry.first,"Unable to atomically save material candidate and override provenance");
+            for (auto undo=written.rbegin();undo!=written.rend();++undo)
+            {
+                std::error_code error;
+                const bool restored=undo->existed ? PlatformFile::WriteAllTextAtomic(std::filesystem::u8path(undo->path),undo->text) : std::filesystem::remove(std::filesystem::u8path(undo->path),error);
+                if (!restored || error) Error(result.diagnostics,undo->path,"Unable to restore material save transaction");
+            }
+            m_diagnostics[path]=result.diagnostics; return result;
+        }
+        written.push_back({entry.first,previous,existed});
+    }
     m_resolved.swap(candidate.m_resolved); m_definitions.swap(candidate.m_definitions); m_proxies.swap(candidate.m_proxies);
     m_compiledDefinitions.swap(candidate.m_compiledDefinitions); m_compiled.swap(candidate.m_compiled); m_diagnostics.swap(candidate.m_diagnostics);
     m_activeOverrideTypes.swap(candidate.m_activeOverrideTypes); m_nextGeneration=candidate.m_nextGeneration;
+    m_dependencyAttempts.swap(candidate.m_dependencyAttempts);
     m_textureSnapshots.swap(candidate.m_textureSnapshots); m_nextTextureVersion=candidate.m_nextTextureVersion;
     m_allowInactive=true;
     for (auto it=m_dynamicInstances.begin();it!=m_dynamicInstances.end();)
@@ -317,7 +390,9 @@ std::shared_ptr<const ResolvedMaterial> MaterialSystem::Resolve(const std::strin
     auto &diagnostics = m_diagnostics[path];
     diagnostics.clear();
     const auto previousOverrideTypes=m_activeOverrideTypes;
+    m_resolutionTrace.clear();
     auto resolved = ResolveRecursive(path, chain, diagnostics);
+    m_dependencyAttempts[path]=m_resolutionTrace;
     if (!resolved) { m_activeOverrideTypes=previousOverrideTypes; return {}; }
     resolved->generation = m_nextGeneration++;
     resolved->diagnostics = diagnostics;

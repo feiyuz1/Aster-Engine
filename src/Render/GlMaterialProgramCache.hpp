@@ -12,6 +12,7 @@ struct GlMaterialProgram
     std::unordered_map<std::string,int> locations;
     MaterialPass pass = MaterialPass::Base;
     MaterialGeometry geometry = MaterialGeometry::Static;
+    std::uint64_t lastUsedFrame=0;
 };
 class GlMaterialProgramCache
 {
@@ -22,6 +23,7 @@ public:
     bool Initialize();
     void SetTemplates(MaterialTemplateSources sources);
     bool ValidateTemplates(const MaterialTemplateSources &sources);
+    void RetireUnused();
     void SetFrameBindings(const std::array<std::uint32_t,3> &shadows, std::uint32_t lightData, std::uint32_t clusterData,
                           std::size_t cascade, Vec2 viewport);
     GlMaterialProgram *GetOrCreate(const CompiledMaterial &,MaterialPass,MaterialGeometry);

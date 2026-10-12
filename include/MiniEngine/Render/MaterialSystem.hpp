@@ -60,9 +60,11 @@ private:
     std::unordered_map<std::string, std::shared_ptr<const ResolvedMaterial>> m_resolved;
     std::unordered_map<std::string, std::shared_ptr<const MaterialDefinitionData>> m_definitions;
     std::unordered_map<std::string, std::vector<MaterialDiagnostic>> m_diagnostics;
+    std::unordered_map<std::string,std::vector<std::string>> m_dependencyAttempts;
+    std::vector<std::string> m_resolutionTrace;
     std::unordered_map<std::string, std::shared_ptr<const MaterialRenderProxy>> m_proxies;
     std::unordered_map<const MaterialDefinitionData *, std::shared_ptr<const CompiledMaterial>> m_compiledDefinitions;
-    std::unordered_map<std::string, std::shared_ptr<const CompiledMaterial>> m_compiled;
+    std::unordered_map<std::string, std::weak_ptr<const CompiledMaterial>> m_compiled;
     std::unordered_map<std::string,std::string> m_candidateSources;
     std::unordered_map<std::string,std::map<std::string,MaterialParameterType>> m_activeOverrideTypes;
     std::vector<std::weak_ptr<DynamicMaterialInstance>> m_dynamicInstances;

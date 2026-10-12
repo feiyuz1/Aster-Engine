@@ -5,6 +5,7 @@
 #include "MiniEngine/Resource/AssetMaintenance.hpp"
 #include "MiniEngine/Build/AssetCompiler.hpp"
 #include "MiniEngine/Render/ShaderPipeline.hpp"
+#include "MiniEngine/Resource/PakArchive.hpp"
 
 #include <cmath>
 #include <filesystem>
@@ -404,12 +405,21 @@ void TestReloadPublication()
     definition.graph.GetParameters()=definition.parameters; Write("reload.matgraph",definition.graph.Serialize());
     Write("reloadA.mat","TINY_MAT 2\ndefinition \"reload.matgraph\"\n");
     Write("reloadB.mat","TINY_MAT 2\nparent \"reloadA.mat\"\nparameter \"Tint\" Vec3 0 0 1\n");
+    Write("reloadUnloaded.mat","TINY_MAT 2\ndefinition \"reload.matgraph\"\nparameter \"Tint\" Vec3 0 0 1\n");
     ResourceManager resources; resources.Initialize(nullptr,root); MaterialSystem system(resources);
     const auto a=system.BuildProxy("assets/reloadA.mat"), b=system.BuildProxy("assets/reloadB.mat");
     const auto disk=PlatformFile::ReadAllText(root+"reload.matgraph"); definition.parameters[0].defaultValue=Vec3{0,1,0};
     const auto reject=[](const auto &,auto &diagnostics) { diagnostics.push_back({MaterialDiagnosticSeverity::Error,{},0,-1,"injected GPU candidate failure"}); return false; };
     Check(!system.ApplyDefinitionDraft("assets/reload.matgraph",definition,reject).success && system.BuildProxy("assets/reloadA.mat")==a && PlatformFile::ReadAllText(root+"reload.matgraph")==disk,"failed candidate keeps code/layout/values/textures/generation and disk together");
     const auto accept=[](const auto &,auto &) { return true; };
+#ifdef _WIN32
+    const auto childFile=std::filesystem::absolute(root+"reloadB.mat"); const auto childBefore=PlatformFile::ReadAllText(childFile);
+    const auto reader=CreateFileW(childFile.c_str(),GENERIC_READ,FILE_SHARE_READ|FILE_SHARE_WRITE,nullptr,OPEN_EXISTING,FILE_ATTRIBUTE_NORMAL,nullptr);
+    Check(reader!=INVALID_HANDLE_VALUE,"lock a dependent while publishing schema provenance");
+    const auto blocked=system.ApplyDefinitionDraft("assets/reload.matgraph",definition,accept);
+    if (reader!=INVALID_HANDLE_VALUE) CloseHandle(reader);
+    Check(!blocked.success && PlatformFile::ReadAllText(root+"reload.matgraph")==disk && PlatformFile::ReadAllText(childFile)==childBefore && system.BuildProxy("assets/reloadA.mat")==a,"failed dependent provenance write restores parent/children and live generation together");
+#endif
     Check(system.ApplyDefinitionDraft("assets/reload.matgraph",definition,accept).success,"valid parent draft publishes");
     const auto changed=system.BuildProxy("assets/reloadA.mat"), kept=system.BuildProxy("assets/reloadB.mat");
     std::cout << "Reload evidence: " << a->generation << " -> " << changed->generation << " values " << changed->numericSlots[0].x << ',' << changed->numericSlots[0].y << ',' << kept->numericSlots[0].z << " same program " << (changed->compiled==a->compiled) << '\n';
@@ -417,6 +427,14 @@ void TestReloadPublication()
     definition.parameters[0].type=MaterialParameterType::Float; definition.parameters[0].defaultValue=.25f; definition.graph.GetNodes()[1].type=MaterialNodeType::ScalarParameter;
     Check(system.ApplyDefinitionDraft("assets/reload.matgraph",definition,accept).success,"schema change can publish with old effective overrides inactive");
     Check(Near(system.BuildProxy("assets/reloadB.mat")->numericSlots[0].x,.25f) && !system.GetDiagnostics("assets/reloadB.mat").empty(),"mismatched old override becomes inactive and new default applies");
+    {
+        ResourceManager freshResources; freshResources.Initialize(nullptr,root); MaterialSystem fresh(freshResources);
+        const auto restarted=fresh.Resolve("assets/reloadB.mat");
+        Check(restarted && !fresh.GetDiagnostics("assets/reloadB.mat").empty(),"schema invalidation remains recoverable after a fresh material system");
+        Check(fresh.Resolve("assets/reloadUnloaded.mat")!=nullptr,"schema migration covers registered descendants that were not loaded in the scene");
+        Check(PlatformAssetCompiler::Compile(root+"reloadB.mat",root+"Cooked/reloadB.mat",root).success,"offline packaging accepts persisted inactive overrides after schema change");
+        freshResources.Shutdown();
+    }
     Write("newInvalid.mat","TINY_MAT 2\ndefinition \"reload.matgraph\"\nparameter \"Unknown\" Float 1\n");
     Check(!system.Resolve("assets/newInvalid.mat"),"unknown override on first load remains an error");
     auto dynamic=system.CreateDynamicInstance("assets/reloadA.mat"); dynamic->SetParameter("Tint",.8f);
@@ -477,6 +495,58 @@ void TestUnicodeAtomicPublication()
     const auto text=PlatformFile::ReadAllText(path);
     Check(first && second && (text==a || text==b),"concurrent atomic writes keep a complete valid file with separate temporary names");
 }
+void TestCustomRootPackage()
+{
+    const auto project=std::filesystem::absolute(root+"CustomRootPackage");
+    PlatformFile::WriteAllText(project/"Content/Materials/child.mat","TINY_MAT 2\nparent \"assets/Materials/base.mat\"\n");
+    PlatformFile::WriteAllText(project/"Content/Materials/base.mat","TINY_MAT 2\ndefinition \"builtin:PBR\"\ntexture \"BaseMap\" \"assets/Textures/white.ppm\"\n");
+    PlatformFile::WriteAllText(project/"Content/Textures/white.ppm","P3\n1 1\n255\n255 255 255\n");
+    Check(PakArchive::PackDirectory(project,project.parent_path()/"custom-root.tpak"),"pack non-assets logical asset root");
+    ResourceManager resources; resources.Initialize(nullptr,project/"Content");
+    PlatformFile::ClearMounts(); PlatformFile::MountPak(project.parent_path()/"custom-root.tpak"); PlatformFile::SetReadPolicy(PlatformFile::ReadPolicy::MountedOnly);
+    MaterialSystem system(resources); const auto resolved=system.Resolve("assets/Materials/child.mat"); const auto proxy=system.BuildProxy("assets/Materials/child.mat");
+    Check(resolved && std::any_of(proxy->textures.begin(),proxy->textures.end(),[](const auto &t) { return t.parameterName=="BaseMap" && t.resource; }),"custom-root mounted package resolves assets alias for child, parent and texture");
+    PlatformFile::ClearMounts(); resources.Shutdown();
+}
+void TestFailedParentRepair()
+{
+    Write("recover.matgraph","TINY_MATGRAPH 999\n");
+    Write("recoverChild.mat","TINY_MAT 2\ndefinition \"recover.matgraph\"\n");
+    ResourceManager resources; resources.Initialize(nullptr,root); MaterialSystem system(resources);
+    const auto error=system.BuildProxy("assets/recoverChild.mat");
+    Check(error && error->state.shadingModel==MaterialShadingModel::Unlit,"failed first descendant load installs error material");
+    const auto result=system.ApplyDefinitionDraft("assets/recover.matgraph",MakeBuiltinPbrDefinition());
+    const auto repaired=system.BuildProxy("assets/recoverChild.mat");
+    Check(result.success && repaired!=error && repaired->state.shadingModel==MaterialShadingModel::Lit,"parent-only repair recovers cached failed-first-load descendant");
+    resources.Shutdown();
+}
+void TestLegacyChildOfTypedParent()
+{
+    Write("typedParent.mat","TINY_MAT 2\ndefinition \"builtin:PBR\"\nparameter \"BaseColor\" Vec4 1 0 0 1\n");
+    Write("legacyTypedChild.mat","parent typedParent.mat\nroughness .2\noverride color 0\ncolor 0 1 0 1\n");
+    Write("mixedGraph.matgraph",MakeBuiltinPbrDefinition().graph.Serialize());
+    Write("legacyGraphChild.mat","parent mixedGraph.matgraph\nroughness .4\n");
+    ResourceManager resources; resources.Initialize(nullptr,root); MaterialSystem system(resources);
+    const auto child=system.Resolve("assets/legacyTypedChild.mat");
+    const auto value=[&](const char *name) { const auto &p=child->definition->parameters; const auto it=std::find_if(p.begin(),p.end(),[&](const auto &d) { return d.name==name; }); return child->values[std::size_t(it-p.begin())]; };
+    Check(child && std::get<Vec4>(value("BaseColor")).x==1 && std::get<Vec4>(value("BaseColor")).y==0 && Near(std::get<float>(value("Roughness")),.2f),"legacy child preserves typed parent values and explicit false override");
+    const auto graphChild=system.Resolve("assets/legacyGraphChild.mat");
+    Check(graphChild && graphChild->definition->sourcePath.find("mixedGraph.matgraph")!=std::string::npos,"legacy child retains migrated graph parent definition");
+    resources.Shutdown();
+}
+void TestCpuGenerationLifetime()
+{
+    auto definition=MakeBuiltinPbrDefinition(); definition.parameters.clear(); definition.graph.GetParameters().clear();
+    const auto constant=definition.graph.AddNode(MaterialNodeType::Constant,"Color");
+    const auto mask=definition.graph.AddNode(MaterialNodeType::ComponentMask,"RGB"); definition.graph.GetNodes().back().channelMask="xyz";
+    definition.graph.Connect(constant,mask,0); definition.graph.Connect(mask,1,0);
+    Write("lifetime.matgraph",definition.graph.Serialize()); ResourceManager resources; resources.Initialize(nullptr,root); MaterialSystem system(resources);
+    auto proxy=system.BuildProxy("assets/lifetime.matgraph"); std::weak_ptr<const CompiledMaterial> old=proxy->compiled;
+    definition.graph.GetNodes()[1].value.x=.17f; Check(system.ApplyDefinitionDraft("assets/lifetime.matgraph",definition).success,"publish a distinct constant generation");
+    proxy.reset();
+    Check(old.expired(),"CPU source cache does not retain obsolete generations after snapshots release");
+    resources.Shutdown();
+}
 }
 int main()
 {
@@ -502,6 +572,10 @@ int main()
     TestCookingAndSourceCache();
     TestMoveReferenceRollback();
     TestUnicodeAtomicPublication();
+    TestCustomRootPackage();
+    TestFailedParentRepair();
+    TestLegacyChildOfTypedParent();
+    TestCpuGenerationLifetime();
     }
     catch (const std::exception& error)
     {

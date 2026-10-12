@@ -62,6 +62,9 @@ struct MaterialAssetData
     int formatVersion = 1;
     std::string definitionPath, parentPath;
     std::map<std::string, MaterialParameterValue> overrides;
+    // Provenance of overrides previously validated against a declaration.
+    // Keep their values recoverable when the parent schema changes.
+    std::map<std::string,MaterialParameterType> validatedOverrideTypes;
     LegacyMaterialData legacyData;
 };
 struct MaterialParameterSlot

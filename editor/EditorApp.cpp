@@ -3976,6 +3976,14 @@ void EditorApp::DrawMaterialGraphEditor()
     {
         const auto result=system.Reload(asset->path,validator);
         for (const auto &d:result.diagnostics) m_messages.push_back(d.message);
+        if (result.success)
+        {
+            const auto same=[&](const std::string &path) { return !path.empty() && resources->ResolveAssetPath(path)==resources->ResolveAssetPath(asset->path); };
+            if (same(m_materialGraphEditor.GetPath()))
+            { MaterialDefinitionResource loaded; if (loaded.Load(resources->ResolveAssetPath(asset->path))) m_materialGraphEditor.RefreshFromDisk(loaded.GetData()); }
+            if (same(m_materialAssetEditor.GetPath()))
+            { MaterialResource loaded; if (loaded.Load(resources->ResolveAssetPath(asset->path))) m_materialAssetEditor.RefreshFromDisk(loaded.GetMaterialData()); }
+        }
     }
     m_materialGraphEditor.Draw(); m_materialAssetEditor.Draw();
     ImGui::Begin("##MaterialExitHost",nullptr,ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoInputs);

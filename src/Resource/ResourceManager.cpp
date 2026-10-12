@@ -129,7 +129,12 @@ std::string ResourceManager::ResolvePath(const std::string &path) const
         return logical.lexically_normal().generic_u8string();
     // 已发布的相对引用必须继续从包内读取，不能转成项目目录中的散文件。
     if (PlatformFile::GetReadPolicy() == PlatformFile::ReadPolicy::MountedOnly)
+    {
+        const auto first=logical.begin();
+        if (first!=logical.end() && *first=="assets")
+            return (m_assetRoot.filename()/logical.lexically_relative("assets")).lexically_normal().generic_u8string();
         return logical.lexically_normal().generic_u8string();
+    }
     const auto root = std::filesystem::absolute(m_assetRoot).lexically_normal();
     std::filesystem::path candidate = root / logical;
     const auto first = logical.begin();
@@ -153,8 +158,6 @@ std::string ResourceManager::ResolveAssetPath(const std::string &path, const std
     const bool rootRelative = first != reference.end() && (*first == "assets" || *first == m_assetRoot.filename());
     if (!referencingPath.empty() && !rootRelative)
         return (std::filesystem::u8path(referencingPath).parent_path() / reference).lexically_normal().generic_u8string();
-    if (first != reference.end() && *first == "assets" && m_assetRoot.filename() != "assets")
-        return ResolvePath(reference.lexically_relative("assets").generic_u8string());
     return ResolvePath(path);
 }
 
