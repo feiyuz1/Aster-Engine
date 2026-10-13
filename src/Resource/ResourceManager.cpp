@@ -18,10 +18,11 @@ bool ResourceManager::LoadResource(Resource &resource, const std::string &path) 
         return material->LoadWithResolver(path, [this](const auto &reference, const auto &owner) { return ResolveAssetPath(reference, owner); });
     return resource.Load(path);
 }
-void ResourceManager::Initialize(JobSystem *jobSystem, std::filesystem::path assetRoot)
+void ResourceManager::Initialize(JobSystem *jobSystem, std::filesystem::path assetRoot, std::filesystem::path logicalAssetRoot)
 {
     m_jobSystem = jobSystem;
     m_assetRoot = std::filesystem::absolute(assetRoot).lexically_normal();
+    m_logicalAssetRoot = logicalAssetRoot.empty() || logicalAssetRoot.is_absolute() ? m_assetRoot.filename() : logicalAssetRoot.lexically_normal();
     m_registry.Scan(m_assetRoot);
 }
 
@@ -132,12 +133,16 @@ std::string ResourceManager::ResolvePath(const std::string &path) const
     {
         const auto first=logical.begin();
         if (first!=logical.end() && *first=="assets")
-            return (m_assetRoot.filename()/logical.lexically_relative("assets")).lexically_normal().generic_u8string();
+            return (m_logicalAssetRoot/logical.lexically_relative("assets")).lexically_normal().generic_u8string();
+        if (first!=logical.end() && *first==m_assetRoot.filename() && m_logicalAssetRoot!=m_assetRoot.filename())
+            return (m_logicalAssetRoot/logical.lexically_relative(m_assetRoot.filename())).lexically_normal().generic_u8string();
         return logical.lexically_normal().generic_u8string();
     }
     const auto root = std::filesystem::absolute(m_assetRoot).lexically_normal();
     std::filesystem::path candidate = root / logical;
     const auto first = logical.begin();
+    const auto suffix=logical.lexically_relative(m_logicalAssetRoot);
+    if (m_logicalAssetRoot!="." && !suffix.empty() && !suffix.is_absolute() && *suffix.begin()!="..") candidate=root/suffix;
     if (first!=logical.end() && *first=="assets" && root.filename()!="assets") candidate=root/logical.lexically_relative("assets");
     if (first != logical.end() && *first == root.filename())
         candidate = root.parent_path() / logical;
@@ -155,7 +160,9 @@ std::string ResourceManager::ResolveAssetPath(const std::string &path, const std
     const std::filesystem::path reference = std::filesystem::u8path(path);
     if (reference.is_absolute()) return reference.lexically_normal().generic_u8string();
     const auto first = reference.begin();
-    const bool rootRelative = first != reference.end() && (*first == "assets" || *first == m_assetRoot.filename());
+    const auto suffix=reference.lexically_relative(m_logicalAssetRoot);
+    const bool configuredPrefix=m_logicalAssetRoot!="." && !suffix.empty() && !suffix.is_absolute() && *suffix.begin()!="..";
+    const bool rootRelative = configuredPrefix || (first != reference.end() && (*first == "assets" || *first == m_assetRoot.filename()));
     if (!referencingPath.empty() && !rootRelative)
         return (std::filesystem::u8path(referencingPath).parent_path() / reference).lexically_normal().generic_u8string();
     return ResolvePath(path);

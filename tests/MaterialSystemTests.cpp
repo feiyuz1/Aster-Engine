@@ -520,6 +520,23 @@ void TestFailedParentRepair()
     Check(result.success && repaired!=error && repaired->state.shadingModel==MaterialShadingModel::Lit,"parent-only repair recovers cached failed-first-load descendant");
     resources.Shutdown();
 }
+void TestNestedRootPackage()
+{
+    const auto project=std::filesystem::absolute(root+"NestedRootPackage");
+    auto definition=MakeBuiltinPbrDefinition();
+    for (auto &p:definition.graph.GetParameters()) if (p.name=="BaseMap") p.defaultValue=std::string("assets/Textures/white.ppm");
+    PlatformFile::WriteAllText(project/"Data/Content/Materials/parent.matgraph",definition.graph.Serialize());
+    PlatformFile::WriteAllText(project/"Data/Content/Materials/base.mat","TINY_MAT 2\ndefinition \"Data/Content/Materials/parent.matgraph\"\n");
+    PlatformFile::WriteAllText(project/"Data/Content/Materials/child.mat","TINY_MAT 2\nparent \"assets/Materials/base.mat\"\n");
+    PlatformFile::WriteAllText(project/"Data/Content/Textures/white.ppm","P3\n1 1\n255\n255 255 255\n");
+    Check(PakArchive::PackDirectory(project,project.parent_path()/"nested-root.tpak"),"pack multi-level logical asset root");
+    ResourceManager resources; resources.Initialize(nullptr,project/"Data/Content","Data/Content");
+    PlatformFile::ClearMounts(); PlatformFile::MountPak(project.parent_path()/"nested-root.tpak"); PlatformFile::SetReadPolicy(PlatformFile::ReadPolicy::MountedOnly);
+    MaterialSystem system(resources); const auto resolved=system.Resolve("assets/Materials/child.mat"); const auto proxy=system.BuildProxy("assets/Materials/child.mat");
+    const bool loaded=resolved && std::any_of(proxy->textures.begin(),proxy->textures.end(),[](const auto &t) { return t.parameterName=="BaseMap" && t.resource; });
+    PlatformFile::ClearMounts(); resources.Shutdown();
+    Check(loaded,"nested-root package preserves full configured prefix for aliases, parent and texture");
+}
 void TestLegacyChildOfTypedParent()
 {
     Write("typedParent.mat","TINY_MAT 2\ndefinition \"builtin:PBR\"\nparameter \"BaseColor\" Vec4 1 0 0 1\n");
@@ -573,6 +590,7 @@ int main()
     TestMoveReferenceRollback();
     TestUnicodeAtomicPublication();
     TestCustomRootPackage();
+    TestNestedRootPackage();
     TestFailedParentRepair();
     TestLegacyChildOfTypedParent();
     TestCpuGenerationLifetime();

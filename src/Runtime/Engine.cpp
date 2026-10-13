@@ -41,7 +41,8 @@ bool Engine::Initialize(const std::filesystem::path &projectFile, const bool sta
     const auto hardwareCount = std::thread::hardware_concurrency();
     m_jobSystem.Initialize(std::max(1u, hardwareCount > 1 ? hardwareCount - 1 : 1u));
     m_resourceManager.Initialize(&m_jobSystem, projectLoaded ? m_projectSettings.Resolve(m_projectSettings.assetDirectory)
-                                                             : std::filesystem::path{"assets"});
+                                                         : std::filesystem::path{"assets"},
+                                 projectLoaded ? m_projectSettings.assetDirectory : std::filesystem::path{"assets"});
     m_assetStreaming.Initialize(&m_resourceManager);
     if (projectLoaded && !m_projectSettings.inputBindings.empty())
     {

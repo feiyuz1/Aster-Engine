@@ -41,7 +41,7 @@ class ResourceManager
     /// @brief 初始化对象及其依赖资源。
     /// @param jobSystem 接口所需的输入参数。
     /// @param assetRoot 相关文件、资源或目录路径。
-    void Initialize(JobSystem *jobSystem = nullptr, std::filesystem::path assetRoot = "assets");
+    void Initialize(JobSystem *jobSystem = nullptr, std::filesystem::path assetRoot = "assets", std::filesystem::path logicalAssetRoot = {});
     /// @brief 停止服务并释放对象持有的资源。
     void Shutdown();
 
@@ -162,6 +162,7 @@ class ResourceManager
     mutable std::mutex m_mutex;
     JobSystem *m_jobSystem = nullptr;
     std::filesystem::path m_assetRoot;
+    std::filesystem::path m_logicalAssetRoot;
     AssetRegistry m_registry;
 };
 } // namespace MiniEngine
