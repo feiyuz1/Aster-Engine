@@ -425,7 +425,7 @@ void EditorApp::DrawSceneView()
                 ImDrawList *draw = ImGui::GetWindowDrawList();
                 const FrameView &view = m_engine.GetContext().renderer->GetFrameView();
                 draw->PushClipRect(imageMinimum, {imageMinimum.x + available.x, imageMinimum.y + available.y}, true);
-                if (asset->type == "Material")
+                if (asset->type == "Material" || asset->type == "MaterialGraph")
                 {
                     const Entity target = PickEntity(normalizedX, normalizedY);
                     auto *mesh = world.IsAlive(target) ? world.GetComponent<MeshComponent>(target) : nullptr;
@@ -441,14 +441,10 @@ void EditorApp::DrawSceneView()
                             name ? name->name.c_str() : Localize("Mesh", "网格"), path.c_str());
                         if (payload->IsDelivery())
                         {
-                            if (mesh->materialPath != path)
+                            if (ApplyMaterialToMeshes(path, {target}))
                             {
-                                RecordUndo();
-                                mesh->materialPath = path;
                                 m_selected = target;
                                 m_selection = {target};
-                                m_selectedAsset.clear();
-                                Notify(std::string(Localize("Applied material: ", "已应用材质：")) + path, FeedbackKind::Success);
                             }
                         }
                     }

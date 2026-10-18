@@ -117,6 +117,9 @@ bool JobQueue::HasJobsUnsafe() const
 
 void JobQueue::NotifyAll()
 {
+    // Pair stop notifications with PopBlocking's predicate lock. Otherwise a
+    // worker can miss the notification between checking its flag and waiting.
+    std::lock_guard<std::mutex> lock(m_mutex);
     m_cv.notify_all();
 }
 
@@ -271,6 +274,9 @@ std::size_t JobSystem::GetOutstandingJobCount() const
 
 void JobSystem::OnJobCompleted()
 {
+    // The zero transition and WaitIdle's predicate must use the same mutex;
+    // an atomic counter alone does not prevent a lost condition-variable wake.
+    std::lock_guard<std::mutex> lock(m_idleMutex);
     if (m_outstanding.fetch_sub(1) == 1)
         m_idleCv.notify_all();
 }

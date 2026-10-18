@@ -308,7 +308,7 @@ void EditorApp::LocateAsset(const std::string &path)
     m_assetFolder = NormalizedAssetPath(std::filesystem::u8path(asset->path).parent_path());
     m_selectedAssets = {asset->path};
     m_assetSearch.fill('\0');
-    m_assetTypeFilter.clear();
+    m_assetTypeFilters.clear();
     m_showAssets = true;
     m_sceneMaximized = false;
     m_assetRevealPending = true;
@@ -468,8 +468,9 @@ bool EditorApp::MoveEditorAsset(const std::string &source, const std::filesystem
     m_sceneDocuments = std::move(documents);
     m_undo = std::move(undo); m_redo = std::move(redo);
     m_sceneDirty = m_sceneDirty || !liveReferences.empty();
-    for (auto *path : {&m_selectedAsset, &m_editingAsset, &m_previewAsset, &m_openShaderAsset, &m_pendingShaderPath,
+    for (auto *path : {&m_selectedAsset, &m_editingAsset, &m_previewAsset, &m_assetReferenceRoot, &m_openShaderAsset, &m_pendingShaderPath,
                        &m_openAnimationAsset, &m_openEffectAsset, &m_openBehaviorAsset, &m_scenePreviewAsset}) remap(*path);
+    m_assetReferencesDirty = true;
     if (shaderAffected)
     {
         const bool hidden = m_shaderEditorHidden;
@@ -523,10 +524,217 @@ bool EditorApp::MoveEditorAsset(const std::string &source, const std::filesystem
     return true;
 }
 
+void EditorApp::DrawAssetCreationMenu(const std::filesystem::path &directory)
+{
+    const auto assetRoot = NormalizedAssetPath(m_engine.GetProjectSettings().Resolve(m_engine.GetProjectSettings().assetDirectory));
+    std::error_code error;
+    const bool canCreate = !m_engine.IsPlaying() && !m_packageFuture.valid() && AssetPathWithin(directory, assetRoot) &&
+                           std::filesystem::is_directory(directory, error);
+    ImGui::BeginDisabled(!canCreate);
+    if (ImGui::MenuItem(Localize("New Folder", "新建文件夹")))
+    {
+        m_assetCreateParent = directory;
+        m_assetFolderError.clear();
+        std::string name = "NewFolder";
+        for (int suffix = 1; std::filesystem::exists(directory / name, error); ++suffix)
+            name = "NewFolder" + std::to_string(suffix);
+        std::snprintf(m_assetFolderName.data(), m_assetFolderName.size(), "%s", name.c_str());
+        m_assetFolderCreateRequested = true;
+    }
+    ImGui::Separator();
+    const auto publishCreated = [&](const std::filesystem::path &path) {
+        m_engine.GetContext().resourceManager->GetAssetRegistry().Scan(assetRoot);
+        SelectAsset(path.generic_u8string(), false);
+        m_assetFolder = directory;
+        m_assetSearch.fill(0);
+        m_assetTypeFilters.clear();
+        m_assetRevealPending = true;
+    };
+    const auto createUniquePath = [&directory](const std::string &stem, const std::string &extension) {
+        const auto &root = directory;
+        for (int suffix = 0;; ++suffix)
+        {
+            const auto name = stem + (suffix == 0 ? std::string{} : std::to_string(suffix)) + extension;
+            const auto path = root / name;
+            if (!std::filesystem::exists(path))
+                return path;
+        }
+    };
+    const auto ensureTemplateClip = [this, &createUniquePath]() -> std::optional<std::string> {
+        auto assets = m_engine.GetContext().resourceManager->GetAssetRegistry().GetAssets();
+        std::sort(assets.begin(), assets.end(), [](const AssetInfo &left, const AssetInfo &right) { return left.path < right.path; });
+        std::filesystem::path clipPath;
+        for (const auto &asset : assets)
+            if (asset.extension == ".skanim" && PlatformFile::Exists(std::filesystem::u8path(asset.path)))
+            {
+                clipPath = std::filesystem::u8path(asset.path);
+                break;
+            }
+        if (clipPath.empty())
+        {
+            clipPath = createUniquePath("NewAnimationClip", ".skanim");
+            SkeletalClip clip;
+            clip.name = clipPath.stem().u8string();
+            clip.duration = 1.0f;
+            clip.keyframes = {{0.0f, {BonePose{}}}, {1.0f, {BonePose{}}}};
+            if (!SaveSkeletalClipAsset(clip, clipPath))
+                return std::nullopt;
+        }
+        std::error_code error;
+        const auto relative = std::filesystem::relative(clipPath, m_engine.GetProjectSettings().projectFile.parent_path(), error);
+        return error || relative.empty() ? clipPath.lexically_normal().generic_u8string() : relative.lexically_normal().generic_u8string();
+    };
+    if (ImGui::MenuItem(Localize("Material", "材质")))
+    {
+        const auto path = createUniquePath("NewMaterial", ".matgraph");
+        MaterialGraph graph;
+        graph.SetFormatVersion(2);
+        graph.AddNode(MaterialNodeType::SurfaceOutput, "Surface", {420, 60});
+        MaterialParameterDecl color;
+        color.name = "BaseColor";
+        color.displayName = "Base Color";
+        color.type = MaterialParameterType::Vec3;
+        color.defaultValue = Vec3{.8f, .8f, .8f};
+        graph.GetParameters().push_back(color);
+        const auto id = graph.AddNode(MaterialNodeType::VectorParameter, "Base Color", {40, 60});
+        graph.GetNodes().back().parameterName = "BaseColor";
+        graph.Connect(id, 1, 0);
+        if (graph.Save(path))
+            publishCreated(path);
+        else
+            Notify(Localize("Unable to save material.", "无法保存材质。"), FeedbackKind::Error);
+    }
+    if (ImGui::MenuItem(Localize("Material Instance", "材质实例")))
+    {
+        auto &registry = m_engine.GetContext().resourceManager->GetAssetRegistry();
+        const auto parent = registry.Find(m_selectedAsset);
+        const auto path = createUniquePath("NewMaterialInstance", ".mat");
+        std::string error;
+        const auto reference =
+            parent && (parent->type == "Material" || parent->type == "MaterialGraph") ? parent->path : std::string("builtin:PBR");
+        if (MaterialAssetEditor::CreateInstance(path.generic_u8string(), reference, error))
+            publishCreated(path);
+        else
+            Notify(error, FeedbackKind::Error);
+    }
+    if (ImGui::MenuItem(Localize("+ Blend Tree", "+ 混合树")))
+    {
+        const auto clip = ensureTemplateClip();
+        if (!clip)
+            Notify(Localize("Unable to create the starter animation clip.", "无法创建初始动画片段。"), FeedbackKind::Error);
+        else
+        {
+            BlendTree1D tree;
+            tree.samples = {{0.0f, *clip}};
+            const auto path = createUniquePath("NewBlendTree", ".blendtree");
+            if (SaveBlendTreeAsset(tree, path))
+            {
+                auto &registry = m_engine.GetContext().resourceManager->GetAssetRegistry();
+                publishCreated(path);
+                registry.SetDependencies(path.generic_u8string(), {*clip});
+            }
+        }
+    }
+    if (ImGui::MenuItem(Localize("+ Animation Graph", "+ 动画图")))
+    {
+        const auto clip = ensureTemplateClip();
+        if (!clip)
+            Notify(Localize("Unable to create the starter animation clip.", "无法创建初始动画片段。"), FeedbackKind::Error);
+        else
+        {
+            AnimationGraph graph;
+            graph.entryState = "Idle";
+            graph.parameters = {{"Speed", 0.0f}};
+            graph.states = {{"Idle", *clip}};
+            const auto path = createUniquePath("NewAnimationGraph", ".animgraph");
+            if (SaveAnimationGraphAsset(graph, path))
+            {
+                auto &registry = m_engine.GetContext().resourceManager->GetAssetRegistry();
+                publishCreated(path);
+                registry.SetDependencies(path.generic_u8string(), {*clip});
+            }
+        }
+    }
+    if (ImGui::MenuItem(Localize("+ VFX", "+ 特效")))
+    {
+        const auto path = createUniquePath("NewEffect", ".vfx");
+        if (SaveParticleEffectAsset({}, path))
+        {
+            publishCreated(path);
+        }
+    }
+    if (ImGui::MenuItem(Localize("+ Behavior Tree", "+ 行为树")))
+    {
+        BehaviorTreeGraph graph;
+        graph.root = 1;
+        graph.nodes = {{1, "Sequence", "Root", {20.0f, 20.0f}, {2}}, {2, "Action", "Action", {220.0f, 20.0f}, {}}};
+        const auto path = createUniquePath("NewBehavior", ".btgraph");
+        if (SaveBehaviorTreeGraph(graph, path))
+        {
+            publishCreated(path);
+        }
+    }
+    ImGui::EndDisabled();
+}
+
+void EditorApp::DrawAssetFolderDialog()
+{
+    if (m_assetFolderCreateRequested)
+    {
+        m_assetFolderCreateRequested = false;
+        ImGui::OpenPopup(Localize("New Folder###NewAssetFolder", "新建文件夹###NewAssetFolder"));
+    }
+    if (!ImGui::BeginPopupModal(Localize("New Folder###NewAssetFolder", "新建文件夹###NewAssetFolder"), nullptr,
+                                ImGuiWindowFlags_AlwaysAutoResize))
+        return;
+    ImGui::TextWrapped("%s", m_assetCreateParent.generic_u8string().c_str());
+    if (ImGui::IsWindowAppearing())
+        ImGui::SetKeyboardFocusHere();
+    ImGui::SetNextItemWidth(Scaled(300.0f));
+    const bool enter = ImGui::InputText(Localize("Name", "名称"), m_assetFolderName.data(), m_assetFolderName.size(),
+                                        ImGuiInputTextFlags_AutoSelectAll | ImGuiInputTextFlags_EnterReturnsTrue);
+    if (!m_assetFolderError.empty())
+        ImGui::TextColored({1, .45f, .3f, 1}, "%s", m_assetFolderError.c_str());
+    const bool canWrite = !m_engine.IsPlaying() && !m_packageFuture.valid();
+    ImGui::BeginDisabled(!canWrite);
+    if ((enter && canWrite) || ImGui::Button(Localize("Create", "创建")))
+    {
+        const std::string name = m_assetFolderName.data();
+        const auto root = m_engine.GetProjectSettings().Resolve(m_engine.GetProjectSettings().assetDirectory);
+        const auto target = m_assetCreateParent / std::filesystem::u8path(name);
+        std::error_code error;
+        if (name.empty() || name == "." || name == ".." || name.find_first_of("/\\:*?\"<>|") != std::string::npos || name.back() == '.' ||
+            name.back() == ' ' || !AssetPathWithin(target, root))
+            m_assetFolderError = Localize("Enter a valid folder name.", "请输入有效的文件夹名称。");
+        else if (!std::filesystem::is_directory(m_assetCreateParent, error))
+            m_assetFolderError = Localize("The parent folder is no longer available.", "父文件夹已不存在。");
+        else if (std::filesystem::exists(target, error))
+            m_assetFolderError = Localize("An item with this name already exists.", "同名文件或文件夹已存在。");
+        else if (!std::filesystem::create_directory(target, error))
+            m_assetFolderError = std::string(Localize("Could not create folder: ", "无法创建文件夹：")) + error.message();
+        else
+        {
+            m_assetFolder = NormalizedAssetPath(target);
+            m_assetSearch.fill(0);
+            m_assetTypeFilters.clear();
+            m_selectedAsset.clear();
+            m_selectedAssets.clear();
+            m_assetRevealPending = true;
+            ImGui::CloseCurrentPopup();
+        }
+    }
+    ImGui::EndDisabled();
+    ImGui::SameLine();
+    if (ImGui::Button(Localize("Cancel", "取消")))
+        ImGui::CloseCurrentPopup();
+    ImGui::EndPopup();
+}
+
 void EditorApp::DrawAssets()
 {
     m_assetsFocused = false;
-    if (!m_showAssets) return;
+    if (!m_showAssets)
+        return;
     const ImGuiViewport *viewport = ImGui::GetMainViewport();
     const auto layout = GetWorkspaceLayout(viewport->WorkSize.x, viewport->WorkSize.y);
     const float top = viewport->WorkPos.y + layout.upper + 3.0f;
@@ -540,7 +748,12 @@ void EditorApp::DrawAssets()
     }
     m_focusAssets = false;
     m_assetsFocused = ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
+    const auto assetRoot = NormalizedAssetPath(m_engine.GetProjectSettings().Resolve(m_engine.GetProjectSettings().assetDirectory));
+    std::error_code folderError;
+    if (m_assetFolder.empty() || !AssetPathWithin(m_assetFolder, assetRoot) || !std::filesystem::is_directory(m_assetFolder, folderError)) m_assetFolder = assetRoot;
+    m_assetFolder = NormalizedAssetPath(m_assetFolder);
     const bool canWriteAssets = !m_engine.IsPlaying() && !m_packageFuture.valid();
+    LoadAssetTrashHistory();
     const float toolbarRight = ImGui::GetCursorScreenPos().x + ImGui::GetContentRegionAvail().x;
     const auto continueToolbar = [&](const char *label) {
         const float width = ImGui::CalcTextSize(label).x + ImGui::GetStyle().FramePadding.x * 2.0f;
@@ -550,120 +763,7 @@ void EditorApp::DrawAssets()
     if (ImGui::Button(Localize("Create...", "新建资产..."))) ImGui::OpenPopup("CreateAssetMenu");
     if (ImGui::BeginPopup("CreateAssetMenu"))
     {
-        const auto createUniquePath = [this](const std::string &stem, const std::string &extension) {
-            const auto root = m_engine.GetProjectSettings().Resolve(m_engine.GetProjectSettings().assetDirectory);
-            for (int suffix = 0;; ++suffix)
-            {
-                const auto name = stem + (suffix == 0 ? std::string{} : std::to_string(suffix)) + extension;
-                const auto path = root / name;
-                if (!std::filesystem::exists(path))
-                    return path;
-            }
-        };
-        const auto ensureTemplateClip = [this, &createUniquePath]() -> std::optional<std::string> {
-            auto assets = m_engine.GetContext().resourceManager->GetAssetRegistry().GetAssets();
-            std::sort(assets.begin(), assets.end(), [](const AssetInfo &left, const AssetInfo &right) { return left.path < right.path; });
-            std::filesystem::path clipPath;
-            for (const auto &asset : assets)
-                if (asset.extension == ".skanim" && PlatformFile::Exists(asset.path))
-                {
-                    clipPath = asset.path;
-                    break;
-                }
-            if (clipPath.empty())
-            {
-                clipPath = createUniquePath("NewAnimationClip", ".skanim");
-                SkeletalClip clip;
-                clip.name = clipPath.stem().string();
-                clip.duration = 1.0f;
-                clip.keyframes = {{0.0f, {BonePose{}}}, {1.0f, {BonePose{}}}};
-                if (!SaveSkeletalClipAsset(clip, clipPath))
-                    return std::nullopt;
-            }
-            std::error_code error;
-            const auto relative = std::filesystem::relative(clipPath, m_engine.GetProjectSettings().projectFile.parent_path(), error);
-            return error || relative.empty() ? clipPath.lexically_normal().generic_string() : relative.lexically_normal().generic_string();
-        };
-        if (ImGui::MenuItem("+ Material graph / 材质父图"))
-        {
-            const auto path=createUniquePath("NewMaterial",".matgraph");
-            MaterialGraph graph; graph.SetFormatVersion(2); graph.AddNode(MaterialNodeType::SurfaceOutput,"Surface",{420,60});
-            MaterialParameterDecl color; color.name="BaseColor"; color.displayName="Base Color"; color.type=MaterialParameterType::Vec3; color.defaultValue=Vec3{.8f,.8f,.8f};
-            graph.GetParameters().push_back(color); const auto id=graph.AddNode(MaterialNodeType::VectorParameter,"Base Color",{40,60}); graph.GetNodes().back().parameterName="BaseColor"; graph.Connect(id,1,0);
-            if (graph.Save(path)) m_engine.GetContext().resourceManager->GetAssetRegistry().Scan(m_engine.GetProjectSettings().Resolve(m_engine.GetProjectSettings().assetDirectory));
-        }
-        if (ImGui::MenuItem("+ Material instance / 材质实例"))
-        {
-            auto &registry=m_engine.GetContext().resourceManager->GetAssetRegistry(); const auto parent=registry.Find(m_selectedAsset);
-            const auto path=createUniquePath("NewMaterialInstance",".mat"); std::string error;
-            const auto reference=parent && (parent->type=="Material" || parent->type=="MaterialGraph") ? parent->path : std::string("builtin:PBR");
-            if (MaterialAssetEditor::CreateInstance(path.generic_u8string(),reference,error)) m_engine.GetContext().resourceManager->GetAssetRegistry().Scan(m_engine.GetProjectSettings().Resolve(m_engine.GetProjectSettings().assetDirectory)); else Notify(error, FeedbackKind::Error);
-        }
-        if (ImGui::MenuItem(Localize("+ Blend Tree", "+ 混合树")))
-        {
-            const auto clip = ensureTemplateClip();
-            if (!clip)
-                Notify(Localize("Unable to create the starter animation clip.", "无法创建初始动画片段。"), FeedbackKind::Error);
-            else
-            {
-                BlendTree1D tree;
-                tree.samples = {{0.0f, *clip}};
-                const auto path = createUniquePath("NewBlendTree", ".blendtree");
-                if (SaveBlendTreeAsset(tree, path))
-                {
-                    auto &registry = m_engine.GetContext().resourceManager->GetAssetRegistry();
-                    registry.Scan(path.parent_path());
-                    registry.SetDependencies(path.generic_string(), {*clip});
-                    m_selectedAsset = path.generic_string();
-                    m_selectedAssets = {m_selectedAsset};
-                }
-            }
-        }
-        if (ImGui::MenuItem(Localize("+ Animation Graph", "+ 动画图")))
-        {
-            const auto clip = ensureTemplateClip();
-            if (!clip)
-                Notify(Localize("Unable to create the starter animation clip.", "无法创建初始动画片段。"), FeedbackKind::Error);
-            else
-            {
-                AnimationGraph graph;
-                graph.entryState = "Idle";
-                graph.parameters = {{"Speed", 0.0f}};
-                graph.states = {{"Idle", *clip}};
-                const auto path = createUniquePath("NewAnimationGraph", ".animgraph");
-                if (SaveAnimationGraphAsset(graph, path))
-                {
-                    auto &registry = m_engine.GetContext().resourceManager->GetAssetRegistry();
-                    registry.Scan(path.parent_path());
-                    registry.SetDependencies(path.generic_string(), {*clip});
-                    m_selectedAsset = path.generic_string();
-                    m_selectedAssets = {m_selectedAsset};
-                }
-            }
-        }
-        if (ImGui::MenuItem(Localize("+ VFX", "+ 特效")))
-        {
-            const auto path = createUniquePath("NewEffect", ".vfx");
-            if (SaveParticleEffectAsset({}, path))
-            {
-                m_engine.GetContext().resourceManager->GetAssetRegistry().Scan(path.parent_path());
-                m_selectedAsset = path.generic_string();
-                m_selectedAssets = {m_selectedAsset};
-            }
-        }
-        if (ImGui::MenuItem(Localize("+ Behavior Tree", "+ 行为树")))
-        {
-            BehaviorTreeGraph graph;
-            graph.root = 1;
-            graph.nodes = {{1, "Sequence", "Root", {20.0f, 20.0f}, {2}}, {2, "Action", "Action", {220.0f, 20.0f}, {}}};
-            const auto path = createUniquePath("NewBehavior", ".btgraph");
-            if (SaveBehaviorTreeGraph(graph, path))
-            {
-                m_engine.GetContext().resourceManager->GetAssetRegistry().Scan(path.parent_path());
-                m_selectedAsset = path.generic_string();
-                m_selectedAssets = {m_selectedAsset};
-            }
-        }
+        DrawAssetCreationMenu(m_assetFolder);
         ImGui::EndPopup();
     }
     ImGui::EndDisabled();
@@ -843,7 +943,6 @@ void EditorApp::DrawAssets()
     std::sort(assets.begin(), assets.end(), [](const AssetInfo &a, const AssetInfo &b) { return a.path < b.path; });
     static std::string moveSource;
     static std::array<char, 1024> moveDestination{};
-    const auto assetRoot = NormalizedAssetPath(m_engine.GetProjectSettings().Resolve(m_engine.GetProjectSettings().assetDirectory));
     std::error_code pathError;
     if (m_assetFolder.empty() || !AssetPathWithin(m_assetFolder, assetRoot) ||
         !std::filesystem::is_directory(m_assetFolder, pathError)) m_assetFolder = assetRoot;
@@ -854,6 +953,7 @@ void EditorApp::DrawAssets()
     const bool canRename = canWriteAssets && !activeAsset.empty() &&
         std::any_of(assets.begin(), assets.end(), [&](const AssetInfo &asset) { return asset.path == activeAsset; });
     bool openMovePopup = false;
+    bool openDetailsPopup = false;
     const auto requestMove = [&](const std::string &source) {
         if (!canWriteAssets) return;
         moveSource = source;
@@ -874,38 +974,47 @@ void EditorApp::DrawAssets()
         if (sameLine && ImGui::GetItemRectMax().x + ImGui::GetStyle().ItemSpacing.x + desired <= toolbarRight) ImGui::SameLine();
         return ImGui::Button(label, {std::min(desired, std::max(1.0f, ImGui::GetContentRegionAvail().x)), 0});
     };
-    if (toolbarButton(Localize("Filter / View", "筛选 / 显示"), true)) ImGui::OpenPopup("AssetViewOptions");
+    if (toolbarButton(Localize("Filters", "筛选"), true)) ImGui::OpenPopup("AssetFilters");
+    if (toolbarButton(Localize("Display", "显示"), true)) ImGui::OpenPopup("AssetViewOptions");
     if (!wideBrowser && toolbarButton(Localize("Folders", "文件夹"), true)) ImGui::OpenPopup("AssetFolderTree");
     ImGui::BeginDisabled(!canRename);
     if (toolbarButton(Localize("Rename (F2)", "重命名 (F2)"), true)) requestMove(activeAsset);
     ImGui::EndDisabled();
-    ImGui::BeginDisabled(m_selectedAsset.empty());
-    if (toolbarButton(Localize("Details / Preview", "详情 / 预览"), true)) ImGui::OpenPopup("AssetDetails");
-    ImGui::EndDisabled();
+    if (ImGui::BeginPopup("AssetFilters"))
+    {
+        std::set<std::string> availableTypes = {"Material", "MaterialGraph", "Texture", "Mesh", "Prefab", "Scene", "Shader",
+            "Animation", "Skeleton", "BlendTree", "AnimationGraph", "VFX", "BehaviorTree", "Audio", "Environment", "Input", "Font"};
+        for (const auto &asset : assets) availableTypes.insert(asset.type);
+        ImGui::TextDisabled("%s", Localize("Asset types (match any selected type)", "资产类型（匹配任一勾选类型）"));
+        if (ImGui::Selectable(Localize("All Types", "全部类型"), m_assetTypeFilters.empty(), ImGuiSelectableFlags_DontClosePopups)) m_assetTypeFilters.clear();
+        ImGui::Separator();
+        for (const auto &type : availableTypes)
+        {
+            bool enabled = m_assetTypeFilters.count(type) != 0;
+            if (ImGui::Checkbox(LocalizeReflected(type).c_str(), &enabled))
+            {
+                if (enabled) m_assetTypeFilters.insert(type); else m_assetTypeFilters.erase(type);
+            }
+        }
+        if (ImGui::Button(Localize("Clear filters", "清除筛选"))) m_assetTypeFilters.clear();
+        ImGui::EndPopup();
+    }
     if (ImGui::BeginPopup("AssetViewOptions"))
     {
-        std::set<std::string> availableTypes;
-        for (const auto &asset : assets) availableTypes.insert(asset.type);
-        ImGui::SetNextItemWidth(Scaled(190.0f));
-        const auto currentType = m_assetTypeFilter.empty() ? std::string(Localize("All Types", "全部类型")) : LocalizeReflected(m_assetTypeFilter);
-        if (ImGui::BeginCombo("##AssetType", currentType.c_str()))
+        ImGui::TextDisabled("%s", Localize("View mode", "视图模式"));
+        if (ImGui::RadioButton(Localize("Grid", "网格"), m_assetViewMode == AssetViewMode::Grid))
         {
-            if (ImGui::Selectable(Localize("All Types", "全部类型"), m_assetTypeFilter.empty())) m_assetTypeFilter.clear();
-            for (const auto &type : availableTypes)
-                if (ImGui::Selectable(LocalizeReflected(type).c_str(), m_assetTypeFilter == type)) m_assetTypeFilter = type;
-            ImGui::EndCombo();
+            m_assetViewMode = AssetViewMode::Grid; SaveEditorSettings();
         }
-        if (ImGui::Button(m_assetViewMode == AssetViewMode::Grid ? Localize("List", "列表") : Localize("Grid", "网格")))
+        if (ImGui::RadioButton(Localize("List", "列表"), m_assetViewMode == AssetViewMode::List))
         {
-            m_assetViewMode = m_assetViewMode == AssetViewMode::Grid ? AssetViewMode::List : AssetViewMode::Grid;
-            SaveEditorSettings();
+            m_assetViewMode = AssetViewMode::List; SaveEditorSettings();
         }
         if (m_assetViewMode == AssetViewMode::Grid)
         {
             ImGui::SetNextItemWidth(Scaled(190.0f));
             if (ImGui::SliderFloat("##ThumbnailSize", &m_assetThumbnailSize, 64.0f, 160.0f, Localize("%.0f px", "%.0f 像素"))) SaveEditorSettings();
         }
-        if (ImGui::Button(Localize("Clear filters", "清除筛选"))) { m_assetSearch.fill('\0'); m_assetTypeFilter.clear(); }
         ImGui::EndPopup();
     }
 
@@ -916,11 +1025,11 @@ void EditorApp::DrawAssets()
     ImGui::SetNextItemWidth(std::max(1.0f, searchGroupWidth - clearWidth - ImGui::GetStyle().ItemSpacing.x));
     ImGui::InputTextWithHint("##AssetSearch", Localize("Search assets...", "搜索资产..."), m_assetSearch.data(), m_assetSearch.size());
     ImGui::SameLine();
-    ImGui::BeginDisabled(m_assetSearch[0] == '\0' && m_assetTypeFilter.empty());
+    ImGui::BeginDisabled(m_assetSearch[0] == '\0' && m_assetTypeFilters.empty());
     if (ImGui::Button("X##ClearAssetFilters", {clearWidth, 0}))
     {
         m_assetSearch.fill('\0');
-        m_assetTypeFilter.clear();
+        m_assetTypeFilters.clear();
     }
     ImGui::EndDisabled();
     if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
@@ -944,6 +1053,30 @@ void EditorApp::DrawAssets()
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", breadcrumb.generic_u8string().c_str());
         ImGui::PopID();
     }
+    if (!m_assetTypeFilters.empty())
+    {
+        std::string remove;
+        ImGui::TextDisabled("%s", Localize("Active filters:", "已选筛选："));
+        for (const auto &type : m_assetTypeFilters)
+        {
+            const auto label = LocalizeReflected(type) + "  x###RemoveFilter";
+            if (ImGui::GetItemRectMax().x + ImGui::GetStyle().ItemSpacing.x + ImGui::CalcTextSize(label.c_str(), nullptr, true).x +
+                ImGui::GetStyle().FramePadding.x * 2 <= toolbarRight) ImGui::SameLine();
+            ImGui::PushID(type.c_str());
+            if (ImGui::SmallButton(label.c_str())) remove = type;
+            ImGui::PopID();
+        }
+        if (!remove.empty()) m_assetTypeFilters.erase(remove);
+    }
+    const auto folderActions = [&](const std::filesystem::path &folder) {
+        if (ImGui::BeginPopupContextItem("FolderContext"))
+        {
+            if (ImGui::MenuItem(Localize("Open Folder", "打开文件夹"))) m_assetFolder = folder;
+            ImGui::Separator();
+            DrawAssetCreationMenu(folder);
+            ImGui::EndPopup();
+        }
+    };
     const auto folderKey = ImGui::GetID(m_assetFolder.generic_u8string().c_str());
     auto *treeState = ImGui::GetStateStorage();
     const auto treeStateKey = ImGui::GetID("AssetTreeCurrentFolder");
@@ -973,6 +1106,7 @@ void EditorApp::DrawAssets()
         const bool open = ImGui::TreeNodeEx("##Folder", flags, "%s", clipped.c_str());
         if (ImGui::IsItemClicked() && !ImGui::IsItemToggledOpen()) m_assetFolder = folder;
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", folder.generic_u8string().c_str());
+        folderActions(folder);
         if (selected && m_assetRevealPending) ImGui::SetScrollHereY(.5f);
         if (open && !children.empty())
         {
@@ -995,6 +1129,11 @@ void EditorApp::DrawAssets()
             if (std::find(m_selectedAssets.begin(), m_selectedAssets.end(), asset.path) != m_selectedAssets.end()) RequestThumbnail(asset, true);
     };
     const auto assetActions = [&](const AssetInfo &asset) {
+        if (ImGui::IsItemClicked(ImGuiMouseButton_Right))
+        {
+            if (std::find(m_selectedAssets.begin(), m_selectedAssets.end(), asset.path) == m_selectedAssets.end()) SelectAsset(asset.path, false);
+            else m_selectedAsset = asset.path;
+        }
         if (ImGui::BeginDragDropSource())
         {
             ImGui::SetDragDropPayload("TINY_ASSET_PATH", asset.path.c_str(), asset.path.size() + 1);
@@ -1004,9 +1143,28 @@ void EditorApp::DrawAssets()
         }
         if (ImGui::BeginPopupContextItem("AssetContext"))
         {
+            if (ImGui::MenuItem(Localize("Details / Preview", "详情 / 预览"))) openDetailsPopup = true;
+            if (ImGui::MenuItem(Localize("Reference Viewer", "依赖图"))) OpenAssetReferences(asset.path);
+            ImGui::Separator();
+            if (asset.type == "Material" || asset.type == "MaterialGraph")
+            {
+                if (ImGui::MenuItem(Localize("Apply to Selected Meshes", "应用到选中网格"), nullptr, false, CanApplyMaterialToSelection()))
+                    ApplyMaterialToMeshes(asset.path, GetInspectorTargets());
+                if (ImGui::MenuItem(Localize("Create Material Instance", "创建材质实例"), nullptr, false, canWriteAssets))
+                {
+                    const auto directory = std::filesystem::u8path(asset.path).parent_path();
+                    auto path = directory / "NewMaterialInstance.mat";
+                    for (int suffix = 1; std::filesystem::exists(path); ++suffix) path = directory / ("NewMaterialInstance" + std::to_string(suffix) + ".mat");
+                    std::string error;
+                    if (MaterialAssetEditor::CreateInstance(path.generic_u8string(), asset.path, error))
+                    { m_engine.GetContext().resourceManager->GetAssetRegistry().Scan(assetRoot); SelectAsset(path.generic_u8string(), false); }
+                    else Notify(error, FeedbackKind::Error);
+                }
+            }
             if ((asset.type == "Prefab" || asset.type == "Mesh") &&
                 ImGui::MenuItem(Localize("Place in Scene", "放入场景"), nullptr, false, canWriteAssets)) PlaceAssetInScene(asset);
             if (ImGui::MenuItem(Localize("Move / Rename...", "移动 / 重命名..."), "F2", false, canWriteAssets)) requestMove(asset.path);
+            if (ImGui::MenuItem(Localize("Delete...", "删除..."), "Delete", false, canWriteAssets)) RequestDeleteAssets();
             const auto label = m_selectedAssets.size() > 1 ? std::string(Localize("Regenerate Selected Thumbnails (", "重新生成所选缩略图（")) +
                 std::to_string(m_selectedAssets.size()) + Localize(")", "）") : std::string(Localize("Regenerate Thumbnail", "重新生成缩略图"));
             if (ImGui::MenuItem(label.c_str())) regenerateThumbnails(asset);
@@ -1031,7 +1189,7 @@ void EditorApp::DrawAssets()
     for (const auto &asset : assets)
     {
         const auto path = NormalizedAssetPath(std::filesystem::u8path(asset.path));
-        if (!AssetPathWithin(path, assetRoot) || (!m_assetTypeFilter.empty() && asset.type != m_assetTypeFilter)) continue;
+        if (!AssetPathWithin(path, assetRoot) || (!m_assetTypeFilters.empty() && m_assetTypeFilters.count(asset.type) == 0)) continue;
         if (search.empty()) { if (AssetPathKey(path.parent_path()) != AssetPathKey(m_assetFolder)) continue; }
         else if (Lowercase(path.filename().u8string() + " " + asset.type + " " + asset.path).find(search) == std::string::npos) continue;
         visibleAssets.push_back(&asset);
@@ -1062,6 +1220,7 @@ void EditorApp::DrawAssets()
             const auto label = FitAssetText(folder.filename().u8string(), available - iconSize - Scaled(6.0f));
             ImGui::GetWindowDrawList()->AddText({position.x + iconSize + Scaled(6.0f), position.y}, ImGui::GetColorU32(ImGuiCol_Text), label.c_str());
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s\n%s", folder.generic_u8string().c_str(), Localize("Double click to open folder", "双击打开文件夹"));
+            folderActions(folder);
             ImGui::PopID();
         }
         const int columns = available >= Scaled(410.0f) ? 3 : available >= Scaled(260.0f) ? 2 : 1;
@@ -1135,6 +1294,7 @@ void EditorApp::DrawAssets()
             {
                 if (hovered && ImGui::IsMouseDoubleClicked(0)) m_assetFolder = path;
                 if (hovered) ImGui::SetTooltip("%s\n%s", path.generic_u8string().c_str(), Localize("Double click to open folder", "双击打开文件夹"));
+                folderActions(path);
             }
             ImGui::PopID(); nextTile();
         };
@@ -1142,7 +1302,17 @@ void EditorApp::DrawAssets()
         for (const auto *asset : visibleAssets) tile(std::filesystem::u8path(asset->path), asset);
     }
     if (visibleAssets.empty() && childFolders.empty()) ImGui::TextDisabled("%s", Localize("No matching assets", "没有匹配的资产"));
+    if (ImGui::BeginPopupContextWindow("AssetBackground", ImGuiPopupFlags_MouseButtonRight | ImGuiPopupFlags_NoOpenOverItems))
+    {
+        DrawAssetCreationMenu(m_assetFolder);
+        ImGui::Separator();
+        if (ImGui::MenuItem(Localize("Restore Deleted Assets", "恢复删除的资产"), "Ctrl+Z", false, canWriteAssets && !m_assetDeleteHistory.empty())) RestoreDeletedAssets();
+        ImGui::EndPopup();
+    }
     ImGui::EndChild();
+    DrawAssetFolderDialog();
+    DrawAssetDeleteDialog();
+    if (openDetailsPopup) ImGui::OpenPopup("AssetDetails");
     if (openMovePopup) ImGui::OpenPopup(Localize("Move or Rename Asset###MoveAssetPopup", "移动或重命名资产###MoveAssetPopup"));
     ImGui::SetNextWindowSizeConstraints({std::min(Scaled(360.0f), viewport->WorkSize.x * .8f), 0}, {viewport->WorkSize.x * .9f, viewport->WorkSize.y * .9f});
     if (ImGui::BeginPopupModal(Localize("Move or Rename Asset###MoveAssetPopup", "移动或重命名资产###MoveAssetPopup"), nullptr, ImGuiWindowFlags_AlwaysAutoResize))
@@ -1196,20 +1366,24 @@ void EditorApp::DrawAssets()
       if (preview)
       {
         ImGui::SeparatorText(Localize("Preview and Dependencies", "预览与依赖"));
+        ImGui::TextWrapped("%s", preview->path.c_str());
         RequestThumbnail(*preview);
         const auto previewThumbnail = GetThumbnailPath(*preview);
-        if (IsThumbnailReady(*preview, previewThumbnail))
+        if (m_device && IsThumbnailReady(*preview, previewThumbnail))
         {
-            const std::uintptr_t texture = m_device->GetUiTexture(previewThumbnail.generic_string());
+            const std::uintptr_t texture = m_device->GetUiTexture(previewThumbnail.generic_u8string());
             if (texture)
+            {
                 ImGui::Image(ImTextureRef(static_cast<ImTextureID>(texture)), {96.0f, 96.0f});
+                ImGui::SameLine();
+            }
         }
-        ImGui::SameLine();
         ImGui::BeginGroup();
         const std::string previewTypeLabel = LocalizeReflected(preview->type);
         ImGui::Text(Localize("Type: %s", "类型：%s"), previewTypeLabel.c_str());
         ImGui::Text(Localize("Size: %llu bytes", "大小：%llu 字节"), static_cast<unsigned long long>(preview->byteSize));
         ImGui::Text(Localize("Dependencies: %zu", "依赖：%zu"), preview->dependencies.size());
+        if (ImGui::Button(Localize("Reference Viewer", "依赖图"))) OpenAssetReferences(preview->path);
         if ((preview->type == "Prefab" || preview->type == "Mesh") && !m_engine.IsPlaying() &&
             ImGui::Button(Localize("Place in Scene", "放入场景")))
             PlaceAssetInScene(*preview);
@@ -1238,5 +1412,4 @@ void EditorApp::DrawAssets()
     }
     ImGui::End();
 }
-
 }

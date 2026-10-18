@@ -487,7 +487,7 @@ std::string TranslateUi(const std::string_view text, const bool simplifiedChines
         {"BlendTree", "混合树"},
         {"AnimationGraph", "动画图"},
         {"Environment", "环境"},
-        {"MaterialGraph", "材质图"},
+        {"MaterialGraph", "材质（节点）"},
         {"Input", "输入映射"},
         {"Font", "字体"},
         {"Binary", "二进制"},
@@ -766,6 +766,7 @@ void EditorApp::Draw()
     // 浮动设置窗口最后提交，保证它位于固定布局面板之上。
     DrawSettings();
     DrawAssetPreview();
+    DrawAssetReferenceViewer();
     ImGui::EndDisabled();
     DrawFeedback();
     HandleShortcuts();
@@ -1072,6 +1073,15 @@ void EditorApp::HandleShortcuts()
         m_sceneMaximized = !m_sceneMaximized;
     if (m_assetsFocused && !io.KeyCtrl && !io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_F2, false))
         m_assetRenameRequested = true;
+    // 材质文档处理自己的保存、节点删除和撤销，不得透传为场景命令。
+    if (m_materialGraphEditor.IsFocused() || m_materialAssetEditor.IsFocused()) return;
+    if (m_assetsFocused)
+    {
+        if (!io.KeyCtrl && !io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_Delete, false)) RequestDeleteAssets();
+        if (io.KeyCtrl && !io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_Z, false)) RestoreDeletedAssets();
+        // 资产面板的 Delete / Ctrl+Z 不属于场景对象，即便旧面板焦点尚未重置。
+        if (ImGui::IsKeyPressed(ImGuiKey_Delete, false) || (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_Z, false))) return;
+    }
     // Shader 窗口内的 Ctrl+S 由资产文档处理，不再同时保存场景。
     if (m_shaderFocused)
         return;
@@ -3007,6 +3017,11 @@ void EditorApp::DrawMaterialGraphEditor()
 {
     auto *resources=m_engine.GetContext().resourceManager; auto *renderer=m_engine.GetContext().renderer;
     if (!resources || !renderer) return;
+    const bool chinese = m_interfaceLanguage == InterfaceLanguage::SimplifiedChinese;
+    m_materialGraphEditor.SetChinese(chinese); m_materialAssetEditor.SetChinese(chinese);
+    const auto apply = [this](const std::string &path) { return ApplyMaterialToMeshes(path, GetInspectorTargets()); };
+    const bool canApply = CanApplyMaterialToSelection();
+    m_materialGraphEditor.SetApplyRequest(apply, canApply); m_materialAssetEditor.SetApplyRequest(apply, canApply);
     auto &system=renderer->GetMaterialSystem();
     const auto asset=m_editingAsset.empty() ? std::optional<AssetInfo>{} : resources->GetAssetRegistry().Find(m_editingAsset);
     if (asset && asset->type=="MaterialGraph" && m_openMaterialGraphAsset!=asset->path)
@@ -3056,13 +3071,14 @@ void EditorApp::DrawMaterialGraphEditor()
     }
     m_materialGraphEditor.Draw(); m_materialAssetEditor.Draw();
     ImGui::Begin("##MaterialExitHost",nullptr,ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoInputs);
-    if (m_requestMaterialExitPopup) { ImGui::OpenPopup("Unsaved materials"); m_requestMaterialExitPopup=false; }
-    if (ImGui::BeginPopupModal("Unsaved materials",nullptr,ImGuiWindowFlags_AlwaysAutoResize))
+    const auto *exitPopup = Localize("Unsaved materials###UnsavedMaterials", "材质尚未保存###UnsavedMaterials");
+    if (m_requestMaterialExitPopup) { ImGui::OpenPopup(exitPopup); m_requestMaterialExitPopup=false; }
+    if (ImGui::BeginPopupModal(exitPopup,nullptr,ImGuiWindowFlags_AlwaysAutoResize))
     {
-        ImGui::TextUnformatted("Save material changes before exiting?");
-        if (ImGui::Button("Save all") && (!m_materialGraphEditor.IsDirty() || m_materialGraphEditor.Save()) && (!m_materialAssetEditor.IsDirty() || m_materialAssetEditor.Save())) { ImGui::CloseCurrentPopup(); RequestEditorExit(true); }
-        ImGui::SameLine(); if (ImGui::Button("Discard all")) { m_materialGraphEditor.Discard(); m_materialAssetEditor.Discard(); ImGui::CloseCurrentPopup(); RequestEditorExit(true); }
-        ImGui::SameLine(); if (ImGui::Button("Cancel")) { m_exitInProgress=false; ImGui::CloseCurrentPopup(); }
+        ImGui::TextUnformatted(Localize("Save material changes before exiting?", "退出前保存材质修改？"));
+        if (ImGui::Button(Localize("Save all", "全部保存")) && (!m_materialGraphEditor.IsDirty() || m_materialGraphEditor.Save()) && (!m_materialAssetEditor.IsDirty() || m_materialAssetEditor.Save())) { ImGui::CloseCurrentPopup(); RequestEditorExit(true); }
+        ImGui::SameLine(); if (ImGui::Button(Localize("Discard all", "全部放弃"))) { m_materialGraphEditor.Discard(); m_materialAssetEditor.Discard(); ImGui::CloseCurrentPopup(); RequestEditorExit(true); }
+        ImGui::SameLine(); if (ImGui::Button(Localize("Cancel", "取消"))) { m_exitInProgress=false; ImGui::CloseCurrentPopup(); }
         ImGui::EndPopup();
     }
     ImGui::End();

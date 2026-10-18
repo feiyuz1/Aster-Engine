@@ -50,6 +50,8 @@ public:
     MaterialReloadResult Reload(const std::string &assetPath,MaterialValidator validator={});
     MaterialReloadResult ApplyDefinitionDraft(const std::string &assetPath,const MaterialDefinitionData &,MaterialValidator validator={});
     MaterialReloadResult ApplyInstanceDraft(const std::string &assetPath,const MaterialAssetData &,MaterialValidator validator={});
+    // Evict an asset identity after editor deletion/replacement; retained render snapshots remain valid.
+    void InvalidateAsset(const std::string &assetPath);
     const std::vector<MaterialDiagnostic> &GetDiagnostics(const std::string &assetPath) const;
 private:
     std::shared_ptr<ResolvedMaterial> ResolveRecursive(const std::string &path, std::vector<std::string> &chain,

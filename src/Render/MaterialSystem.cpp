@@ -28,6 +28,41 @@ std::string ChainText(const std::vector<std::string> &chain, const std::string &
 }
 }
 MaterialSystem::MaterialSystem(ResourceManager &resources) : m_resources(resources) {}
+void MaterialSystem::InvalidateAsset(const std::string &assetPath)
+{
+    const auto path = Identity(m_resources.ResolveAssetPath(assetPath));
+    std::unordered_set<std::string> affected{path};
+    const auto references = [&](const std::string &reference) { return affected.count(Identity(m_resources.ResolveAssetPath(reference))) != 0; };
+    bool expanded = true;
+    while (expanded)
+    {
+        expanded = false;
+        for (const auto &entry : m_resolved)
+        {
+            if (affected.count(Identity(entry.first))) continue;
+            const bool dependency = std::any_of(entry.second->dependencies.begin(), entry.second->dependencies.end(), references);
+            const bool texture = std::any_of(entry.second->values.begin(), entry.second->values.end(), [&](const auto &value) {
+                const auto *reference = std::get_if<std::string>(&value);
+                return reference && !reference->empty() && references(*reference);
+            });
+            if (dependency || texture) { affected.insert(Identity(entry.first)); expanded = true; }
+        }
+        for (const auto &entry : m_dependencyAttempts)
+            if (!affected.count(Identity(entry.first)) && std::any_of(entry.second.begin(), entry.second.end(), references))
+            { affected.insert(Identity(entry.first)); expanded = true; }
+    }
+    const auto evict = [&](auto &cache) {
+        for (auto it = cache.begin(); it != cache.end();)
+            if (affected.count(Identity(it->first))) it = cache.erase(it); else ++it;
+    };
+    evict(m_resolved); evict(m_proxies); evict(m_diagnostics); evict(m_dependencyAttempts); evict(m_activeOverrideTypes);
+    evict(m_candidateSources); evict(m_textureSnapshots);
+    // Compiled-definition lookup uses pointer keys, so clear it with the definition cache.
+    m_compiledDefinitions.clear(); m_definitions.clear();
+    for (auto &instance : m_dynamicInstances)
+        if (auto dynamic = instance.lock(); dynamic && affected.count(Identity(dynamic->m_path)))
+        { dynamic->m_proxy.reset(); dynamic->m_cachedGeneration = 0; }
+}
 bool DynamicMaterialInstance::SetParameter(const std::string &name, const MaterialParameterValue &value)
 {
     const auto p=std::find_if(m_schema.begin(),m_schema.end(),[&](const auto &p) { return p.name==name; });

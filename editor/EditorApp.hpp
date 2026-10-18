@@ -10,6 +10,7 @@
 #include "MiniEngine/Render/MaterialGraph.hpp"
 #include "MaterialAssetEditor.hpp"
 #include "MaterialGraphEditor.hpp"
+#include "AssetReferenceGraph.hpp"
 #include "MiniEngine/Runtime/Engine.hpp"
 #include "MiniEngine/ECS/Reflection.hpp"
 #include "MiniEngine/Project/SolutionGenerator.hpp"
@@ -22,6 +23,7 @@
 #include <array>
 #include <filesystem>
 #include <future>
+#include <set>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -76,6 +78,8 @@ class EditorApp
                                 const void *value, bool continuous = true, int axis = -1, bool record = true);
     bool ApplyInspectorAsset(const ReflectedComponent &component, const ReflectedProperty &property,
                              const std::string &path, std::uint32_t fieldId);
+    bool CanApplyMaterialToSelection() const;
+    bool ApplyMaterialToMeshes(const std::string &path, const std::vector<Entity> &targets);
     void ResetInspectorComponent(const ReflectedComponent &component);
     void SelectAsset(const std::string &path, bool extend);
     void OpenAsset(const AssetInfo &asset);
@@ -103,6 +107,15 @@ class EditorApp
     void DrawSceneOpenDialog();
     /// @brief 绘制 `Assets`。
     void DrawAssets();
+    void DrawAssetCreationMenu(const std::filesystem::path &directory);
+    void DrawAssetFolderDialog();
+    void RequestDeleteAssets();
+    void DrawAssetDeleteDialog();
+    std::vector<std::string> AssetDeletionBlockers(const std::vector<std::string> &paths);
+    bool RestoreDeletedAssets();
+    void LoadAssetTrashHistory();
+    void OpenAssetReferences(const std::string &path);
+    void DrawAssetReferenceViewer();
     void PollAssetImport();
     /// @brief 绘制 `Console`。
     void DrawConsole();
@@ -360,8 +373,23 @@ class EditorApp
     AssetViewMode m_assetViewMode = AssetViewMode::Grid;
     float m_assetThumbnailSize = 96.0f;
     std::array<char, 256> m_assetSearch{};
-    std::string m_assetTypeFilter;
+    std::set<std::string> m_assetTypeFilters;
     std::filesystem::path m_assetFolder;
+    std::filesystem::path m_assetCreateParent;
+    std::array<char, 256> m_assetFolderName{};
+    std::string m_assetFolderError;
+    bool m_assetFolderCreateRequested = false;
+    bool m_assetDeleteRequested = false;
+    std::vector<std::string> m_assetDeletePaths;
+    std::vector<std::string> m_assetDeleteHistory;
+    std::filesystem::path m_assetTrashProject;
+    std::string m_assetDeleteError;
+    bool m_showAssetReferences = false, m_assetReferencesDirty = false, m_assetReferencesFit = false;
+    std::string m_assetReferenceRoot;
+    AssetReferenceGraph m_assetReferenceGraph;
+    int m_assetReferenceDepth = 1;
+    float m_assetReferenceZoom = 1.0f;
+    Vec2 m_assetReferencePan{};
     std::unordered_map<std::string, JobHandle> m_thumbnailJobs;
     std::string m_openShaderAsset;
     bool m_shaderEditorHidden = false;

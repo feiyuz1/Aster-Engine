@@ -239,13 +239,13 @@ struct EditorInteractionTests
         const auto old=settings; settings.projectFile=root/"Workflow.tinyproject"; settings.assetDirectory="assets";
         world.Clear(); const auto e=world.CreateEntity("Keep inspector"); app.m_selected=e; app.m_selection={e};
         app.m_selectedAsset.clear(); app.m_selectedAssets.clear(); app.m_showAssets=false;
-        app.m_assetTypeFilter="Material"; std::strcpy(app.m_assetSearch.data(),"excluded");
+        app.m_assetTypeFilters={"Material"}; std::strcpy(app.m_assetSearch.data(),"excluded");
         app.LocateAsset("assets/Models/a.mesh");
         Check(app.m_showAssets && app.m_assetFolder.lexically_normal()==(root/"assets/Models").lexically_normal(),
               "Locate reference opens the asset browser at the containing folder");
         Check(app.m_selectedAsset.empty() && app.m_selected==e && app.m_selection==std::vector<Entity>{e},
               "Locate reference preserves entity inspector ownership");
-        Check(app.m_assetSearch[0]==0 && app.m_assetTypeFilter.empty() && app.m_selectedAssets.size()==1,
+        Check(app.m_assetSearch[0]==0 && app.m_assetTypeFilters.empty() && app.m_selectedAssets.size()==1,
               "Locate reference clears filters and highlights the target asset");
         app.m_assetRenameRequested=false; app.m_assetsFocused=false; Key(ImGuiKey_F2);
         Check(!app.m_assetRenameRequested,"F2 outside asset browser cannot rename");
@@ -489,7 +489,7 @@ struct EditorInteractionTests
         auto &settings=const_cast<ProjectSettings &>(app.m_engine.GetProjectSettings()); const auto oldSettings=settings;
         settings.projectFile=root/"Drag.tinyproject"; settings.assetDirectory="assets"; app.m_device=device;
         world.Clear(); app.ResetSceneInteraction(); app.m_undo.clear(); app.m_redo.clear(); app.m_sceneDirty=false;
-        app.m_assetFolder=assets; app.m_assetViewMode=EditorApp::AssetViewMode::List; app.m_assetSearch.fill(0); app.m_assetTypeFilter.clear();
+        app.m_assetFolder=assets; app.m_assetViewMode=EditorApp::AssetViewMode::List; app.m_assetSearch.fill(0); app.m_assetTypeFilters.clear();
         app.m_showAssets=true; app.m_sceneMaximized=false; app.m_editorCameraPosition={0,2,7}; app.m_editorCameraRotation={-20,0,0};
         const auto draw=[&] {
             renderer.SetCameraOverride(true,app.m_editorCameraPosition,app.m_editorCameraRotation,app.m_editorCameraFov);
@@ -497,7 +497,8 @@ struct EditorInteractionTests
         };
         Frame(draw); Frame(draw);
         ImGuiWindow *browser=nullptr; for(auto *candidate:ImGui::GetCurrentContext()->Windows)
-            if(candidate->ParentWindow==ImGui::FindWindowByName("Assets")) browser=candidate;
+            if(candidate->ParentWindow==ImGui::FindWindowByName("Assets") &&
+                std::string(candidate->Name).find("AssetBrowserItems")!=std::string::npos) browser=candidate;
         Check(browser!=nullptr,"viewport drag fixture exposes asset rows");
         auto *table=ImGui::GetCurrentContext()->Tables.GetByKey(browser->GetID("AssetList"));
         Check(table!=nullptr,"viewport drag fixture exposes actual list table");
@@ -539,6 +540,29 @@ struct EditorInteractionTests
         const auto *transform=world.GetComponent<TransformComponent>(app.m_selected);
         Check(transform && std::abs(transform->position.y)<.001f && std::abs(transform->position.x)>.1f,
               "delivered mesh uses the preview pointer position instead of the origin");
+        Check(PlatformFile::WriteAllText(assets/"z.matgraph", MakeBuiltinPbrDefinition().graph.Serialize()), "create node material for viewport drag");
+        resources.GetAssetRegistry().Scan(assets); Frame(draw); Frame(draw);
+        table=ImGui::GetCurrentContext()->Tables.GetByKey(browser->GetID("AssetList"));
+        const ImVec2 materialSource{table->Columns[0].MinX+24,table->OuterRect.Min.y+rowHeight*2.5f};
+        io.AddMousePosEvent(materialSource.x,materialSource.y); Frame(draw); io.AddMouseButtonEvent(0,true); Frame(draw);
+        io.AddMousePosEvent(materialSource.x+20,materialSource.y); Frame(draw);
+        Check(ImGui::GetDragDropPayload()!=nullptr, "real node material drag creates an asset payload");
+        const auto *materialPayload = ImGui::GetDragDropPayload();
+        Check(std::filesystem::u8path(static_cast<const char *>(materialPayload->Data)).filename()=="z.matgraph", "viewport drag carries the actual node material path");
+        // Drop inside the triangle, away from the ground-placement pivot on its edge.
+        const auto point=transform->position+Vec3{.25f,.25f,0}; const auto matrix=renderer.GetFrameView().projection*renderer.GetFrameView().view;
+        const float clipX=matrix.At(0,0)*point.x+matrix.At(0,1)*point.y+matrix.At(0,2)*point.z+matrix.At(0,3);
+        const float clipY=matrix.At(1,0)*point.x+matrix.At(1,1)*point.y+matrix.At(1,2)*point.z+matrix.At(1,3);
+        const float clipW=matrix.At(3,0)*point.x+matrix.At(3,1)*point.y+matrix.At(3,2)*point.z+matrix.At(3,3);
+        const ImVec2 meshTarget{scene->WorkRect.Min.x+(clipX/clipW*.5f+.5f)*device->GetSceneTargetWidth()/app.m_dpiScale,
+            scene->WorkRect.Max.y-(.5f+clipY/clipW*.5f)*device->GetSceneTargetHeight()/app.m_dpiScale};
+        io.AddMousePosEvent(meshTarget.x,meshTarget.y); Frame(draw); Frame(draw);
+        io.AddMouseButtonEvent(0,false); Frame(draw); Frame(draw);
+        Check(world.GetEntityManager().GetAliveEntities().size()==1 && app.m_undo.size()==2 &&
+              world.GetComponent<MeshComponent>(app.m_selected)->materialPath=="assets/z.matgraph",
+              "dropping node material on scene mesh assigns it without spawning an entity");
+        app.Undo();
+        Check(world.GetComponent<MeshComponent>(*world.GetEntityManager().GetAliveEntities().begin())->materialPath=="assets/default.mat", "one undo reverses viewport node material assignment");
         app.Undo(); Check(world.GetEntityManager().GetAliveEntities().empty(),"one undo reverses the delivered viewport drop");
         app.ResetSceneInteraction(); settings=oldSettings; app.m_device=nullptr; context.renderer=nullptr; context.resourceManager=nullptr;
         renderer.Shutdown(); resources.Shutdown(); app.m_editorCameraRotation={-10,0,0};
@@ -546,6 +570,9 @@ struct EditorInteractionTests
 
     void Shortcuts()
     {
+        // Command tests start with one explicit owner; browser gestures can retain panel focus.
+        app.m_assetsFocused = false; app.m_shaderFocused = false; app.m_assetDeleteRequested = false;
+        app.m_materialGraphEditor.Hide(); app.m_materialAssetEditor.Hide();
         const Entity entity = world.CreateEntity("Selected");
         app.m_selected = entity;
         app.m_selection = {entity};
@@ -650,6 +677,403 @@ struct EditorInteractionTests
         app.m_exitInProgress = false;
     }
 
+    struct BrowserFixture
+    {
+        EditorInteractionTests &tests;
+        ResourceManager resources;
+        ProjectSettings previous;
+        std::filesystem::path root;
+        BrowserFixture(EditorInteractionTests &owner, const char *name) : tests(owner)
+        {
+            root = std::filesystem::absolute("Saved/AssetBrowserRegression") / name /
+                std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) / "assets";
+            std::filesystem::create_directories(root / "Subfolder");
+            PlatformFile::WriteAllText(root / "a.mat", "color 1 0 0 1\n");
+            PlatformFile::WriteAllText(root / "b.mat", "color 0 1 0 1\n");
+            PlatformFile::WriteAllText(root / "c.ppm", "P3\n1 1\n255\n255 255 255\n");
+            PlatformFile::WriteAllText(root / "d.mesh", "v 0 0 0\nv 1 0 0\nv 0 1 0\nf 1 2 3\n");
+            resources.Initialize(nullptr, root);
+            const_cast<EngineContext &>(tests.app.m_engine.GetContext()).resourceManager = &resources;
+            auto &settings = const_cast<ProjectSettings &>(tests.app.m_engine.GetProjectSettings());
+            previous = settings; settings.projectFile = root.parent_path() / "Browser.tinyproject"; settings.assetDirectory = "assets";
+            tests.app.m_showAssets = true; tests.app.m_assetFolder = root;
+            tests.app.m_assetViewMode = EditorApp::AssetViewMode::List;
+            tests.app.m_assetSearch.fill(0); tests.app.m_selectedAsset.clear(); tests.app.m_selectedAssets.clear();
+            tests.Frame([&] { tests.app.DrawAssets(); }); tests.Frame([&] { tests.app.DrawAssets(); });
+        }
+        ~BrowserFixture()
+        {
+            ImGui::ClosePopupsOverWindow(nullptr, false);
+            tests.app.m_showAssetPreview = false;
+            tests.app.m_showAssetReferences = false;
+            tests.app.m_selectedAsset.clear(); tests.app.m_selectedAssets.clear();
+            const_cast<EngineContext &>(tests.app.m_engine.GetContext()).resourceManager = nullptr;
+            const_cast<ProjectSettings &>(tests.app.m_engine.GetProjectSettings()) = previous;
+            resources.Shutdown();
+        }
+    };
+
+    ImGuiWindow *BrowserItems()
+    {
+        for (auto *window : ImGui::GetCurrentContext()->Windows)
+            if (window->ParentWindow == ImGui::FindWindowByName("Assets") &&
+                std::string(window->Name).find("AssetBrowserItems") != std::string::npos) return window;
+        throw std::runtime_error("Asset browser items window is missing");
+    }
+
+    void MaterialAssignmentRegression()
+    {
+        BrowserFixture fixture(*this, "MaterialAssignment");
+        const auto graphPath = (fixture.root / "NodeMaterial.matgraph").generic_u8string();
+        const auto definition = MakeBuiltinPbrDefinition();
+        Check(PlatformFile::WriteAllText(std::filesystem::u8path(graphPath), definition.graph.Serialize()), "write assignable node material fixture");
+        fixture.resources.GetAssetRegistry().Scan(fixture.root);
+        world.Clear(); app.ResetSceneInteraction(); app.m_undo.clear(); app.m_redo.clear(); app.m_sceneDirty = false;
+        const auto a = world.CreateEntity("Material target A"), b = world.CreateEntity("Material target B");
+        for (const auto entity : {a,b}) world.AddComponent(entity, MeshComponent{"assets/d.mesh", "assets/a.mat"});
+        app.m_selected = a; app.m_selection = {a,b};
+        const auto &mesh = *ReflectionRegistry::Get().FindComponent("Mesh Renderer");
+        const auto field = std::find_if(mesh.properties.begin(), mesh.properties.end(), [](const auto &p) { return p.assetType == "Material"; });
+        Check(field != mesh.properties.end(), "mesh exposes material reference field");
+        Check(app.ApplyInspectorAsset(mesh, *field, graphPath, 7241), "material picker and drop accept node material assets");
+        Check(world.GetComponent<MeshComponent>(a)->materialPath == "assets/NodeMaterial.matgraph" &&
+            world.GetComponent<MeshComponent>(b)->materialPath == "assets/NodeMaterial.matgraph" && app.m_undo.size() == 1,
+            "node material assignment updates all selected meshes with one portable undo transaction");
+        app.Undo();
+        for (auto entity : world.GetEntityManager().GetAliveEntities())
+            Check(world.GetComponent<MeshComponent>(entity)->materialPath == "assets/a.mat", "undo restores prior mesh materials");
+        MaterialSystem system(fixture.resources);
+        const auto proxy = system.BuildProxy(graphPath);
+        Check(proxy && proxy->compiled, "node material produces a runtime material proxy");
+        Renderer renderer; renderer.SetResourceManager(&fixture.resources);
+        auto &context = const_cast<EngineContext &>(app.m_engine.GetContext()); context.renderer = &renderer;
+        app.m_selection.clear();
+        for (auto entity : world.GetEntityManager().GetAliveEntities()) app.m_selection.push_back(entity);
+        app.m_selected = app.m_selection.front(); app.m_undo.clear(); app.m_redo.clear();
+        app.SelectAsset(graphPath, false); app.OpenAsset(*fixture.resources.GetAssetRegistry().Find(graphPath));
+        const auto draw = [&] { app.DrawMaterialGraphEditor(); }; Frame(draw); Frame(draw);
+        app.m_materialGraphEditor.AddNode(MaterialNodeType::TexCoord, "UV");
+        auto *window = ImGui::FindWindowByID(ImHashStr("###MaterialGraphEditor"));
+        Check(window != nullptr, "node material opens its authoring document");
+        ImGui::ActivateItemByID(window->GetID("###ApplyMaterial")); Frame(draw); Frame(draw);
+        Check(!app.m_materialGraphEditor.IsDirty() && app.m_undo.size() == 1 && app.m_selectedAsset.empty(), "material document saves and applies draft to selected meshes through editor integration");
+        for (auto entity : app.m_selection) Check(world.GetComponent<MeshComponent>(entity)->materialPath == "assets/NodeMaterial.matgraph", "document Apply assigns node material to every selected mesh");
+        Check(app.ApplyMaterialToMeshes(graphPath, app.m_selection) && app.m_undo.size() == 1, "reapplying current material succeeds without creating an undo record");
+        ImGui::FocusWindow(window); Frame(draw); app.m_assetsFocused = false; app.m_sceneCommandsFocused = true;
+        Key(ImGuiKey_Delete);
+        Check(world.GetEntityManager().GetAliveEntities().size() == 2, "material document focus prevents scene Delete even with stale scene panel focus");
+        app.m_materialGraphEditor.Hide(); app.m_materialAssetEditor.Hide(); app.m_materialGraphEditor.SetSaveRequest({}); app.m_materialGraphEditor.SetApplyRequest({});
+        app.m_editingAsset.clear(); app.m_openMaterialGraphAsset.clear(); context.renderer = nullptr; renderer.Shutdown();
+        app.ResetSceneInteraction();
+    }
+
+    void AssetDeleteShortcutRegression()
+    {
+        BrowserFixture fixture(*this, "DeleteShortcut");
+        world.Clear(); app.ResetSceneInteraction(); app.m_undo.clear();
+        const auto entity = world.CreateEntity("Must survive asset Delete");
+        app.m_selected = entity; app.m_selection = {entity};
+        const auto path = (fixture.root / "a.mat").generic_u8string(); app.SelectAsset(path, false);
+        app.m_assetsFocused = true; app.m_sceneCommandsFocused = false;
+        Key(ImGuiKey_Delete, false, false, true);
+        Frame([&] { app.DrawAssets(); });
+        Check(!ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel), "asset Delete respects text input ownership");
+        app.m_assetsFocused = true; Key(ImGuiKey_Delete);
+        Frame([&] { app.DrawAssets(); });
+        Check(ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel), "asset Delete opens a recoverable deletion confirmation");
+        Check(world.IsAlive(entity) && std::filesystem::exists(std::filesystem::u8path(path)), "asset Delete leaves files and entities intact until confirmation");
+        const auto info = fixture.resources.GetAssetRegistry().Find(path); Check(info.has_value(), "deleted asset starts with persistent metadata");
+        BrowserActivate(BrowserPopup(), "###ConfirmDeleteAssets");
+        Check(!std::filesystem::exists(std::filesystem::u8path(path)) && !app.m_assetDeleteHistory.empty() && world.IsAlive(entity), "confirmed asset Delete moves file to trash without deleting scene entity");
+        app.m_assetTrashProject.clear(); app.m_assetDeleteHistory.clear(); app.LoadAssetTrashHistory();
+        Check(app.m_assetDeleteHistory.size() == 1, "project trash manifests remain discoverable after editor state is reloaded");
+        app.m_assetsFocused = true; Key(ImGuiKey_Z, true);
+        Check(std::filesystem::exists(std::filesystem::u8path(path)) && fixture.resources.GetAssetRegistry().Find(path)->id == info->id,
+            "asset panel Ctrl+Z restores original file and GUID");
+        world.AddComponent(entity, MeshComponent{"assets/d.mesh", "assets/a.mat"});
+        app.m_assetsFocused = true; app.SelectAsset(path, false); Key(ImGuiKey_Delete); Frame([&] { app.DrawAssets(); });
+        BrowserActivate(BrowserPopup(), "###ConfirmDeleteAssets");
+        Check(std::filesystem::exists(std::filesystem::u8path(path)) && !app.AssetDeletionBlockers({path}).empty(), "current unsaved scene reference blocks asset deletion");
+        ImGui::ClosePopupsOverWindow(nullptr, false);
+        world.GetComponent<MeshComponent>(entity)->materialPath.clear();
+        const auto before = app.m_sceneDocuments;
+        world.GetComponent<MeshComponent>(entity)->materialPath = "assets/a.mat";
+        const auto snapshot = SceneSerializer::Serialize(world); world.GetComponent<MeshComponent>(entity)->materialPath.clear();
+        app.m_sceneDocuments.push_back({fixture.root / "Other.scene", snapshot, true});
+        Check(!app.AssetDeletionBlockers({path}).empty(), "inactive unsaved scene tab protects its material references"); app.m_sceneDocuments = before;
+        auto &settings = const_cast<ProjectSettings &>(app.m_engine.GetProjectSettings()); settings.environmentTexture = "assets/c.ppm";
+        Check(!app.AssetDeletionBlockers({(fixture.root / "c.ppm").generic_u8string()}).empty(), "project environment reference blocks texture deletion");
+        PlatformFile::WriteAllText(fixture.root / "draft.frag", "void main() {}\n");
+        PlatformFile::WriteAllText(fixture.root / "shared.glsl", "vec3 tint = vec3(1);\n");
+        fixture.resources.GetAssetRegistry().Scan(fixture.root);
+        app.m_openShaderAsset = (fixture.root / "draft.frag").generic_u8string(); app.m_savedShaderSource = "void main() {}\n";
+        const std::string shaderDraft = "#include \"shared.glsl\"\nvoid main() {}\n";
+        app.m_shaderSource.assign(shaderDraft.begin(), shaderDraft.end()); app.m_shaderSource.push_back('\0');
+        Check(!app.AssetDeletionBlockers({(fixture.root / "shared.glsl").generic_u8string()}).empty(), "unsaved shader include blocks deletion of its dependency");
+        app.m_openShaderAsset.clear(); app.m_shaderSource.clear(); app.m_savedShaderSource.clear();
+        const auto previousUndo = app.m_undo, previousRedo = app.m_redo;
+        app.m_undo = {snapshot};
+        Check(!app.AssetDeletionBlockers({path}).empty(), "scene undo history protects material references it can restore");
+        app.m_undo.clear(); app.m_redo = {snapshot};
+        Check(!app.AssetDeletionBlockers({path}).empty(), "scene redo history protects material references it can restore");
+        app.m_redo.clear();
+        app.m_sceneDocuments.push_back({fixture.root / "History.scene", SceneSerializer::Serialize(world), true, {snapshot}, {}});
+        Check(!app.AssetDeletionBlockers({path}).empty(), "inactive scene tab undo history protects its retained asset references");
+        app.m_sceneDocuments.pop_back(); app.m_undo = previousUndo; app.m_redo = previousRedo;
+        app.m_undo.clear(); app.ResetSceneInteraction(); app.m_assetsFocused = false;
+    }
+
+    void BrowserActivate(ImGuiWindow *window, const char *label)
+    {
+        ImGui::ActivateItemByID(window->GetID(label));
+        const auto draw = [&] { app.DrawAssets(); app.DrawAssetReferenceViewer(); };
+        Frame(draw); Frame(draw);
+    }
+
+    void MaterialTrashCacheRegression()
+    {
+        BrowserFixture fixture(*this, "MaterialTrashCache"); world.Clear(); app.ResetSceneInteraction();
+        const auto path = (fixture.root / "NewMaterial.matgraph").generic_u8string(); auto definition = MakeBuiltinPbrDefinition();
+        const auto write = [&](float roughness) {
+            for (auto &parameter : definition.parameters) if (parameter.name == "Roughness") parameter.defaultValue = roughness;
+            definition.graph.GetParameters() = definition.parameters;
+            return PlatformFile::WriteAllText(std::filesystem::u8path(path), definition.graph.Serialize());
+        };
+        Check(write(.2f), "write material before caching and deletion"); fixture.resources.GetAssetRegistry().Scan(fixture.root);
+        Renderer renderer; renderer.SetResourceManager(&fixture.resources);
+        auto &context = const_cast<EngineContext &>(app.m_engine.GetContext()); context.renderer = &renderer;
+        const auto old = renderer.GetMaterialSystem().BuildProxy(path);
+        const auto roughness = [](const auto &proxy) {
+            for (const auto &slot : proxy->compiled->layout.numericSlots) if (slot.name == "Roughness") return proxy->numericSlots[slot.slot].x;
+            return -1.f;
+        };
+        Check(old && std::abs(roughness(old)-.2f)<.001f, "cache original material values");
+        app.SelectAsset(path, false); app.RequestDeleteAssets(); Frame([&] { app.DrawAssets(); }); BrowserActivate(BrowserPopup(), "###ConfirmDeleteAssets");
+        Check(!std::filesystem::exists(std::filesystem::u8path(path)), "delete cached unused material through actual asset dialog");
+        Check(write(.9f), "recreate material at the same available path"); fixture.resources.GetAssetRegistry().Scan(fixture.root);
+        const auto replacement = renderer.GetMaterialSystem().BuildProxy(path);
+        Check(replacement && std::abs(roughness(replacement)-.9f)<.001f, "reused deleted material path resolves the new contents instead of cached deleted values");
+        Check(std::abs(roughness(old)-.2f)<.001f, "evicting deleted material preserves retained render snapshots");
+        context.renderer = nullptr; renderer.Shutdown();
+    }
+
+    ImGuiWindow *BrowserPopup()
+    {
+        auto &stack = ImGui::GetCurrentContext()->OpenPopupStack;
+        return stack.empty() ? nullptr : stack.back().Window;
+    }
+
+    void BrowserInput(ImGuiWindow *window, const char *label, const char *text)
+    {
+        BrowserActivate(window, label);
+        const auto draw = [&] { app.DrawAssets(); };
+        auto &io = ImGui::GetIO();
+        io.AddKeyEvent(ImGuiMod_Ctrl, true); io.AddKeyEvent(ImGuiKey_A, true); Frame(draw);
+        io.AddKeyEvent(ImGuiKey_A, false); io.AddKeyEvent(ImGuiMod_Ctrl, false); Frame(draw);
+        io.AddInputCharactersUTF8(text); Frame(draw);
+    }
+
+    void AssetBrowserMenus()
+    {
+        BrowserFixture fixture(*this, "menus");
+        app.m_assetFolder = fixture.root / "Subfolder";
+        const auto draw = [&] { app.DrawAssets(); };
+        Frame(draw); Frame(draw);
+        auto *items = BrowserItems(); auto &io = ImGui::GetIO();
+        const auto point = items->InnerRect.GetCenter();
+        io.AddMousePosEvent(point.x, point.y); Frame(draw);
+        io.AddMouseButtonEvent(1, true); Frame(draw);
+        io.AddMouseButtonEvent(1, false); Frame(draw); Frame(draw);
+        Check(BrowserPopup() != nullptr, "right click on empty browser space opens the creation menu");
+        BrowserActivate(BrowserPopup(), "New Folder");
+        auto *modal = ImGui::FindWindowByName("New Folder###NewAssetFolder");
+        Check(modal && modal->Active, "new folder from the context menu opens its name dialog");
+        io.AddInputCharactersUTF8("新建 测试"); Frame(draw);
+        io.AddKeyEvent(ImGuiKey_Enter, true); Frame(draw);
+        io.AddKeyEvent(ImGuiKey_Enter, false); Frame(draw); Frame(draw);
+        const auto created = fixture.root / "Subfolder" / std::filesystem::u8path("新建 测试");
+        Check(std::filesystem::is_directory(created), "context creation writes a UTF-8 folder inside the current subfolder");
+        Check(app.m_assetFolder.lexically_normal() == created.lexically_normal(), "created folder becomes the current selected folder");
+        BrowserActivate(ImGui::FindWindowByName("Assets"), "Create...");
+        Check(BrowserPopup() != nullptr, "toolbar and right click share the creation menu");
+        BrowserActivate(BrowserPopup(), "Material");
+        Check(std::filesystem::exists(created / "NewMaterial.matgraph") &&
+              std::filesystem::u8path(app.m_selectedAsset).parent_path().lexically_normal() == created.lexically_normal(),
+              "toolbar creates and selects a material graph in the current directory");
+        Check(!std::filesystem::exists(fixture.root / "NewMaterial.matgraph"), "nested creation does not write to the asset root");
+        BrowserActivate(ImGui::FindWindowByName("Assets"), "Create...");
+        BrowserActivate(BrowserPopup(), "+ Blend Tree");
+        BlendTree1D blend;
+        Check(LoadBlendTreeAsset(created / "NewBlendTree.blendtree", blend) && blend.samples.size() == 1 &&
+              blend.samples.front().clipPath == "assets/Subfolder/新建 测试/NewAnimationClip.skanim",
+              "blend trees created in Unicode directories serialize a valid UTF-8 clip reference");
+        BrowserActivate(ImGui::FindWindowByName("Assets"), "Create...");
+        BrowserActivate(BrowserPopup(), "+ Animation Graph");
+        AnimationGraph animation;
+        Check(LoadAnimationGraphAsset(created / "NewAnimationGraph.animgraph", animation) && animation.states.size() == 1 &&
+              animation.states.front().motionPath == "assets/Subfolder/新建 测试/NewAnimationClip.skanim",
+              "animation graphs reuse Unicode starter clips without corrupting dependency paths");
+        const auto animationInfo = fixture.resources.GetAssetRegistry().Find((created / "NewAnimationGraph.animgraph").generic_u8string());
+        Check(animationInfo && animationInfo->dependencies.size() == 1 &&
+              animationInfo->dependencies.front() == "assets/Subfolder/新建 测试/NewAnimationClip.skanim",
+              "new animation assets publish their dependencies under the UTF-8 registry key");
+        BrowserActivate(ImGui::FindWindowByName("Assets"), "Create...");
+        BrowserActivate(BrowserPopup(), "New Folder");
+        modal = ImGui::FindWindowByName("New Folder###NewAssetFolder");
+        BrowserInput(modal, "Name", "../escape");
+        BrowserActivate(modal, "Create");
+        Check(modal->Active && !app.m_assetFolderError.empty() && !std::filesystem::exists(created.parent_path() / "escape"),
+              "folder name validation rejects parent traversal without closing the dialog");
+        std::filesystem::create_directory(created / "Existing");
+        BrowserInput(modal, "Name", "Existing");
+        BrowserActivate(modal, "Create");
+        Check(modal->Active && !app.m_assetFolderError.empty(), "new folder never overwrites an existing directory");
+        BrowserActivate(modal, "Cancel");
+        app.m_assetFolder = fixture.root; app.m_assetViewMode = EditorApp::AssetViewMode::Grid;
+        Frame(draw); Frame(draw);
+        items = BrowserItems();
+        io.AddMousePosEvent(items->DC.CursorStartPos.x + 32, items->DC.CursorStartPos.y + 32); Frame(draw);
+        io.AddMouseButtonEvent(1, true); Frame(draw); io.AddMouseButtonEvent(1, false); Frame(draw); Frame(draw);
+        Check(BrowserPopup() != nullptr, "folder tiles have their own right click creation menu");
+        BrowserActivate(BrowserPopup(), "Material");
+        Check(std::filesystem::exists(fixture.root / "Subfolder/NewMaterial.matgraph"),
+              "right click on a folder creates assets inside that folder");
+        Check(fixture.resources.GetAssetRegistry().Find((fixture.root / "a.mat").generic_u8string()).has_value(),
+              "creating an asset in a subfolder retains assets elsewhere in the registry");
+        app.m_assetViewMode = EditorApp::AssetViewMode::List;
+        app.m_assetFolder = fixture.root;
+        Frame(draw); Frame(draw);
+        ImGuiWindow *folders = nullptr;
+        for (auto *window : ImGui::GetCurrentContext()->Windows)
+            if (window->ParentWindow == ImGui::FindWindowByName("Assets") &&
+                std::string(window->Name).find("AssetFolderTree") != std::string::npos) folders = window;
+        Check(folders != nullptr, "wide browser exposes its folder tree");
+        io.AddMousePosEvent(folders->DC.CursorStartPos.x + 60,
+                            folders->DC.CursorStartPos.y + ImGui::GetTextLineHeightWithSpacing() * 1.5f); Frame(draw);
+        io.AddMouseButtonEvent(1, true); Frame(draw); io.AddMouseButtonEvent(1, false); Frame(draw); Frame(draw);
+        Check(BrowserPopup() != nullptr, "folder tree entries expose the shared right click creation actions");
+        BrowserActivate(BrowserPopup(), "Material");
+        Check(std::filesystem::exists(fixture.root / "Subfolder/NewMaterial1.matgraph"),
+              "folder tree creation targets the clicked directory and chooses a unique filename");
+    }
+
+    void AssetBrowserFilters()
+    {
+        BrowserFixture fixture(*this, "filters");
+        auto *assets = ImGui::FindWindowByName("Assets");
+        BrowserActivate(assets, "Filters");
+        Check(BrowserPopup() != nullptr, "filters opens the type list directly with one activation");
+        BrowserActivate(BrowserPopup(), "Material");
+        auto rows = [&] {
+            auto *table = ImGui::GetCurrentContext()->Tables.GetByKey(BrowserItems()->GetID("AssetList"));
+            return table ? table->CurrentRow : -1;
+        };
+        Check(rows() == 2, "material checkbox immediately restricts browser rows to both material assets");
+        BrowserActivate(BrowserPopup(), "Texture");
+        Check(rows() == 3, "multiple type filters include the union of material and texture assets");
+        ImGui::ClosePopupsOverWindow(nullptr, false); Frame([&] { app.DrawAssets(); });
+        const auto tag = ImHashStr("###RemoveFilter", 0, ImHashStr("Material", 0, assets->ID));
+        ImGui::ActivateItemByID(tag); Frame([&] { app.DrawAssets(); }); Frame([&] { app.DrawAssets(); });
+        Check(rows() == 1, "removing one visible filter tag leaves the other type filter active");
+        BrowserActivate(assets, "Display");
+        Check(BrowserPopup() != nullptr, "display options has its own popup independent of type filters");
+        BrowserActivate(BrowserPopup(), "Grid");
+        Check(app.m_assetViewMode == EditorApp::AssetViewMode::Grid, "display popup changes the browser view");
+        app.m_assetViewMode = EditorApp::AssetViewMode::List;
+        ImGui::ClosePopupsOverWindow(nullptr, false); Frame([&] { app.DrawAssets(); });
+        Check(rows() == 1, "changing display mode preserves the selected type filters");
+        app.LocateAsset((fixture.root / "a.mat").generic_u8string()); Frame([&] { app.DrawAssets(); });
+        Check(rows() == 4, "locating an asset clears all type filters and reveals the target");
+    }
+
+    void AssetBrowserReferences()
+    {
+        BrowserFixture fixture(*this, "references");
+        auto &registry = fixture.resources.GetAssetRegistry();
+        const auto a = (fixture.root / "a.mat").generic_u8string();
+        const auto b = (fixture.root / "b.mat").generic_u8string();
+        registry.SetDependencies(a, {"c.ppm", "Missing.png"});
+        registry.SetDependencies(b, {"a.mat"});
+        app.SelectAsset(b, false);
+        const auto draw = [&] { app.DrawAssets(); app.DrawAssetReferenceViewer(); };
+        Frame(draw); Frame(draw);
+        auto *items = BrowserItems();
+        const auto *table = ImGui::GetCurrentContext()->Tables.GetByKey(items->GetID("AssetList"));
+        const float height = ImGui::GetFontSize() + ImGui::GetStyle().CellPadding.y * 2;
+        const ImVec2 point{table->Columns[0].MinX + 24, table->OuterRect.Min.y + height * 1.5f};
+        auto &io = ImGui::GetIO(); io.AddMousePosEvent(point.x, point.y); Frame(draw);
+        io.AddMouseButtonEvent(1, true); Frame(draw);
+        io.AddMouseButtonEvent(1, false); Frame(draw); Frame(draw);
+        Check(BrowserPopup() != nullptr, "asset right click opens its own context menu");
+        BrowserActivate(BrowserPopup(), "Reference Viewer");
+        auto *viewer = ImGui::FindWindowByName("Asset References###AssetReferences");
+        Check(viewer && viewer->Active, "asset context menu opens an independent reference graph window");
+        Check(app.m_selectedAsset == a, "right click operations target the clicked asset instead of the previous selection");
+        const auto &graph = app.m_assetReferenceGraph;
+        Check(graph.nodes.size() == 4 && graph.edges.size() == 3, "graph includes the relative-path referencer and both real and missing dependencies");
+        const auto node = [&](const AssetReferenceGraph &model, const char *name) -> const AssetReferenceNode * {
+            for (const auto &value : model.nodes) if (std::filesystem::u8path(value.path).filename() == name) return &value;
+            return nullptr;
+        };
+        Check(node(graph, "b.mat") && node(graph, "b.mat")->column == -1 &&
+              node(graph, "c.ppm") && node(graph, "c.ppm")->column == 1 &&
+              node(graph, "Missing.png") && node(graph, "Missing.png")->missing,
+              "reference graph lays out referencers left, dependencies right, and flags the missing node");
+        const auto texture = registry.Find((fixture.root / "c.ppm").generic_u8string());
+        registry.SetDependencies(a, {"c.ppm", texture->id, "Missing.png"});
+        const auto deduplicated = BuildAssetReferenceGraph(fixture.resources, a, 1);
+        Check(deduplicated.nodes.size() == 4 && deduplicated.edges.size() == 3,
+              "GUID and relative-path references to one asset share one graph node and edge");
+        registry.SetDependencies((fixture.root / "c.ppm").generic_u8string(), {"d.mesh"});
+        registry.SetDependencies((fixture.root / "d.mesh").generic_u8string(), {"a.mat"});
+        const auto cyclic = BuildAssetReferenceGraph(fixture.resources, a, 8);
+        Check(cyclic.nodes.size() == 5 && cyclic.edges.size() == 5,
+              "deep graph traversal terminates cycles while retaining all actual reference edges");
+        const auto limited = BuildAssetReferenceGraph(fixture.resources, a, 8, 3);
+        Check(limited.nodes.size() == 3 && limited.truncated, "large reference graphs enforce the node budget and report truncation");
+        const auto unicodeFile = fixture.root / std::filesystem::u8path("中文 路径") / "Color.mat";
+        PlatformFile::WriteAllText(unicodeFile, "color 1 0 0 1\n");
+        registry.Scan(fixture.root);
+        const auto unicodeGraph = BuildAssetReferenceGraph(fixture.resources, unicodeFile.generic_u8string());
+        Check(unicodeGraph.nodes.size() == 1 && !unicodeGraph.nodes.front().missing,
+              "existing assets under UTF-8 paths are not marked as missing graph references");
+        ImGuiWindow *canvas = nullptr;
+        for (auto *window : ImGui::GetCurrentContext()->Windows)
+            if (window->ParentWindow == viewer && std::string(window->Name).find("ReferenceCanvas") != std::string::npos) canvas = window;
+        Check(canvas != nullptr, "reference viewer renders its interactive graph canvas");
+        const auto center = canvas->InnerRect.GetCenter();
+        const auto previousZoom = app.m_assetReferenceZoom;
+        io.AddMousePosEvent(center.x, center.y); Frame(draw);
+        io.AddMouseWheelEvent(0, 1); Frame(draw);
+        Check(app.m_assetReferenceZoom > previousZoom, "mouse wheel zooms the reference graph");
+        const auto previousPan = app.m_assetReferencePan;
+        io.AddMouseButtonEvent(2, true); Frame(draw);
+        io.AddMousePosEvent(center.x + 50, center.y + 20); Frame(draw);
+        io.AddMouseButtonEvent(2, false); Frame(draw);
+        Check(app.m_assetReferencePan.x > previousPan.x + 10, "middle mouse drag pans the reference graph");
+        const auto *textureNode = node(app.m_assetReferenceGraph, "c.ppm");
+        const auto canvasCenter = canvas->InnerRect.GetCenter();
+        const ImVec2 target{canvasCenter.x + app.m_assetReferencePan.x + textureNode->column * app.Scaled(280) * app.m_assetReferenceZoom,
+                            canvasCenter.y + app.m_assetReferencePan.y + textureNode->row * app.Scaled(110) * app.m_assetReferenceZoom};
+        io.AddMousePosEvent(target.x, target.y); Frame(draw);
+        io.AddMouseButtonEvent(0, true); Frame(draw); io.AddMouseButtonEvent(0, false); Frame(draw);
+        Check(app.m_selectedAssets.size() == 1 && app.m_selectedAssets.front() == (fixture.root / "c.ppm").generic_u8string(),
+              "clicking a graph node locates that asset in the browser");
+        io.AddMouseButtonEvent(0, true); Frame(draw); io.AddMouseButtonEvent(0, false); Frame(draw); Frame(draw);
+        Check(app.m_assetReferenceRoot == (fixture.root / "c.ppm").generic_u8string() &&
+              app.m_assetReferenceGraph.nodes.front().path == (fixture.root / "c.ppm").generic_u8string(),
+              "double clicking a graph node rebuilds the viewer around that asset");
+        app.m_showAssetReferences = false;
+        app.SelectAsset(b, false); app.m_assetFolder = fixture.root;
+        Frame(draw); Frame(draw);
+        table = ImGui::GetCurrentContext()->Tables.GetByKey(BrowserItems()->GetID("AssetList"));
+        io.AddMousePosEvent(table->Columns[0].MinX + 24, table->OuterRect.Min.y + height * 1.5f); Frame(draw);
+        io.AddMouseButtonEvent(1, true); Frame(draw); io.AddMouseButtonEvent(1, false); Frame(draw); Frame(draw);
+        BrowserActivate(BrowserPopup(), "Details / Preview");
+        Check(BrowserPopup() && BrowserPopup()->PopupId == ImGui::FindWindowByName("Assets")->GetID("AssetDetails") && app.m_selectedAsset == a,
+              "asset context details opens for the clicked asset using the correct popup scope");
+    }
+
     void AssetClicks()
     {
         const auto root = std::filesystem::absolute("Saved/EditorP0Clicks/assets");
@@ -668,7 +1092,7 @@ struct EditorInteractionTests
         app.m_assetViewMode = EditorApp::AssetViewMode::List;
         app.m_selectedAsset.clear();
         app.m_assetSearch.fill('\0');
-        app.m_assetTypeFilter.clear();
+        app.m_assetTypeFilters.clear();
         world.Clear();
         const auto entity = world.CreateEntity("Keep scene object");
         app.m_selected = entity;
@@ -680,7 +1104,8 @@ struct EditorInteractionTests
         Frame(draw);
         ImGuiWindow *browser = nullptr;
         for (auto *candidate : ImGui::GetCurrentContext()->Windows)
-            if (candidate->ParentWindow == ImGui::FindWindowByName("Assets")) browser = candidate;
+            if (candidate->ParentWindow == ImGui::FindWindowByName("Assets") &&
+                std::string(candidate->Name).find("AssetBrowserItems") != std::string::npos) browser = candidate;
         Check(browser != nullptr, "asset click fixture exposes the real browser");
         auto *table = ImGui::GetCurrentContext()->Tables.GetByKey(browser->GetID("AssetList"));
         Check(table != nullptr, "asset click fixture exposes its rows");
@@ -819,7 +1244,8 @@ struct EditorInteractionTests
         Frame(draw); Frame(draw);
         ImGuiWindow *browser = nullptr;
         for (auto *candidate : ImGui::GetCurrentContext()->Windows)
-            if (candidate->ParentWindow == ImGui::FindWindowByName("Assets")) browser = candidate;
+            if (candidate->ParentWindow == ImGui::FindWindowByName("Assets") &&
+                std::string(candidate->Name).find("AssetBrowserItems") != std::string::npos) browser = candidate;
         const ImVec2 source{browser->DC.CursorStartPos.x + 32,browser->DC.CursorStartPos.y + 32};
         const auto *inspector = ImGui::FindWindowByName("Inspector");
         const auto *table = ImGui::GetCurrentContext()->Tables.GetByKey(ImHashStr("Properties",0,ImHashStr("Mesh Renderer",0,inspector->ID)));
@@ -1603,8 +2029,8 @@ struct EditorInteractionTests
         MaterialAssetEditor editor; editor.Open((assets/"child.mat").generic_u8string(),data,schema);
         editor.SetSaveRequest([](const auto &path,const auto &draft,auto &) { return PlatformFile::WriteAllText(std::filesystem::u8path(path),SerializeMaterialAsset(draft)); });
         Frame([&] { editor.Draw(); }); Frame([&] { editor.Draw(); });
-        auto window=ImGui::FindWindowByName("Material instance / 材质实例");
-        ImGui::ActivateItemByID(ImHashStr("Override",0,ImHashStr("BaseMap",0,window->ID))); Frame([&] { editor.Draw(); });
+        auto window=ImGui::FindWindowByID(ImHashStr("###MaterialAssetEditor"));
+        ImGui::ActivateItemByID(ImHashStr("###Override",0,ImHashStr("BaseMap",0,window->ID))); Frame([&] { editor.Draw(); });
         Check(editor.GetDraft().overrides.count("BaseMap") && !std::filesystem::u8path(std::get<std::string>(editor.GetDraft().overrides.at("BaseMap"))).is_absolute(),"actual inherited texture checkbox stores a portable reference");
         Check(editor.Save(),"save inherited texture override");
         Check(PakArchive::PackDirectory(directory,directory.parent_path()/"EditorPortable.tpak"),"package checkbox-created override");
@@ -1667,6 +2093,10 @@ struct EditorInteractionTests
         for (auto e:{a,b}) { scene.AddComponent(e,MeshComponent{"assets/quad.mesh",e==a ? "assets/Red.mat" : "assets/Blue.mat"}); scene.GetComponent<TransformComponent>(e)->position={e==a ? -.65f : .65f,0,0}; }
         renderer.SetCameraOverride(true,{0,0,3},{}); renderer.RenderFrame(scene); auto hdr=device->ReadHdrAttachmentForTests(0);
         Check(hdr[32*128+52].x>.9f && hdr[32*128+76].z>.9f,"assigned instances render red and blue in the actual scene");
+        scene.GetComponent<MeshComponent>(a)->materialPath="assets/Shared.matgraph"; renderer.RenderFrame(scene); hdr=device->ReadHdrAttachmentForTests(0);
+        Check(std::abs(hdr[32*128+52].x-.3f)<.02f && std::abs(hdr[32*128+52].y-.3f)<.02f,
+              "node material renders its defaults directly on a scene mesh");
+        scene.GetComponent<MeshComponent>(a)->materialPath="assets/Red.mat";
         Check(graph.SetParameterDefault("Tint",Vec3{0,1,0}) && graph.Save(),"parent default changes through the graph editor command");
         auto dynamic=system.CreateDynamicInstance("assets/Blue.mat"); dynamic->SetParameter("Tint",Vec3{1,1,0}); renderer.SetDynamicMaterial(b,dynamic); renderer.RenderFrame(scene); hdr=device->ReadHdrAttachmentForTests(0);
         Check(hdr[32*128+52].x>.9f && hdr[32*128+76].x>.9f && hdr[32*128+76].y>.9f,"dynamic color affects only its assigned scene entity");
@@ -1703,6 +2133,12 @@ int main(int argc, char **argv)
             else if(filter=="--p1-settings") tests.P1Settings();
             else if(filter=="--p1-assets") tests.P1AssetWorkflow();
             else if(filter=="--p1-scene") tests.P1SceneNavigation();
+            else if(filter=="--asset-menus") tests.AssetBrowserMenus();
+            else if(filter=="--asset-filters") tests.AssetBrowserFilters();
+            else if(filter=="--asset-references") tests.AssetBrowserReferences();
+            else if(filter=="--material-assignment") tests.MaterialAssignmentRegression();
+            else if(filter=="--asset-delete") tests.AssetDeleteShortcutRegression();
+            else if(filter=="--material-trash-cache") tests.MaterialTrashCacheRegression();
             return 0;
         }
         if(argc==1) { tests.P1Settings(); tests.P1HiddenImport(); tests.P1Docking(); tests.P1AssetWorkflow(); tests.P1SceneNavigation(); tests.P1OrbitStability(); tests.P1SceneDrag(); }
@@ -1712,6 +2148,12 @@ int main(int argc, char **argv)
         tests.Shortcuts();
         tests.Documents();
         tests.AssetClicks();
+        tests.AssetBrowserMenus();
+        tests.AssetBrowserFilters();
+        tests.AssetBrowserReferences();
+        tests.MaterialAssignmentRegression();
+        tests.AssetDeleteShortcutRegression();
+        tests.MaterialTrashCacheRegression();
         tests.AssetGridDrag();
         tests.Inspector();
         tests.InspectorAxisDefaults();

@@ -33,7 +33,8 @@ bool SameValue(const ReflectedProperty &property, const void *a, const void *b, 
 bool MatchesAsset(const ReflectedProperty &property, const AssetInfo &asset)
 {
     // AnimationComponent::clipPath also accepts a blend tree; Next Clip remains a single animation.
-    return asset.type == property.assetType || (property.assetType == "Animation" && asset.extension == ".anim") ||
+    return asset.type == property.assetType || (property.assetType == "Material" && asset.type == "MaterialGraph") ||
+           (property.assetType == "Animation" && asset.extension == ".anim") ||
            (property.assetType == "Animation" && property.name == "Clip" && asset.type == "BlendTree");
 }
 std::string SearchKey(std::string value)
