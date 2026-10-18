@@ -997,7 +997,7 @@ int main()
     std::filesystem::current_path(originalCwd);
     report.Check("Runtime", "resource loading is independent from process CWD", cwdIndependent);
 
-    const std::string editorSource = PlatformFile::ReadAllText("editor/EditorApp.cpp");
+    const std::string editorSource = PlatformFile::ReadAllText("editor/EditorApp.cpp") + PlatformFile::ReadAllText("editor/EditorSceneView.cpp") + PlatformFile::ReadAllText("editor/EditorAssets.cpp") + PlatformFile::ReadAllText("editor/EditorWorkspace.cpp");
     const auto settingsCall = editorSource.find("DrawSettings();");
     const auto hierarchyCall = editorSource.find("DrawHierarchy();");
     report.Check("Editor", "settings window is drawn above fixed panels",

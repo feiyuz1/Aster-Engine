@@ -1,5 +1,6 @@
 #ifndef TE_LIGHTING_GLSL
 #define TE_LIGHTING_GLSL
+uniform int uViewportRenderMode;
 uniform vec3 uCameraPosition;
 uniform int uLightCount;
 uniform samplerBuffer uLightData;

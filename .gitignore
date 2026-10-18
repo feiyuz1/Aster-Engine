@@ -97,3 +97,6 @@
 !/docs/superpowers/specs/
 /docs/superpowers/specs/*
 !/docs/superpowers/specs/2026-10-11-material-system-design.md
+
+!/tests/EditorAssetRenameTests.cpp
+!/docs/superpowers/plans/2026-10-15-editor-ui-p1.md

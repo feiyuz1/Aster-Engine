@@ -45,7 +45,20 @@ class AssetMaintenance
     /// @param error 可选的错误信息输出；可为空。
     /// @return 操作成功时返回 `true`，否则返回 `false`。
     static bool MoveAsset(AssetRegistry &registry, const std::filesystem::path &source, const std::filesystem::path &destination,
-                          std::string *error = nullptr);
+                          std::string *error = nullptr, const std::filesystem::path &projectRoot = {},
+                          const std::filesystem::path &projectFile = {});
+    /// @brief 重映射完整资产路径，保持绝对、项目相对或资产根相对的引用形式。
+    static bool RewriteReference(std::string &reference, const std::filesystem::path &source,
+                                 const std::filesystem::path &destination, const std::filesystem::path &assetRoot,
+                                 const std::filesystem::path &projectRoot = {});
+    /// @brief 重映射序列化资产的引用字段；场景名称、标签及其他非引用字符串保持不变。
+    static bool RewriteReferences(std::string &text, const std::filesystem::path &source,
+                                  const std::filesystem::path &destination, const std::filesystem::path &assetRoot,
+                                  const std::filesystem::path &projectRoot = {});
+    /// @brief 重映射有效的带引号 include；移动着色器自身时同步修正其相对包含路径。
+    static bool RewriteShaderIncludes(std::string &text, const std::filesystem::path &owner,
+                                      const std::filesystem::path &newOwner, const std::filesystem::path &source,
+                                      const std::filesystem::path &destination);
     /// @brief 生成 `Thumbnail`。
     /// @param asset 要加载、维护或放置的资产信息。
     /// @param output 接口所需的输入参数。

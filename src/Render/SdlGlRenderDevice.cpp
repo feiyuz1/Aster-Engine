@@ -54,6 +54,15 @@ Mat4 InversePerspective(const Mat4 &projection)
     return inverseProjection;
 }
 
+// Polygon rasterization is confined to geometry draws, including all early-return paths.
+struct ScopedViewportWireframe
+{
+    bool enabled;
+    explicit ScopedViewportWireframe(ViewportRenderMode mode) : enabled(mode==ViewportRenderMode::Wireframe)
+    { if (enabled) glPolygonMode(GL_FRONT_AND_BACK,GL_LINE); }
+    ~ScopedViewportWireframe() { if (enabled) glPolygonMode(GL_FRONT_AND_BACK,GL_FILL); }
+};
+
 // Perspective 与 LookAt 的解析逆矩阵，避免在 TAA 的每个像素里求逆。
 Mat4 InverseCameraViewProjection(const FrameView &view)
 {
@@ -466,6 +475,7 @@ constexpr const char *FinalToneFragmentShaderSource = R"GLSL(
             in vec2 vUv;
             uniform sampler2D uResolved;
             uniform float uExposure;
+            uniform int uViewportRenderMode;
             uniform vec2 uInverseResolution;
             uniform int uFxaaEnabled;
             out vec4 outColor;
@@ -504,7 +514,7 @@ constexpr const char *FinalToneFragmentShaderSource = R"GLSL(
                         color = wideLuma < minimumLuma || wideLuma > maximumLuma ? narrow : wide;
                     }
                 }
-                outColor = vec4(pow(AcesFilm(color * uExposure), vec3(1.0 / 2.2)), 1.0);
+                outColor = vec4(pow(uViewportRenderMode == 0 ? AcesFilm(color * uExposure) : max(color,vec3(0.0)), vec3(1.0 / 2.2)), 1.0);
             }
         )GLSL";
 
@@ -2417,7 +2427,7 @@ void SdlGlRenderDevice::BeginFrame(const FrameView &view)
 {
     if (m_impl->materialPrograms) m_impl->materialPrograms->RetireUnused();
     m_impl->RetireMaterialTextures();
-    if (view.resetTemporalHistory)
+    if (view.resetTemporalHistory || m_impl->view.renderMode != view.renderMode)
         m_impl->historyValid = false;
     m_impl->view = view;
     if (m_impl->sceneTargetEnabled && m_impl->presentSceneToWindow)
@@ -2494,6 +2504,7 @@ void SdlGlRenderDevice::BeginFrame(const FrameView &view)
     const Vec2 viewport = GetViewportSize();
     m_impl->Uniform2f(m_impl->clusterViewportLocation, viewport.x, viewport.y);
     m_impl->Uniform3f(m_impl->cameraPositionLocation, view.cameraPosition.x, view.cameraPosition.y, view.cameraPosition.z);
+    m_impl->Uniform1i(m_impl->GetUniformLocation(m_impl->program,"uViewportRenderMode"),static_cast<int>(view.renderMode));
     m_impl->Uniform1i(m_impl->textureLocation, 0);
     m_impl->ActiveTexture(GL_TEXTURE0);
 }
@@ -2501,7 +2512,7 @@ void SdlGlRenderDevice::BeginFrame(const FrameView &view)
 // 天空在几何体之前写入 HDR 目标；随后网格的深度测试和颜色写入会自然覆盖它。
 void SdlGlRenderDevice::DrawSkybox()
 {
-    if (!m_impl || !m_impl->view.environmentSky || !m_impl->view.environmentSky->IsReady())
+    if (!m_impl || m_impl->view.renderMode==ViewportRenderMode::Wireframe || !m_impl->view.environmentSky || !m_impl->view.environmentSky->IsReady())
         return;
     const GLuint skyTexture = m_impl->GetOrCreateTexture(m_impl->view.environmentSky, false);
     if (!skyTexture)
@@ -2527,6 +2538,7 @@ void SdlGlRenderDevice::DrawSkybox()
 
 void SdlGlRenderDevice::Draw(const RenderItem &item)
 {
+    const ScopedViewportWireframe wireframe(m_impl->view.renderMode);
     if (item.materialProxy && item.materialProxy->legacyShaderPath.empty())
     {
         const auto geometry=item.skinMatrices.empty() ? MaterialGeometry::Static : MaterialGeometry::Skinned;
@@ -2619,6 +2631,7 @@ void SdlGlRenderDevice::Draw(const RenderItem &item)
 // 只有网格与材质布局兼容的项目才可合批；实例矩阵和上一帧矩阵同时上传以生成运动矢量。
 void SdlGlRenderDevice::DrawInstanced(const std::vector<RenderItem> &items)
 {
+    const ScopedViewportWireframe wireframe(m_impl->view.renderMode);
     if (items.empty())
         return;
     glDisable(GL_BLEND);
@@ -2899,7 +2912,7 @@ void SdlGlRenderDevice::ExecutePostProcess(const PostProcessPass pass)
     {
         const int width = std::max(1, m_impl->sceneWidth / 2), height = std::max(1, m_impl->sceneHeight / 2);
         attach(m_impl->gtaoTexture, width, height);
-        if (!m_impl->gtaoEnabled)
+        if (!m_impl->gtaoEnabled || m_impl->view.renderMode!=ViewportRenderMode::Lit)
         {
             glClearColor(1.0f, 1.0f, 1.0f, 1.0f);
             glClear(GL_COLOR_BUFFER_BIT);
@@ -2931,7 +2944,7 @@ void SdlGlRenderDevice::ExecutePostProcess(const PostProcessPass pass)
         {
             const int width = std::max(1, sourceWidth / 2), height = std::max(1, sourceHeight / 2);
             attach(m_impl->bloomTextures[level], width, height);
-            if (!m_impl->bloomEnabled)
+            if (!m_impl->bloomEnabled || m_impl->view.renderMode!=ViewportRenderMode::Lit)
             {
                 glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
                 glClear(GL_COLOR_BUFFER_BIT);
@@ -2971,7 +2984,7 @@ void SdlGlRenderDevice::ExecutePostProcess(const PostProcessPass pass)
         m_impl->Uniform2f(m_impl->taaInverseResolutionLocation, 1.0f / std::max(1, m_impl->sceneWidth),
                           1.0f / std::max(1, m_impl->sceneHeight));
         m_impl->Uniform1i(m_impl->taaHistoryValidLocation, m_impl->historyValid ? 1 : 0);
-        m_impl->Uniform1i(m_impl->taaEnabledLocation, m_impl->taaEnabled ? 1 : 0);
+        m_impl->Uniform1i(m_impl->taaEnabledLocation, m_impl->taaEnabled && m_impl->view.renderMode==ViewportRenderMode::Lit ? 1 : 0);
         glDrawArrays(GL_TRIANGLES, 0, 3);
         m_impl->FramebufferTexture2D(GL_FRAMEBUFFER, 0x8CE1, GL_TEXTURE_2D, 0, 0);
         const GLenum colorAttachment = GL_COLOR_ATTACHMENT0;
@@ -2984,6 +2997,7 @@ void SdlGlRenderDevice::ExecutePostProcess(const PostProcessPass pass)
         attach(m_impl->sceneColor, m_impl->sceneWidth, m_impl->sceneHeight, m_impl->toneFramebuffer);
         m_impl->UseProgram(m_impl->toneProgram);
         bindTexture(0, m_impl->taaTextures[m_impl->temporalTextureIndex], m_impl->toneResolvedLocation);
+        m_impl->Uniform1i(m_impl->GetUniformLocation(m_impl->toneProgram,"uViewportRenderMode"),static_cast<int>(m_impl->view.renderMode));
         m_impl->Uniform1f(m_impl->exposureLocation, m_impl->exposure);
         m_impl->Uniform2f(m_impl->inverseResolutionLocation, 1.0f / std::max(1, m_impl->sceneWidth),
                           1.0f / std::max(1, m_impl->sceneHeight));

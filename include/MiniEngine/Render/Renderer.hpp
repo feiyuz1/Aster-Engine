@@ -47,9 +47,12 @@ struct InputState
     float cursorX = 0.0f, cursorY = 0.0f;
 };
 
+enum class ViewportRenderMode { Lit, Unlit, Wireframe };
+
 // 一帧共享的视图常量。previousViewProjection 与 temporalJitter 共同支持运动矢量和 TAA。
 struct FrameView
 {
+    ViewportRenderMode renderMode = ViewportRenderMode::Lit;
     static constexpr std::size_t MaxLights = 64;
     static constexpr std::size_t MaxShadowCascades = 3;
     static constexpr int ShadowMapResolution = 2048;
@@ -354,6 +357,7 @@ class Renderer
     /// @param rotation 旋转值，单位与空间由接口约定。
     /// @param fov 本次操作使用的数值。
     void SetCameraOverride(bool enabled, const Vec3 &position = {}, const Vec3 &rotation = {}, float fov = 60.0f);
+    void SetViewportRenderMode(ViewportRenderMode mode);
     /// @brief 设置 `EnvironmentPath`。
     /// @param path 文件、资源或目录路径。
     void SetEnvironmentPath(std::string path);
@@ -367,6 +371,7 @@ class Renderer
     RenderQueue m_renderQueue;
     std::vector<RenderItem> m_shadowItems;
     FrameView m_frameView;
+    ViewportRenderMode m_viewportRenderMode = ViewportRenderMode::Lit;
     std::size_t m_lastDrawCalls = 0;
     std::size_t m_lastCulled = 0;
     std::size_t m_lastLodSwitches = 0;

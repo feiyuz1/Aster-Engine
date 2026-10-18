@@ -23,6 +23,13 @@ void main()
     if (s.Opacity < uMaterialMaskCutoff) discard;
 #endif
     vec3 color, ambient;
+    if (uViewportRenderMode != 0)
+    {
+        color = uViewportRenderMode == 2 ? vec3(0.65,0.75,0.9) : s.BaseColor;
+        ambient = vec3(0.0);
+    }
+    else
+    {
 #if TE_UNLIT == 1
     color = s.BaseColor + s.Emissive;
     ambient = vec3(0.0);
@@ -30,6 +37,7 @@ void main()
     vec3 normal = SurfaceWorldNormal(s,vNormal,vTangent,uMaterialTwoSided != 0);
     EvaluateLighting(s.BaseColor,normal,s.Metallic,s.Roughness,s.AO,s.Emissive,color,ambient);
 #endif
+    }
     outColor = vec4(color,s.Opacity);
     outAmbient = vec4(ambient,s.Opacity);
     vec2 currentNdc = vCurrentClip.xy / max(vCurrentClip.w,0.0001);

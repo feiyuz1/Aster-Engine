@@ -23,14 +23,13 @@ TinyEngine 是参考 Unreal Engine 5.3.2 模块职责、以 C++17 实现的轻�
 
 ## 快速开始
 
-需要 CMake 3.20+、C++17 编译器、OpenGL 4.3 驱动，以及本地 Assimp/ImGui 源码。SDL2 和 stb 在本机不可用时由 CMake 获取；完整依赖与离线构建方式见[构建指南](docs/构建指南.md)。
+需要 CMake 3.20+、C++17 编译器、OpenGL 4.3 驱动，以及本地 Assimp 源码。Dear ImGui 使用固定 docking 版本；SDL2 和 stb 在本机不可用时由 CMake 获取；完整依赖与离线构建方式见[构建指南](docs/构建指南.md)。
 
 ```powershell
 cmake -S . -B build `
   -DTINYENGINE_BUILD_EDITOR=ON `
   -DTINYENGINE_BUILD_IMPORTERS=ON `
-  -DTINYENGINE_ASSIMP_DIR=D:\OpenSourceProject\assimp-master `
-  -DTINYENGINE_IMGUI_DIR=D:\OpenSourceProject\imgui-master
+  -DTINYENGINE_ASSIMP_DIR=D:\OpenSourceProject\assimp-master
 cmake --build build --config Debug -j 8
 .\build\Debug\tinyengine_editor.exe
 ```

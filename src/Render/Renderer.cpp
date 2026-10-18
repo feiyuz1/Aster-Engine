@@ -284,6 +284,7 @@ void Renderer::BuildRenderQueue(World &world)
         const float pitch = DegreesToRadians(m_cameraOverrideRotation.x), yaw = DegreesToRadians(m_cameraOverrideRotation.y);
         cameraForward = Normalize({std::cos(pitch) * std::sin(yaw), std::sin(pitch), -std::cos(pitch) * std::cos(yaw)});
     }
+    m_frameView.renderMode = m_cameraOverrideEnabled ? m_viewportRenderMode : ViewportRenderMode::Lit;
     m_frameView.cameraPosition = cameraPosition;
     m_frameView.environmentTexture =
         m_resources && !m_environmentPath.empty() ? m_resources->Load<TextureResource>(m_environmentPath) : nullptr;
@@ -640,6 +641,12 @@ const RenderGraph &Renderer::GetLastRenderGraph() const
 {
     return m_renderGraph;
 }
+void Renderer::SetViewportRenderMode(ViewportRenderMode mode)
+{
+    if (m_viewportRenderMode != mode) m_hasPreviousView=false;
+    m_viewportRenderMode=mode;
+}
+
 void Renderer::SetCameraOverride(const bool enabled, const Vec3 &position, const Vec3 &rotation, const float fov)
 {
     m_cameraOverrideEnabled = enabled;

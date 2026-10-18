@@ -11,7 +11,9 @@
 #include "MaterialAssetEditor.hpp"
 #include "MaterialGraphEditor.hpp"
 #include "MiniEngine/Runtime/Engine.hpp"
+#include "MiniEngine/ECS/Reflection.hpp"
 #include "MiniEngine/Project/SolutionGenerator.hpp"
+#include "MiniEngine/Project/ProjectPackager.hpp"
 #include "MiniEngine/VFX/ParticleSystem.hpp"
 #ifdef TINYENGINE_HAS_ASSIMP
 #include "MiniEngine/Import/AssimpImporter.hpp"
@@ -59,24 +61,49 @@ class EditorApp
     void DrawMenuBar();
     void DrawProjectLauncher();
     void DrawSolutionStatus();
+    void DrawPackagingStatus();
     void StartSolutionGeneration();
     /// @brief 绘制 `Settings`。
     void DrawSettings();
+    void DrawViewCube(float x, float y, float width, float height, bool hovered);
     /// @brief 绘制 `Hierarchy`。
     void DrawHierarchy();
     /// @brief 绘制 `Inspector`。
     void DrawInspector();
+    void DrawEntityInspector(World &world);
+    std::vector<Entity> GetInspectorTargets() const;
+    bool ApplyInspectorProperty(const ReflectedComponent &component, const ReflectedProperty &property,
+                                const void *value, bool continuous = true, int axis = -1, bool record = true);
+    bool ApplyInspectorAsset(const ReflectedComponent &component, const ReflectedProperty &property,
+                             const std::string &path, std::uint32_t fieldId);
+    void ResetInspectorComponent(const ReflectedComponent &component);
+    void SelectAsset(const std::string &path, bool extend);
+    void OpenAsset(const AssetInfo &asset);
+    void DrawAssetPreview();
+    enum class FeedbackKind { Info, Success, Warning, Error };
+    void Notify(std::string message, FeedbackKind kind = FeedbackKind::Info);
+    void DrawFeedback();
     /// @brief 绘制 `SceneView`。
     void DrawSceneView();
     struct WorkspaceLayout { float left, right, upper, assets; };
     WorkspaceLayout GetWorkspaceLayout(float width, float height) const;
     void DrawWorkspaceSplitters();
+    void DrawWorkspace();
+    void DrawPerformance();
+    void ApplyEditorStyle();
+    bool BeginEditorPanel(const char *english, const char *chinese, bool &visible, Vec2 position, Vec2 size, bool maximized = false);
+    void ResetWorkspace();
+    bool SaveWorkspace();
+    bool RestoreWorkspace();
+    void LocateAsset(const std::string &path);
+    bool MoveEditorAsset(const std::string &source, const std::filesystem::path &destination, std::string &error);
     void UpdateSceneCamera(bool hovered, bool focused);
     void FocusSceneEntity(Entity entity);
     void RequestOpenScene();
     void DrawSceneOpenDialog();
     /// @brief 绘制 `Assets`。
     void DrawAssets();
+    void PollAssetImport();
     /// @brief 绘制 `Console`。
     void DrawConsole();
     /// @brief 绘制 `AnimationEditor`。
@@ -178,7 +205,9 @@ class EditorApp
     /// @brief 放置 `AssetInScene`。
     /// @param asset 要加载、维护或放置的资产信息。
     /// @return 操作成功时返回 `true`，否则返回 `false`。
-    bool PlaceAssetInScene(const AssetInfo &asset);
+    bool PlaceAssetInScene(const AssetInfo &asset, const Vec3 *position = nullptr);
+    bool GetScenePlacement(float normalizedX, float normalizedY, Vec3 &position) const;
+    void DrawSceneOverlays(float x, float y, float width, float height, bool hovered);
     /// @brief 获取 `ThumbnailPath`。
     /// @param asset 要加载、维护或放置的资产信息。
     /// @return 返回对应的文本或路径。
@@ -203,9 +232,9 @@ class EditorApp
     /// @param normalizedY 归一化视口纵坐标。
     /// @return 返回按命中距离升序（同距按包围盒更小优先）排列的实体列表。
     std::vector<Entity> PickEntityHits(float normalizedX, float normalizedY) const;
-    /// @brief 按编辑器 DPI 缩放以像素为单位的手写布局常量。
-    /// @param value 96 DPI 下的逻辑像素值。
-    /// @return 返回当前 DPI 下应使用的像素值。
+    /// @brief 按用户界面缩放设置调整逻辑布局尺寸；显示器 DPI 由渲染后端处理。
+    /// @param value 逻辑像素值。
+    /// @return 返回应用界面缩放后的逻辑尺寸。
     float Scaled(float value) const;
     /// @brief 绘制 `Gizmo`。
     /// @param minimumX 目标尺寸、数量、索引或限制值。
@@ -253,6 +282,7 @@ class EditorApp
     std::string m_projectLauncherError;
     std::future<SolutionResult> m_solutionFuture;
     std::string m_solutionStatus;
+    std::future<PackageResult> m_packageFuture;
     SdlGlRenderDevice *m_device = nullptr;
     Entity m_selected = InvalidEntity;
     std::vector<Entity> m_selection;
@@ -261,6 +291,13 @@ class EditorApp
     bool m_sceneCommandsFocused = false;
     bool m_inspectorFocused = false;
     std::uint32_t m_inspectorEditId = 0;
+    std::array<char, 128> m_componentSearch{};
+    std::array<char, 256> m_assetPickerSearch{};
+    std::unordered_map<std::uint32_t, std::string> m_inspectorErrors;
+    std::unordered_map<std::uint32_t, std::string> m_inspectorAssetDrafts;
+    std::vector<Entity> m_inspectorSelection;
+    struct Feedback { std::string message; FeedbackKind kind; double expiresAt; };
+    std::vector<Feedback> m_feedback;
     std::vector<std::string> m_messages;
     std::size_t m_consoleRenderedMessageCount = 0;
     std::array<char, 256> m_consoleInput{};
@@ -271,7 +308,8 @@ class EditorApp
     Vec3 m_editorCameraRotation{-10.0f, 0.0f, 0.0f};
     float m_editorCameraFov = 60.0f;
     float m_dpiScale = 1.0f;
-    GizmoMode m_gizmoMode = GizmoMode::Translate;
+    // 操作由实际抓取的手柄决定；拖拽中保持固定，不作为显示模式。
+    GizmoMode m_gizmoDragMode = GizmoMode::Translate;
     GizmoSpace m_gizmoSpace = GizmoSpace::World;
     PivotMode m_pivotMode = PivotMode::Center;
     int m_activeGizmoAxis = -1;
@@ -287,6 +325,22 @@ class EditorApp
     float m_upperPanelRatio = 0.66f;
     float m_assetsPanelRatio = 0.62f;
     bool m_sceneMaximized = false;
+    bool m_showHierarchy = true, m_showInspector = true, m_showAssets = true, m_showConsole = true, m_showPerformance = true;
+    bool m_resetWorkspace = false;
+    std::string m_workspaceIniPath;
+    float m_uiScale = 1.0f;
+    float m_cameraSpeed = 1.0f;
+    bool m_showSceneGrid = true, m_showSelectionBounds = true;
+    ViewportRenderMode m_viewportRenderMode = ViewportRenderMode::Lit;
+    bool m_scenePanActive = false, m_sceneAltOrbitActive = false;
+    Vec3 m_sceneOrbitPivot{};
+    bool m_viewCubeActive = false, m_viewCubeDragged = false, m_viewCubeHome = false;
+    Vec2 m_viewCubeMouseStart{}, m_viewCubeMouseLast{};
+    Vec3 m_viewCubePivot{}, m_viewCubeDirection{};
+    std::string m_scenePreviewAsset;
+    Aabb m_scenePreviewBounds{};
+    bool m_scenePreviewBoundsValid = false;
+    bool m_assetsFocused = false, m_assetRenameRequested = false, m_assetRevealPending = false, m_focusAssets = false;
     std::array<char, 128> m_hierarchySearch{};
     // 右键轨道采用“按下即捕获”语义：拖拽期间光标滑出场景视图不中断旋转。
     bool m_sceneOrbitActive = false;
@@ -299,6 +353,10 @@ class EditorApp
     std::size_t m_lastPickIndex = 0;
     std::string m_selectedAsset;
     std::vector<std::string> m_selectedAssets;
+    std::string m_editingAsset;
+    std::string m_previewAsset;
+    bool m_showAssetPreview = false;
+    std::string m_assetMoveError;
     AssetViewMode m_assetViewMode = AssetViewMode::Grid;
     float m_assetThumbnailSize = 96.0f;
     std::array<char, 256> m_assetSearch{};

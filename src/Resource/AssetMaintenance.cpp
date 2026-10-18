@@ -11,8 +11,10 @@
 #include "MiniEngine/Project/Project.hpp"
 #include "MiniEngine/Resource/Resource.hpp"
 #include "MiniEngine/Resource/MaterialAssetReferences.hpp"
+#include "MiniEngine/Core/Config.hpp"
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <fstream>
 #include <iomanip>
@@ -39,6 +41,87 @@ bool ReplaceAll(std::string &source, const std::string &from, const std::string 
         changed = true;
     }
     return changed;
+}
+
+std::filesystem::path AbsoluteAssetPath(const std::filesystem::path &path)
+{
+    std::error_code error;
+    const auto absolute = std::filesystem::absolute(path, error);
+    return (error ? path : absolute).lexically_normal();
+}
+
+std::string ReferenceKey(const std::filesystem::path &path)
+{
+    auto key = NormalizePath(path);
+#ifdef _WIN32
+    std::transform(key.begin(), key.end(), key.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+#endif
+    return key;
+}
+
+bool IsPortablePath(const std::filesystem::path &path)
+{
+    return !path.empty() && !path.is_absolute() && *path.begin() != "..";
+}
+
+bool IsShaderSource(const std::filesystem::path &path)
+{
+    auto extension = path.extension().generic_u8string();
+    std::transform(extension.begin(), extension.end(), extension.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    return extension == ".glsl" || extension == ".vert" || extension == ".frag" || extension == ".geom" ||
+           extension == ".tesc" || extension == ".tese" || extension == ".comp" || extension == ".inc" || extension == ".hlsl";
+}
+
+bool RewriteProjectConfig(std::string &text, const std::filesystem::path &source, const std::filesystem::path &destination,
+                          const std::filesystem::path &assetRoot, const std::filesystem::path &projectRoot)
+{
+    bool changed = false;
+    std::size_t lineStart = 0;
+    while (lineStart < text.size())
+    {
+        auto lineEnd = text.find('\n', lineStart);
+        if (lineEnd == std::string::npos) lineEnd = text.size();
+        const auto keyStart = text.find_first_not_of(" \t\r", lineStart);
+        const auto equals = text.find('=', lineStart);
+        if (keyStart < lineEnd && equals < lineEnd && equals > keyStart && text[keyStart] != '#' && text[keyStart] != ';')
+        {
+            const auto keyEnd = text.find_last_not_of(" \t", equals - 1);
+            const auto key = text.substr(keyStart, keyEnd - keyStart + 1);
+            if (key == "project.startupScene" || key == "input.bindings" || key == "render.environment")
+            {
+                const auto valueStart = text.find_first_not_of(" \t\r", equals + 1);
+                const auto valueEnd = text.find_last_not_of(" \t\r", lineEnd - 1);
+                if (valueStart < lineEnd && valueEnd >= valueStart)
+                {
+                    auto reference = text.substr(valueStart, valueEnd - valueStart + 1);
+                    if (AssetMaintenance::RewriteReference(reference, source, destination, assetRoot, projectRoot))
+                    {
+                        const auto previousLength = valueEnd - valueStart + 1;
+                        text.replace(valueStart, previousLength, reference);
+                        lineEnd = lineEnd - previousLength + reference.size();
+                        changed = true;
+                    }
+                }
+            }
+        }
+        lineStart = lineEnd + 1;
+    }
+    return changed;
+}
+
+bool IsReferenceToken(const std::string &format, const std::string &field, std::size_t index)
+{
+    if (format == "TINYSCENE")
+        return ((field == "mesh" || field == "lod") && index < 2) ||
+               ((field == "collider" || field == "audio") && index == 0) || (field == "animation" && index < 4);
+    if (format == "TINY_BLENDTREE") return field == "sample" && index == 0;
+    if (format == "TINY_ANIMGRAPH") return field == "state" && index == 1;
+    if (format == "TINY_VFX") return field == "texture" && index == 0;
+    if (format == "TINY_ENV")
+        return (field == "sky" || field == "irradiance" || field == "prefilter" || field == "brdf") && index == 0;
+    if (format.rfind("TINY", 0) == 0) return false;
+    return index == 0 && (field == "path" || field == "resource" || field == "mesh" || field == "material" ||
+                         field == "texture" || field == "shader" || field == "clip" || field == "skeleton" || field == "graph");
 }
 
 bool SavePpm(const std::filesystem::path &path, const int size, const std::vector<std::uint8_t> &rgba)
@@ -127,6 +210,181 @@ void RenderThumbnailVertices(const std::vector<ThumbnailVertex> &vertices, std::
 }
 } // 匿名命名空间
 
+bool AssetMaintenance::RewriteReference(std::string &reference, const std::filesystem::path &source,
+                                        const std::filesystem::path &destination, const std::filesystem::path &assetRoot,
+                                        const std::filesystem::path &projectRoot)
+{
+    if (reference.empty() || source.empty() || destination.empty() || reference.rfind("builtin:", 0) == 0) return false;
+    const auto sourceAbsolute = AbsoluteAssetPath(source), destinationAbsolute = AbsoluteAssetPath(destination);
+    const auto root = AbsoluteAssetPath(assetRoot);
+    const auto project = projectRoot.empty() ? root.parent_path() : AbsoluteAssetPath(projectRoot);
+    const auto key = ReferenceKey(std::filesystem::u8path(reference));
+    std::vector<std::pair<std::filesystem::path, std::filesystem::path>> replacements = {
+        {source, destination}, {sourceAbsolute, destinationAbsolute}};
+    const auto addRelative = [&](const std::filesystem::path &base, const std::filesystem::path &prefix = {}) {
+        const auto oldRelative = sourceAbsolute.lexically_relative(base);
+        const auto newRelative = destinationAbsolute.lexically_relative(base);
+        if (IsPortablePath(oldRelative))
+            replacements.emplace_back(prefix / oldRelative, IsPortablePath(newRelative) ? prefix / newRelative : destinationAbsolute);
+    };
+    addRelative(project);
+    addRelative(root);
+    addRelative(root, root.filename());
+    addRelative(root, "assets");
+    for (const auto &replacement : replacements)
+        if (key == ReferenceKey(replacement.first))
+        {
+            const auto rewritten = NormalizePath(replacement.second);
+            if (reference == rewritten) return false;
+            reference = rewritten;
+            return true;
+        }
+    return false;
+}
+
+bool AssetMaintenance::RewriteReferences(std::string &text, const std::filesystem::path &source,
+                                         const std::filesystem::path &destination, const std::filesystem::path &assetRoot,
+                                         const std::filesystem::path &projectRoot)
+{
+    std::istringstream header(text);
+    std::string format;
+    header >> format;
+    bool changed = false;
+    std::string output;
+    std::size_t lineStart = 0;
+    while (lineStart < text.size())
+    {
+        auto lineEnd = text.find('\n', lineStart);
+        if (lineEnd == std::string::npos) lineEnd = text.size();
+        std::string line = text.substr(lineStart, lineEnd - lineStart);
+        std::istringstream fields(line);
+        std::string field;
+        fields >> field;
+        struct Token { std::size_t start, length; std::string value; };
+        std::vector<Token> tokens;
+        std::size_t cursor = 0;
+        while ((cursor = line.find('"', cursor)) != std::string::npos)
+        {
+            const auto start = cursor++;
+            std::string value;
+            bool closed = false;
+            while (cursor < line.size())
+            {
+                const char c = line[cursor++];
+                if (c == '"') { closed = true; break; }
+                if (c == '\\' && cursor < line.size()) value += line[cursor++];
+                else value += c;
+            }
+            if (!closed) break;
+            tokens.push_back({start, cursor - start, std::move(value)});
+        }
+        for (std::size_t index = tokens.size(); index > 0; --index)
+        {
+            auto &token = tokens[index - 1];
+            if (!IsReferenceToken(format, field, index - 1) ||
+                !RewriteReference(token.value, source, destination, assetRoot, projectRoot)) continue;
+            std::ostringstream quoted;
+            quoted << std::quoted(token.value);
+            line.replace(token.start, token.length, quoted.str());
+            changed = true;
+        }
+        // Legacy plain-text asset formats sometimes leave their single reference unquoted.
+        if (tokens.empty() && IsReferenceToken(format, field, 0))
+        {
+            std::string reference;
+            if (fields >> reference && RewriteReference(reference, source, destination, assetRoot, projectRoot))
+            {
+                const auto start = line.find_first_not_of(" \t", line.find(field) + field.size());
+                if (start != std::string::npos)
+                {
+                    auto end = line.find_first_of(" \t\r", start);
+                    if (end == std::string::npos) end = line.size();
+                    line.replace(start, end - start, reference);
+                    changed = true;
+                }
+            }
+        }
+        output += line;
+        if (lineEnd < text.size()) output += '\n';
+        lineStart = lineEnd + 1;
+    }
+    if (changed) text = std::move(output);
+    return changed;
+}
+
+bool AssetMaintenance::RewriteShaderIncludes(std::string &text, const std::filesystem::path &owner,
+                                             const std::filesystem::path &newOwner, const std::filesystem::path &source,
+                                             const std::filesystem::path &destination)
+{
+    const auto originalOwner = AbsoluteAssetPath(owner), targetOwner = AbsoluteAssetPath(newOwner);
+    const bool ownerFolderMoved = ReferenceKey(originalOwner.parent_path()) != ReferenceKey(targetOwner.parent_path());
+    const auto sourceKey = ReferenceKey(AbsoluteAssetPath(source));
+    const auto target = AbsoluteAssetPath(destination);
+    bool blockComment = false, changed = false;
+    std::string output;
+    std::size_t lineStart = 0;
+    while (lineStart < text.size())
+    {
+        auto lineEnd = text.find('\n', lineStart);
+        if (lineEnd == std::string::npos) lineEnd = text.size();
+        std::string line = text.substr(lineStart, lineEnd - lineStart), code(line.size(), ' ');
+        bool quoted = false;
+        for (std::size_t index = 0; index < line.size(); ++index)
+        {
+            if (blockComment)
+            {
+                if (line[index] == '*' && index + 1 < line.size() && line[index + 1] == '/')
+                { blockComment = false; ++index; }
+                continue;
+            }
+            if (quoted)
+            {
+                code[index] = line[index];
+                if (line[index] == '\\' && index + 1 < line.size()) { ++index; code[index] = line[index]; }
+                else if (line[index] == '"') quoted = false;
+                continue;
+            }
+            if (line[index] == '/' && index + 1 < line.size())
+            {
+                if (line[index + 1] == '/') break;
+                if (line[index + 1] == '*') { blockComment = true; ++index; continue; }
+            }
+            code[index] = line[index];
+            if (line[index] == '"') quoted = true;
+        }
+        const auto directive = code.find_first_not_of(" \t\r");
+        if (directive != std::string::npos && code.compare(directive, 8, "#include") == 0 &&
+            (directive + 8 == code.size() || std::isspace(static_cast<unsigned char>(code[directive + 8])) || code[directive + 8] == '"'))
+        {
+            const auto first = code.find('"', directive + 8);
+            const auto last = first == std::string::npos ? std::string::npos : code.find('"', first + 1);
+            if (last != std::string::npos)
+            {
+                const auto previous = line.substr(first + 1, last - first - 1);
+                const auto include = std::filesystem::u8path(previous);
+                auto resolved = AbsoluteAssetPath(originalOwner.parent_path() / include);
+                const bool includedAssetMoved = ReferenceKey(resolved) == sourceKey;
+                if (includedAssetMoved) resolved = target;
+                if (includedAssetMoved || ownerFolderMoved)
+                {
+                    const auto relative = resolved.lexically_relative(targetOwner.parent_path());
+                    const auto replacement = NormalizePath(include.is_absolute() || relative.empty() ? resolved : relative);
+                    if (previous != replacement)
+                    {
+                        line.replace(first + 1, last - first - 1, replacement);
+                        changed = true;
+                    }
+                }
+            }
+        }
+        output += line;
+        if (lineEnd < text.size()) output += '\n';
+        lineStart = lineEnd + 1;
+    }
+    if (changed) text = std::move(output);
+    return changed;
+}
+
 std::vector<MissingAssetDependency> AssetMaintenance::FindMissingDependencies(const AssetRegistry &registry)
 {
     const auto assets = registry.GetAssets();
@@ -174,8 +432,9 @@ bool AssetMaintenance::RepairDependency(AssetRegistry &registry, const std::stri
 
 // 先验证资产与 meta 的目标路径；meta 迁移失败时恢复源资产。
 bool AssetMaintenance::MoveAsset(AssetRegistry &registry, const std::filesystem::path &source, const std::filesystem::path &destination,
-                                 std::string *error)
+                                 std::string *error, const std::filesystem::path &projectRoot, const std::filesystem::path &projectFile)
 {
+    if (error) error->clear();
     auto oldMeta = source, newMeta = destination;
     oldMeta += ".meta";
     newMeta += ".meta";
@@ -238,15 +497,44 @@ bool AssetMaintenance::MoveAsset(AssetRegistry &registry, const std::filesystem:
         if (RewriteMaterialReferences(text, source.extension() == ".matgraph", source, destination, registry.GetRootPath(), oldPath, newPath))
             if (!write(destination,text)) return rollback("Could not rewrite moved material references");
     }
+    else
+    {
+        auto text = PlatformFile::ReadAllText(destination);
+        bool changed = RewriteReferences(text, source, destination, scope, projectRoot);
+        if (IsShaderSource(source)) changed = RewriteShaderIncludes(text, source, destination, source, destination) || changed;
+        if (changed && !write(destination, text))
+            return rollback("Could not rewrite moved asset references");
+    }
+    if (std::filesystem::is_regular_file(newMeta))
+    {
+        Config metadata;
+        if (!metadata.Load(newMeta.generic_u8string())) return rollback("Could not read moved metadata");
+        bool changed = false;
+        for (int index = 0; index < metadata.GetInt("dependencies.count", 0); ++index)
+        {
+            const auto key = "dependencies." + std::to_string(index);
+            auto dependency = metadata.GetString(key);
+            if (!registry.FindById(dependency) && RewriteReference(dependency, source, destination, scope, projectRoot))
+            { metadata.Set(key, std::move(dependency)); changed = true; }
+        }
+        if (changed)
+        {
+            std::ostringstream text;
+            for (const auto &entry : metadata.GetValues()) text << entry.first << '=' << entry.second << '\n';
+            if (!write(newMeta, text.str())) return rollback("Could not rewrite moved dependency metadata");
+        }
+    }
     std::vector<std::pair<std::string,std::vector<std::string>>> dependencyUpdates;
     for (const auto &asset : registry.GetAssets())
     {
         if (asset.path == oldPath)
             continue;
         std::string text = PlatformFile::ReadAllText(std::filesystem::u8path(asset.path));
-        const bool changedText = asset.type == "Material" || asset.type == "MaterialGraph" ?
+        bool changedText = asset.type == "Material" || asset.type == "MaterialGraph" ?
             RewriteMaterialReferences(text, asset.type == "MaterialGraph", std::filesystem::u8path(asset.path), std::filesystem::u8path(asset.path), registry.GetRootPath(), oldPath, newPath) :
-            ReplaceAll(text, oldPath, newPath);
+            RewriteReferences(text, source, destination, scope, projectRoot);
+        if (IsShaderSource(std::filesystem::u8path(asset.path)))
+            changedText = RewriteShaderIncludes(text, std::filesystem::u8path(asset.path), std::filesystem::u8path(asset.path), source, destination) || changedText;
         if (!text.empty() && changedText)
         {
             if (!write(std::filesystem::u8path(asset.path),text)) return rollback("Could not rewrite asset references: "+asset.path);
@@ -255,11 +543,7 @@ bool AssetMaintenance::MoveAsset(AssetRegistry &registry, const std::filesystem:
         auto dependencies = asset.dependencies;
         bool changed = false;
         for (auto &dependency : dependencies)
-            if (NormalizePath(std::filesystem::u8path(dependency)) == oldPath)
-            {
-                dependency = newPath;
-                changed = true;
-            }
+            if (!registry.FindById(dependency)) changed = RewriteReference(dependency, source, destination, scope, projectRoot) || changed;
         if (changed)
             dependencyUpdates.emplace_back(asset.path,std::move(dependencies));
     }
@@ -268,6 +552,14 @@ bool AssetMaintenance::MoveAsset(AssetRegistry &registry, const std::filesystem:
         const auto meta=std::filesystem::u8path(update.first+".meta");
         originals.push_back({meta,PlatformFile::ReadAllText(meta),std::filesystem::exists(meta)});
         if (!registry.SetDependencies(update.first,std::move(update.second))) return rollback("Could not save dependency metadata: "+update.first);
+    }
+    if (!projectFile.empty() && std::filesystem::exists(projectFile))
+    {
+        if (!std::filesystem::is_regular_file(projectFile)) return rollback("Project configuration is not a regular file");
+        auto text = PlatformFile::ReadAllText(projectFile);
+        if (text.empty() && std::filesystem::file_size(projectFile) != 0) return rollback("Could not read project configuration");
+        if (RewriteProjectConfig(text, source, destination, scope, projectRoot) && !write(projectFile, text))
+            return rollback("Could not update project configuration");
     }
     registry.UpdateMovedAsset(source, destination, rewrittenAssets);
     return true;

@@ -218,6 +218,7 @@ bool GlMaterialProgramCache::Bind(const MaterialRenderProxy &proxy,const FrameVi
         p.Uniform1i(p.Location(("te_texture_"+std::to_string(slot.slot)).c_str()),static_cast<GLint>(slot.slot));
     }
     p.Uniform1i(p.Location("uMaterialTwoSided"),proxy.state.twoSided ? 1 : 0);
+    p.Uniform1i(p.Location("uViewportRenderMode"),static_cast<int>(view.renderMode));
     p.Uniform1f(p.Location("uMaterialMaskCutoff"),proxy.state.maskCutoff);
     p.Matrix("uViewProjection",view.projection*view.view); p.Matrix("uPreviousViewProjection",view.previousViewProjection); p.Matrix("uView",view.view);
     p.Matrix("uLightViewProjection",view.shadowViewProjections[std::min<std::size_t>(p.cascade,2)]);

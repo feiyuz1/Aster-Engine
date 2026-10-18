@@ -74,6 +74,58 @@ Vec4 Draw(SdlGlRenderDevice &device, RenderItem &item, const FrameView &view)
     if (hdr.size()!=64*64) return {};
     return hdr[32*64+32];
 }
+void TestViewportModes(SdlGlRenderDevice &device, RenderItem &item)
+{
+    auto graph=ColorDefinition(); graph.renderState.shadingModel=MaterialShadingModel::Lit;
+    item.materialProxy=Proxy(graph); auto view=View();
+    view.renderMode=ViewportRenderMode::Unlit;
+    const auto unlit=Draw(device,item,view);
+    Check(Near(unlit.x,1) && Near(unlit.y,0) && Near(unlit.z,0),"Unlit viewport shows base color without scene lighting");
+    auto bright=view; bright.lights[0].intensity=100;
+    const auto unchanged=Draw(device,item,bright);
+    Check(Near(unchanged.x,unlit.x) && Near(unchanged.y,unlit.y),"Unlit viewport ignores light intensity");
+    device.BeginFrame(view); device.DrawInstanced({item,item}); auto pixels=device.ReadHdrAttachmentForTests(0);
+    Check(Near(pixels[32*64+32].x,1),"instanced materials honor Unlit viewport");
+    view.renderMode=ViewportRenderMode::Wireframe;
+    device.BeginFrame(view); device.Draw(item); pixels=device.ReadHdrAttachmentForTests(0);
+    int edges=0; for (const auto &p:pixels) if (p.x+p.y+p.z>.1f) ++edges;
+    Check(edges>30 && edges<600 && pixels[32*64+40].x<.01f,"Wireframe draws polygon edges with empty interiors");
+    GLint polygon[2]{}; glGetIntegerv(GL_POLYGON_MODE,polygon);
+    Check(polygon[0]==GL_FILL,"Wireframe restores fill state for post processing and editor UI");
+    view.renderMode=ViewportRenderMode::Unlit; const auto restored=Draw(device,item,view);
+    Check(Near(restored.x,1),"switching from Wireframe restores filled geometry");
+    view.renderMode=ViewportRenderMode::Lit; const auto lit=Draw(device,item,view);
+    Check(lit.x<.9f,"returning to Lit restores material lighting");
+    const auto originalMesh=item.mesh;
+    item.mesh=std::make_shared<MeshResource>(); Check(item.mesh->Load(root+"weighted.mesh"),"load viewport skinning fixture");
+    item.skinMatrices={Mat4::Identity()}; view.renderMode=ViewportRenderMode::Unlit;
+    const auto skinned=Draw(device,item,view);
+    Check(Near(skinned.x,1),"skinned material honors Unlit viewport");
+    item.skinMatrices.clear(); item.mesh=originalMesh;
+    auto preview=std::make_shared<MaterialRenderProxy>(*item.materialProxy); preview->numericSlots[0]={.25f,0,0,1}; item.materialProxy=preview;
+    device.SetExposure(8); device.SetBloomEnabled(true); device.SetGtaoEnabled(true); device.SetTaaEnabled(true);
+    device.BeginFrame(view); device.Draw(item);
+    for (auto pass:{PostProcessPass::HierarchicalDepth,PostProcessPass::Gtao,PostProcessPass::Bloom,PostProcessPass::TemporalResolve,PostProcessPass::ToneMap})
+        device.ExecutePostProcess(pass);
+    glBindTexture(GL_TEXTURE_2D,static_cast<GLuint>(device.GetSceneColorTexture())); std::array<Vec4,64*64> output{};
+    glGetTexImage(GL_TEXTURE_2D,0,GL_RGBA,GL_FLOAT,output.data());
+    Check(Near(output[32*64+32].x,.533f,.012f) && output[32*64+32].y<.01f,
+          "Unlit final image bypasses exposure, bloom and ambient occlusion");
+    Check(device.IsBloomEnabled() && device.IsGtaoEnabled() && device.IsTaaEnabled() && Near(device.GetExposure(),8),
+          "diagnostic viewport modes preserve rendering preferences");
+    device.SetExposure(1); device.SetBloomEnabled(false); device.SetGtaoEnabled(false); device.SetTaaEnabled(false);
+    item.materialProxy.reset(); item.material=std::make_shared<MaterialResource>(); Check(item.material->Load(root+"pbr.mat"),"load legacy viewport material");
+    const auto legacy=Draw(device,item,view);
+    Check(Near(legacy.x,.4f) && Near(legacy.y,.2f) && Near(legacy.z,.1f),"legacy material honors Unlit viewport");
+    device.BeginFrame(view); device.DrawInstanced({item,item}); pixels=device.ReadHdrAttachmentForTests(0);
+    Check(Near(pixels[32*64+32].x,.4f),"legacy instancing honors Unlit viewport");
+    view.renderMode=ViewportRenderMode::Wireframe; device.BeginFrame(view); device.DrawInstanced({item,item}); pixels=device.ReadHdrAttachmentForTests(0);
+    edges=0; for (const auto &p:pixels) if(p.x+p.y+p.z>.1f) ++edges;
+    Check(edges>30 && edges<600,"legacy instancing honors Wireframe viewport");
+    item.material.reset();
+    item.materialProxy.reset();
+}
+
 void TestSharedPrograms(SdlGlRenderDevice &device, RenderItem &item)
 {
     auto graph=ColorDefinition(); item.materialProxy=Proxy(graph);
@@ -324,6 +376,7 @@ int main()
         std::cout << "GPU: " << glGetString(GL_RENDERER) << " / " << glGetString(GL_VERSION) << '\n';
         device.EnableSceneRenderTarget(true,64,64); device.SetTaaEnabled(false); device.SetBloomEnabled(false); device.SetGtaoEnabled(false); device.SetFxaaEnabled(false);
         RenderItem item; item.mesh=std::make_shared<MeshResource>(); Check(item.mesh->Load(root+"quad.mesh"),"load GPU test quad");
+        TestViewportModes(device,item);
         TestSharedPrograms(device,item); TestParameterUpload(device,item); TestTextureSemantics(device,item); TestFallbackTexture(device,item); TestTextureBudget(device,item);
         TestPassClippingAndState(device,item); TestGeometryAndPbr(device,item);
         TestGpuCandidateRollback(device,item);

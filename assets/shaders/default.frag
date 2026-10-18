@@ -62,6 +62,11 @@ void main()
     vec3 emissive = uEmissive * (uHasEmissiveTexture != 0 ? texture(uEmissiveTexture, vUv).rgb : vec3(1.0));
     vec3 color, ambient;
     EvaluateLighting(albedo, normal, metallic, roughness, ao, emissive, color, ambient);
+    if (uViewportRenderMode != 0)
+    {
+        color = uViewportRenderMode == 2 ? vec3(0.65,0.75,0.9) : albedo;
+        ambient = vec3(0.0);
+    }
     outColor = vec4(color, uBaseColor.a * surface.a);
     outAmbient = vec4(ambient, outColor.a);
     vec2 currentNdc = vCurrentClip.xy / max(vCurrentClip.w, 0.0001);

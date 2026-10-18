@@ -219,8 +219,9 @@ ReflectionRegistry::ReflectionRegistry()
 
     auto animation = MakeComponent<AnimationComponent>("Animation");
     animation.properties.push_back(MakeProperty("Clip", ReflectedPropertyType::String, &AnimationComponent::clipPath));
-    animation.properties.push_back(MakeProperty("Skeleton", ReflectedPropertyType::String, &AnimationComponent::skeletonPath));
     animation.properties.back().assetType = "Animation";
+    animation.properties.push_back(MakeProperty("Skeleton", ReflectedPropertyType::String, &AnimationComponent::skeletonPath));
+    animation.properties.back().assetType = "Skeleton";
     animation.properties.push_back(MakeProperty("Time", ReflectedPropertyType::Float, &AnimationComponent::time));
     Range(animation.properties.back(), 0.0f, 100000.0f, 0.01f);
     animation.properties.push_back(MakeProperty("Speed", ReflectedPropertyType::Float, &AnimationComponent::speed));

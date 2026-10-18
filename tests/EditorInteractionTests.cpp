@@ -9,6 +9,12 @@
 #include "MiniEngine/Resource/PakArchive.hpp"
 #define SDL_MAIN_HANDLED
 #include <SDL.h>
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <SDL_syswm.h>
+#endif
 #include <imgui.h>
 #include <imgui_internal.h>
 #include <chrono>
@@ -91,11 +97,469 @@ struct EditorInteractionTests
         Frame();
     }
 
+    void LogicalUiMetrics()
+    {
+        const auto dpi=app.m_dpiScale, ui=app.m_uiScale;
+        app.m_uiScale=1; app.m_dpiScale=1;
+        Check(std::abs(app.Scaled(96)-96)<.001f,"logical UI dimensions use the configured point size at 100 percent DPI");
+        app.m_dpiScale=2;
+        Check(std::abs(app.Scaled(96)-96)<.001f,"higher framebuffer DPI does not double asset and inspector UI dimensions");
+        app.m_uiScale=1.25f;
+        Check(std::abs(app.Scaled(96)-120)<.001f,"UI size preference scales logical dimensions independently from monitor DPI");
+        app.m_dpiScale=dpi; app.m_uiScale=ui;
+    }
+
+    void NativeDialogDpi()
+    {
+#ifdef _WIN32
+        const auto root=std::filesystem::absolute("Saved/EditorDpi")/std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
+        std::filesystem::create_directories(root/"assets");
+        ProjectSettings project; project.name="DPI regression"; project.projectFile=root/"Dpi.tinyproject"; project.assetDirectory="assets";
+        Check(project.Save(project.projectFile),"save isolated DPI startup fixture");
+        auto *previousContext=ImGui::GetCurrentContext(); EditorApp editor;
+        struct Restore { EditorApp &editor; ImGuiContext *context; ~Restore() { editor.Shutdown(); ImGui::SetCurrentContext(context); } } restore{editor,previousContext};
+        ImGui::SetCurrentContext(nullptr);
+        Check(editor.Initialize(project.projectFile),"initialize actual editor before any native picker");
+        auto *window=static_cast<SDL_Window *>(editor.m_device->GetNativeWindow()); SDL_HideWindow(window);
+        SDL_SysWMinfo info{}; SDL_VERSION(&info.version);
+        Check(SDL_GetWindowWMInfo(window,&info)==SDL_TRUE,"DPI fixture exposes the real editor HWND");
+        const auto context=GetWindowDpiAwarenessContext(info.info.win.window);
+        const auto awareness=GetAwarenessFromDpiAwarenessContext(context);
+        std::cout << "Editor startup DPI awareness: " << awareness << '\n';
+        Check(awareness==DPI_AWARENESS_PER_MONITOR_AWARE,"editor locks per-monitor DPI awareness before creating windows");
+        int width=0,height=0,pixelsWide=0,pixelsHigh=0;
+        SDL_GetWindowSize(window,&width,&height); SDL_GL_GetDrawableSize(window,&pixelsWide,&pixelsHigh);
+        const float scale=GetDpiForWindow(info.info.win.window)/96.0f;
+        Check(std::abs(pixelsWide-width*scale)<=2 && std::abs(pixelsHigh-height*scale)<=2,
+              "editor SDL coordinates remain logical points on scaled displays");
+        // A legacy Shell context-menu extension must not change the process from virtualized to aware mid-session.
+        SetProcessDPIAware(); SDL_PumpEvents();
+        int nextWidth=0,nextHeight=0,nextPixelsWide=0,nextPixelsHigh=0;
+        SDL_GetWindowSize(window,&nextWidth,&nextHeight); SDL_GL_GetDrawableSize(window,&nextPixelsWide,&nextPixelsHigh);
+        Check(AreDpiAwarenessContextsEqual(context,GetWindowDpiAwarenessContext(info.info.win.window)),
+              "late Shell DPI initialization cannot change editor window awareness");
+        Check(width==nextWidth && height==nextHeight && pixelsWide==nextPixelsWide && pixelsHigh==nextPixelsHigh,
+              "late Shell DPI initialization preserves logical and physical editor sizes");
+        editor.m_dpiScale=scale>1.2f ? 1.0f : 2.0f;
+        editor.Run(1);
+        Check(std::abs(editor.m_dpiScale-static_cast<float>(pixelsWide)/width)<.01f,
+              "editor refreshes scene framebuffer scale from the current SDL frame after a DPI change");
+#endif
+    }
+
+    void P1Settings()
+    {
+        auto &settings = const_cast<ProjectSettings &>(app.m_engine.GetProjectSettings());
+        const auto old = settings;
+        settings.projectFile = std::filesystem::absolute("Saved/P1Settings/Settings.tinyproject");
+        app.m_uiScale = 1.25f; app.m_cameraSpeed = 2.5f; app.m_showSceneGrid = false;
+        app.m_showHierarchy = false; app.m_showAssets = false; app.m_showPerformance = false;
+        Check(app.SaveEditorSettings(), "P1 preferences save to project-local settings");
+        app.m_uiScale = 1; app.m_cameraSpeed = 1; app.m_showSceneGrid = true;
+        app.m_showHierarchy = true; app.m_showAssets = true; app.m_showPerformance = true;
+        app.LoadEditorSettings();
+        Check(std::abs(app.m_uiScale-1.25f)<.01f && std::abs(app.m_cameraSpeed-2.5f)<.01f && !app.m_showSceneGrid,
+              "UI scale, camera speed and grid preference survive restart");
+        Check(!app.m_showHierarchy && !app.m_showAssets && !app.m_showPerformance, "closed panels survive restart");
+        settings = old; app.m_uiScale=1; app.m_cameraSpeed=1; app.m_showSceneGrid=true;
+        app.m_showHierarchy=app.m_showAssets=app.m_showPerformance=true;
+    }
+
+    void P1Docking()
+    {
+        auto *previousContext=ImGui::GetCurrentContext();
+        ImGui::SetCurrentContext(ImGui::CreateContext());
+        auto &io=ImGui::GetIO(); io.IniFilename=nullptr; io.DisplaySize={1280,900}; io.DeltaTime=1.0f/60;
+        unsigned char *pixels; int width,height; io.Fonts->GetTexDataAsRGBA32(&pixels,&width,&height);
+        io.ConfigFlags|=ImGuiConfigFlags_DockingEnable;
+        auto &settings=const_cast<ProjectSettings &>(app.m_engine.GetProjectSettings()); const auto old=settings;
+        settings.projectFile=std::filesystem::absolute("Saved/P1Docking/Workspace.tinyproject");
+        app.m_resetWorkspace=true;
+        const auto draw=[&] {
+            app.DrawWorkspace();
+            const auto panel=[&](const char* name,bool &open) { if(open) { app.BeginEditorPanel(name,std::string(name)=="Inspector" ? "属性检查器" : name,open,{0,0},{300,300},std::string(name)=="Scene View" && app.m_sceneMaximized); ImGui::TextUnformatted(name); ImGui::End(); } };
+            if(!app.m_sceneMaximized) { panel("Hierarchy",app.m_showHierarchy); panel("Inspector",app.m_showInspector); panel("Assets",app.m_showAssets); panel("Console / Stats",app.m_showConsole); panel("Performance",app.m_showPerformance); }
+            bool scene=true; panel("Scene View",scene);
+        };
+        Frame(draw); Frame(draw); Frame(draw);
+        const auto assetDock=ImGui::FindWindowByName("Assets")->DockId;
+        const auto sceneDock=ImGui::FindWindowByName("Scene View")->DockId;
+        Check(assetDock && sceneDock && assetDock!=sceneDock,"default workspace docks panels around the scene");
+        Check(ImGui::FindWindowByName("Console / Stats")->DockId==assetDock && ImGui::FindWindowByName("Performance")->DockId==assetDock,
+              "assets console and performance share bottom tabs");
+        const auto inspectorId=ImGui::FindWindowByName("Inspector")->ID;
+        app.m_interfaceLanguage=EditorApp::InterfaceLanguage::SimplifiedChinese; Frame(draw);
+        Check(ImGui::FindWindowByName("Inspector")->ID==inspectorId,"language changes preserve panel identity and layout");
+        app.m_interfaceLanguage=EditorApp::InterfaceLanguage::English;
+        app.m_showInspector=false; Frame(draw); app.m_showInspector=true; Frame(draw);
+        Check(ImGui::FindWindowByName("Inspector")->DockId!=0,"closed panel reopens in its dock");
+        app.m_sceneMaximized=true; Frame(draw); Frame(draw);
+        Check(ImGui::FindWindowByName("Scene View Focus")->DockId==0 && ImGui::FindWindowByName("Scene View Focus")->Size.x>=io.DisplaySize.x-1,
+              "F11 expands scene over the workspace");
+        app.m_sceneMaximized=false; Frame(draw); Frame(draw);
+        Check(ImGui::FindWindowByName("Scene View")->DockId==sceneDock,"F11 restores the previous scene dock");
+        ImGui::DockBuilderDockWindow("Console / Stats",sceneDock); Frame(draw); Frame(draw);
+        app.m_showPerformance=false;
+        Check(app.SaveWorkspace(),"custom docking layout saves to project");
+        app.ResetWorkspace(); Frame(draw); Frame(draw);
+        Check(app.m_showPerformance && ImGui::FindWindowByName("Console / Stats")->DockId!=ImGui::FindWindowByName("Scene View")->DockId,
+              "reset layout restores default panels and bottom tabs");
+        Check(app.RestoreWorkspace(),"saved layout reloads"); Frame(draw); Frame(draw);
+        Check(!app.m_showPerformance && ImGui::FindWindowByName("Console / Stats")->DockId==ImGui::FindWindowByName("Scene View")->DockId,
+              "saved layout restores custom docking and closed panels");
+        settings=old; io.ConfigFlags&=~ImGuiConfigFlags_DockingEnable;
+        app.m_showHierarchy=app.m_showInspector=app.m_showAssets=app.m_showConsole=app.m_showPerformance=true;
+        app.m_sceneMaximized=false;
+        ImGui::DestroyContext(); ImGui::SetCurrentContext(previousContext);
+    }
+
+    void P1HiddenImport()
+    {
+#ifdef TINYENGINE_HAS_ASSIMP
+        app.m_importQueue.Initialize(nullptr);
+        app.m_activeImportTask=app.m_importQueue.Submit("Saved/NoSuchP1Model.fbx","Saved/P1ImportOutput");
+        Check(app.m_importQueue.Get(app.m_activeImportTask).status==AssetImportStatus::Failed,"missing-model import reaches real terminal status");
+        app.m_showAssets=false; app.m_sceneMaximized=true;
+        const auto messages=app.m_messages.size(); app.PollAssetImport();
+        Check(app.m_activeImportTask==0 && app.m_messages.size()==messages+1,"hidden asset panel still publishes import result and releases packaging lock");
+        app.PollAssetImport(); Check(app.m_messages.size()==messages+1,"import completion publishes once");
+        app.m_showAssets=true; app.m_sceneMaximized=false;
+#endif
+    }
+
+    void P1AssetWorkflow()
+    {
+        const auto root=std::filesystem::absolute("Saved/P1AssetWorkflow");
+        std::filesystem::create_directories(root/"assets/Models");
+        PlatformFile::WriteAllText(root/"assets/Models/a.mesh", "mesh\n");
+        ResourceManager resources; resources.Initialize(nullptr,root/"assets");
+        auto &context=const_cast<EngineContext &>(app.m_engine.GetContext());
+        context.resourceManager=&resources;
+        auto &settings=const_cast<ProjectSettings &>(app.m_engine.GetProjectSettings());
+        const auto old=settings; settings.projectFile=root/"Workflow.tinyproject"; settings.assetDirectory="assets";
+        world.Clear(); const auto e=world.CreateEntity("Keep inspector"); app.m_selected=e; app.m_selection={e};
+        app.m_selectedAsset.clear(); app.m_selectedAssets.clear(); app.m_showAssets=false;
+        app.m_assetTypeFilter="Material"; std::strcpy(app.m_assetSearch.data(),"excluded");
+        app.LocateAsset("assets/Models/a.mesh");
+        Check(app.m_showAssets && app.m_assetFolder.lexically_normal()==(root/"assets/Models").lexically_normal(),
+              "Locate reference opens the asset browser at the containing folder");
+        Check(app.m_selectedAsset.empty() && app.m_selected==e && app.m_selection==std::vector<Entity>{e},
+              "Locate reference preserves entity inspector ownership");
+        Check(app.m_assetSearch[0]==0 && app.m_assetTypeFilter.empty() && app.m_selectedAssets.size()==1,
+              "Locate reference clears filters and highlights the target asset");
+        app.m_assetRenameRequested=false; app.m_assetsFocused=false; Key(ImGuiKey_F2);
+        Check(!app.m_assetRenameRequested,"F2 outside asset browser cannot rename");
+        app.m_assetsFocused=true; Key(ImGuiKey_F2,false,false,true);
+        Check(!app.m_assetRenameRequested,"text input owns F2 while editing");
+        Key(ImGuiKey_F2);
+        Check(app.m_assetRenameRequested,"focused asset browser receives F2 rename");
+        app.m_assetRenameRequested=false; app.m_assetsFocused=false; app.m_focusAssets=false;
+        app.m_selectedAsset="keep-open-asset.mat";
+        app.LocateAsset("assets/Models/a.mesh");
+        Check(app.m_selectedAsset=="keep-open-asset.mat","Locate preserves an existing asset inspector owner too");
+        const auto locatedFolder=app.m_assetFolder; const auto locatedSelection=app.m_selectedAssets;
+        app.LocateAsset("builtin:PBR"); app.LocateAsset("assets/missing.mesh");
+        Check(app.m_assetFolder==locatedFolder && app.m_selectedAssets==locatedSelection && app.m_selectedAsset=="keep-open-asset.mat",
+              "invalid and builtin Locate keep the current browser and inspector state");
+        app.m_selectedAsset.clear(); app.m_focusAssets=false; app.m_assetRevealPending=false;
+        settings=old; context.resourceManager=nullptr; resources.Shutdown();
+    }
+
+    void P1SceneNavigation()
+    {
+        world.Clear(); const auto e=world.CreateEntity("Orbit target"); app.m_selected=e; app.m_selection={e};
+        app.m_editorCameraPosition={0,2,7}; app.m_editorCameraRotation={-15,0,0}; app.m_cameraSpeed=1;
+        const auto camera=[&]{ app.UpdateSceneCamera(true,true); };
+        auto &io=ImGui::GetIO();
+        io.AddMousePosEvent(300,300); Frame(camera);
+        io.AddKeyEvent(ImGuiMod_Alt,true); io.AddMouseButtonEvent(0,true); Frame(camera);
+        const auto before=app.m_editorCameraPosition; const float distance=Length(before);
+        io.AddMousePosEvent(345,315); Frame(camera);
+        Check(Length(app.m_editorCameraPosition-before)>.1f && std::abs(Length(app.m_editorCameraPosition)-distance)<.01f,
+              "Alt-left orbit changes camera angle while preserving target distance");
+        io.AddMouseButtonEvent(0,false); io.AddKeyEvent(ImGuiMod_Alt,false); Frame(camera);
+        io.AddMouseButtonEvent(2,true); Frame(camera); const auto panBefore=app.m_editorCameraPosition;
+        io.AddMousePosEvent(365,325); Frame(camera);
+        Check(Length(app.m_editorCameraPosition-panBefore)>.01f,"middle mouse pans the scene camera");
+        io.AddMouseButtonEvent(2,false); Frame(camera);
+        const auto baseline=app.m_editorCameraPosition;
+        app.m_cameraSpeed=1; io.AddKeyEvent(ImGuiKey_W,true); Frame(camera); const float slow=Length(app.m_editorCameraPosition-baseline);
+        io.AddKeyEvent(ImGuiKey_W,false); Frame(camera); app.m_editorCameraPosition=baseline;
+        app.m_cameraSpeed=2; io.AddKeyEvent(ImGuiKey_W,true); Frame(camera);
+        Check(std::abs(Length(app.m_editorCameraPosition-baseline)-slow*2)<.001f,"camera speed changes actual navigation distance");
+        io.AddKeyEvent(ImGuiKey_W,false); Frame(camera); app.m_cameraSpeed=1;
+        AssetInfo mesh; mesh.path="assets/player.mesh"; mesh.type="Mesh";
+        const Vec3 placement{4,1,-2}; app.m_undo.clear(); const auto original=app.m_engine.GetSceneManager().CreateSnapshot();
+        Check(app.PlaceAssetInScene(mesh,&placement),"pointer placement creates a mesh");
+        const auto *transform=world.GetComponent<TransformComponent>(app.m_selected);
+        Check(transform && Length(transform->position-placement)<.001f && app.m_undo.size()==1,
+              "mesh placement and position form one undo transaction");
+        app.Undo(); Check(app.m_engine.GetSceneManager().CreateSnapshot()==original,"undo removes the entire pointer placement");
+        world.Clear(); const auto surface=world.CreateEntity("Surface"); world.AddComponent(surface,ColliderComponent{});
+        app.m_editorCameraPosition={0,0,5}; app.m_editorCameraRotation={}; Vec3 hit;
+        const auto querySnapshot=app.m_engine.GetSceneManager().CreateSnapshot();
+        Check(app.GetScenePlacement(.5f,.5f,hit) && std::abs(hit.z-.5f)<.001f,"pointer placement hits nearest collider with no device");
+        Check(app.m_engine.GetSceneManager().CreateSnapshot()==querySnapshot,"placement preview query never modifies World");
+        world.Clear(); app.m_editorCameraPosition={0,2,5}; app.m_editorCameraRotation={-30,0,0};
+        Check(app.GetScenePlacement(.5f,.5f,hit) && std::abs(hit.y)<.001f,"empty-space placement falls back to ground plane");
+        app.m_editorCameraRotation={30,0,0}; Check(!app.GetScenePlacement(.5f,.5f,hit),"placement above horizon has no valid drop target");
+        World prefab; const auto first=prefab.CreateEntity("First"),second=prefab.CreateEntity("Second");
+        prefab.GetComponent<TransformComponent>(first)->position={-2,0,0}; prefab.GetComponent<TransformComponent>(second)->position={2,0,0};
+        const auto prefabPath=std::filesystem::absolute(std::filesystem::u8path("Saved/P1Scene/中文预制体.prefab")); std::filesystem::create_directories(prefabPath.parent_path());
+        Check(SceneSerializer::Save(prefab,prefabPath),"multi-root prefab fixture saves under a Unicode path");
+        AssetInfo prefabAsset; prefabAsset.type="Prefab"; prefabAsset.path=prefabPath.generic_u8string(); app.m_undo.clear();
+        Check(app.PlaceAssetInScene(prefabAsset,&placement) && app.m_selection.size()==2,"pointer placement loads Unicode multi-root prefab");
+        const auto a=world.GetComponent<TransformComponent>(app.m_selection[0])->position;
+        const auto b=world.GetComponent<TransformComponent>(app.m_selection[1])->position;
+        Check(Length((a+b)*.5f-placement)<.001f && std::abs(Length(a-b)-4)<.001f && app.m_undo.size()==1,
+              "prefab roots preserve offsets around pointer in one undo transaction");
+        app.Undo(); Check(world.GetEntityManager().GetAliveEntities().empty(),"one undo removes all placed prefab roots");
+        app.m_sceneOrbitActive=app.m_scenePanActive=app.m_sceneAltOrbitActive=true; Key(ImGuiKey_F11);
+        Check(app.m_sceneMaximized && !app.m_sceneOrbitActive && !app.m_scenePanActive && !app.m_sceneAltOrbitActive,
+              "released viewport gestures cannot block F11 while scene tab is hidden");
+        app.m_sceneMaximized=false; app.ResetSceneInteraction(); app.m_editorCameraRotation={-10,0,0};
+        const auto focus=world.CreateEntity("Dock aspect framing"); world.AddComponent(focus,ColliderComponent{});
+        Renderer projectionRenderer; auto &context=const_cast<EngineContext &>(app.m_engine.GetContext()); context.renderer=&projectionRenderer;
+        auto &frame=const_cast<FrameView &>(projectionRenderer.GetFrameView());
+        frame.projection=Perspective(60,1.6f,.1f,100); app.FocusSceneEntity(focus); const float wideDistance=Length(app.m_editorCameraPosition);
+        frame.projection=Perspective(60,.25f,.1f,100); app.FocusSceneEntity(focus);
+        Check(Length(app.m_editorCameraPosition)>wideDistance*2,"focus frames selected bounds using the actual narrow dock projection");
+        context.renderer=nullptr; world.Clear();
+    }
+
+    void GroundGridContinuity()
+    {
+        world.Clear(); app.m_selected=InvalidEntity; app.m_selection.clear();
+        Renderer renderer; auto &context=const_cast<EngineContext &>(app.m_engine.GetContext());
+        context.renderer=&renderer; app.m_showSceneGrid=true; app.m_showSelectionBounds=false;
+        struct Restore { EditorApp &app; EngineContext &context; ~Restore() { context.renderer=nullptr; app.m_showSelectionBounds=true; } } restore{app,context};
+        auto &view=const_cast<FrameView &>(renderer.GetFrameView());
+        // Rasterize the real overlay triangles, so coverage/opacity jumps are observable without a GPU.
+        int gridVertices=0;
+        const auto capture=[&](Vec3 camera,Vec3 direction=Vec3{-.35f,-.55f,-1}) {
+            constexpr int w=240,h=180; std::vector<float> pixels(w*h);
+            view.cameraPosition=camera;
+            view.view=LookAt(camera,camera+Normalize(direction),{0,1,0});
+            view.projection=Perspective(60,4.0f/3.0f,.1f,1000);
+            Frame([&] {
+                ImGui::SetNextWindowPos({0,0}); ImGui::SetNextWindowSize({1000,800}); ImGui::Begin("Grid continuity");
+                auto *draw=ImGui::GetWindowDrawList(); const int first=draw->IdxBuffer.Size,firstVertex=draw->VtxBuffer.Size;
+                // Use geometry AA so coverage is represented by vertices rather than an atlas texture.
+                const auto flags=draw->Flags; draw->Flags&=~ImDrawListFlags_AntiAliasedLinesUseTex;
+                app.DrawSceneOverlays(20,40,800,600,false);
+                draw->Flags=flags; gridVertices=draw->VtxBuffer.Size-firstVertex;
+                for(int index=first;index+2<draw->IdxBuffer.Size;index+=3)
+                {
+                    const auto &a=draw->VtxBuffer[draw->IdxBuffer[index]], &b=draw->VtxBuffer[draw->IdxBuffer[index+1]], &c=draw->VtxBuffer[draw->IdxBuffer[index+2]];
+                    const ImU32 rgbMask=~(255u<<IM_COL32_A_SHIFT),gridRgb=IM_COL32(165,174,184,0);
+                    if((a.col&rgbMask)!=gridRgb || (b.col&rgbMask)!=gridRgb || (c.col&rgbMask)!=gridRgb) continue;
+                    const auto cross=[](ImVec2 p,ImVec2 q,ImVec2 r) { return (q.x-p.x)*(r.y-p.y)-(q.y-p.y)*(r.x-p.x); };
+                    const float area=cross(a.pos,b.pos,c.pos); if(std::abs(area)<1e-8f) continue;
+                    const int minX=std::clamp(static_cast<int>(std::floor((std::min({a.pos.x,b.pos.x,c.pos.x})-20)*w/800)),0,w-1);
+                    const int maxX=std::clamp(static_cast<int>(std::ceil((std::max({a.pos.x,b.pos.x,c.pos.x})-20)*w/800)),0,w-1);
+                    const int minY=std::clamp(static_cast<int>(std::floor((std::min({a.pos.y,b.pos.y,c.pos.y})-40)*h/600)),0,h-1);
+                    const int maxY=std::clamp(static_cast<int>(std::ceil((std::max({a.pos.y,b.pos.y,c.pos.y})-40)*h/600)),0,h-1);
+                    const auto alpha=[](ImU32 col) { return static_cast<float>((col>>IM_COL32_A_SHIFT)&255)/255; };
+                    for(int row=minY;row<=maxY;++row) for(int column=minX;column<=maxX;++column)
+                    {
+                        // Ignore the orientation widget in the upper right.
+                        if(column>w*3/4 && row<h/3) continue;
+                        const ImVec2 point{20+(column+.5f)*800/w,40+(row+.5f)*600/h};
+                        const float u=cross(b.pos,c.pos,point)/area,v=cross(c.pos,a.pos,point)/area,t=1-u-v;
+                        if(u<0 || v<0 || t<0) continue;
+                        const float opacity=u*alpha(a.col)+v*alpha(b.col)+t*alpha(c.col);
+                        auto &pixel=pixels[row*w+column]; pixel+=opacity*(1-pixel);
+                    }
+                }
+                ImGui::End();
+            });
+            return pixels;
+        };
+        capture({.3f,2,5}); // Establish ImGui window state before comparing frames.
+        for(float height : {2.5f,25.0f})
+        {
+            const auto before=capture({.3f,height-.0001f,5}),after=capture({.3f,height+.0001f,5});
+            float difference=0; for(std::size_t i=0;i<before.size();++i) difference+=std::abs(before[i]-after[i]);
+            difference/=static_cast<float>(before.size()); std::cout << "Grid height boundary image delta: " << difference << '\n';
+            Check(difference<.002f,"tiny vertical camera movement preserves grid coverage and density across old decade boundaries");
+        }
+        const auto before=capture({.0999f,2,5}),after=capture({.1001f,2,5});
+        float difference=0; for(std::size_t i=0;i<before.size();++i) difference+=std::abs(before[i]-after[i]);
+        Check(difference/before.size()<.002f,"grid recentering does not expose moving rectangular edges during camera translation");
+        const auto initial=capture({0,2.5f,7},{0,-.173648f,-.984808f});
+        float coverage=0,horizon=0;
+        for(float pixel : initial) coverage+=pixel;
+        Check(coverage/initial.size()>.002f,"initial editor ground grid remains visibly rendered");
+        for(int row=59;row<76;++row) {
+            float sum=0; for(int column=0;column<180;++column) sum+=initial[row*240+column];
+            horizon=std::max(horizon,sum/180);
+        }
+        std::cout << "Grid horizon peak row coverage: " << horizon << '\n';
+        Check(horizon<.2f,"distant subpixel grid lines fade before accumulating into a bright horizon band");
+        for(Vec3 direction : {Vec3{0,0,-1},Vec3{1,-.001f,0},Vec3{0,-1,-.001f}}) {
+            // A top view must keep the ground beyond the fixture's .1 near plane.
+            const auto image=capture({.3f,direction.y<-.5f ? .5f : .05f,5},direction);
+            float visible=0; for(float pixel : image) visible+=pixel;
+            std::cout << "Grid low camera coverage/vertices: " << visible/image.size() << '/' << gridVertices << '\n';
+            Check(visible/image.size()>.0001f && gridVertices<60000,
+                  "horizontal and near-ground navigation keeps visible grid geometry within the UI mesh budget");
+        }
+    }
+
+    void ViewCubeNavigation()
+    {
+        world.Clear(); const auto entity=world.CreateEntity("ViewCube target");
+        world.GetComponent<TransformComponent>(entity)->position={3,1,0};
+        app.ResetSceneInteraction(); app.m_selected=entity; app.m_selection={entity}; app.m_undo.clear();
+        app.m_showSceneGrid=false; app.m_showSelectionBounds=false;
+        app.m_editorCameraPosition={3,1,7}; app.m_editorCameraRotation={};
+        Renderer renderer; auto &context=const_cast<EngineContext &>(app.m_engine.GetContext()); context.renderer=&renderer;
+        auto &io=ImGui::GetIO(); bool hovered=true;
+        const auto draw=[&] { ImGui::SetNextWindowPos({0,0}); ImGui::SetNextWindowSize({1100,850});
+            ImGui::Begin("ViewCube test"); app.DrawSceneOverlays(50,50,800,700,hovered); ImGui::End(); };
+        io.AddMousePosEvent(772,128); Frame(draw); Frame(draw);
+        const auto before=app.m_editorCameraPosition;
+        io.AddMouseButtonEvent(0,true); Frame(draw);
+        Check(Length(app.m_editorCameraPosition-before)<.001f,"ViewCube press waits for click or drag without jumping");
+        io.AddMousePosEvent(808,148); Frame(draw);
+        Check(Length(app.m_editorCameraPosition-before)>.1f,"dragging ViewCube orbits the camera");
+        Check(std::abs(Length(app.m_editorCameraPosition-Vec3{3,1,0})-7)<.001f,"ViewCube orbit preserves selected target and distance");
+        const auto during=app.m_editorCameraPosition; hovered=false;
+        io.AddMousePosEvent(910,220); Frame(draw);
+        Check(Length(app.m_editorCameraPosition-during)>.1f,"ViewCube drag stays captured beyond the widget and viewport");
+        io.AddMouseButtonEvent(0,false); Frame(draw); const auto released=app.m_editorCameraPosition;
+        io.AddMousePosEvent(920,230); Frame(draw);
+        Check(Length(app.m_editorCameraPosition-released)<.001f,"releasing ViewCube stops orbit without snapping to a face");
+        Check(app.m_selected==entity && app.m_undo.empty(),"ViewCube navigation preserves selection and scene undo");
+        const auto click=[&](float x,float y) { io.AddMousePosEvent(x,y); Frame(draw); io.AddMouseButtonEvent(0,true); Frame(draw);
+            io.AddMouseButtonEvent(0,false); Frame(draw); };
+        hovered=true; app.m_editorCameraPosition={3,1,7}; app.m_editorCameraRotation={};
+        io.AddMousePosEvent(772,128); Frame(draw); io.AddMouseButtonEvent(0,true); Frame(draw);
+        io.AddMouseButtonEvent(0,false); Frame(draw);
+        Check(std::abs(app.m_editorCameraRotation.y)<.01f && std::abs(app.m_editorCameraRotation.x)<.01f,
+              "clicking the front face selects the front direction");
+        click(795,128);
+        Check(std::abs(app.m_editorCameraRotation.y+45)<.01f && std::abs(app.m_editorCameraRotation.x)<.01f,
+              "clicking a cube edge aligns to its diagonal direction");
+        app.m_editorCameraPosition={3,1,7}; app.m_editorCameraRotation={}; click(795,105);
+        Check(std::abs(app.m_editorCameraRotation.y+45)<.01f && std::abs(app.m_editorCameraRotation.x+35.264f)<.02f,
+              "clicking a cube corner aligns to its isometric direction");
+        app.m_editorCameraPosition={3,1,7}; app.m_editorCameraRotation={}; io.AddMousePosEvent(772,128); Frame(draw);
+        io.AddMouseButtonEvent(0,true); Frame(draw); io.AddFocusEvent(false); Frame(draw);
+        io.AddFocusEvent(true); io.AddMouseButtonEvent(0,false); Frame(draw);
+        const auto restored=app.m_editorCameraPosition; io.AddMousePosEvent(800,140); Frame(draw);
+        Check(Length(app.m_editorCameraPosition-restored)<.001f,"focus loss cancels ViewCube capture");
+        app.m_editorCameraPosition={3,1,7}; app.m_editorCameraRotation={}; io.AddMousePosEvent(772,128); Frame(draw);
+        io.AddMouseButtonEvent(0,true); Frame(draw); ImGui::SetNextWindowPos({0,0});
+        Frame([&] { ImGui::Begin("ViewCube test"); ImGui::OpenPopup("Block cube");
+            if(ImGui::BeginPopup("Block cube")) { app.DrawSceneOverlays(50,50,800,700,true); ImGui::CloseCurrentPopup(); ImGui::EndPopup(); }
+            ImGui::End(); });
+        io.AddMouseButtonEvent(0,false); Frame(draw);
+        Check(!app.m_viewCubeActive && std::abs(app.m_editorCameraRotation.y)<.01f,"popup cancels ViewCube capture without moving the camera");
+        context.renderer=nullptr; app.m_showSceneGrid=app.m_showSelectionBounds=true; app.ResetSceneInteraction(); world.Clear();
+    }
+
+    void P1OrbitStability()
+    {
+        world.Clear(); const auto e=world.CreateEntity("Off-center orbit");
+        world.GetComponent<TransformComponent>(e)->position={10,2,0}; app.m_selected=e; app.m_selection={e};
+        app.m_editorCameraPosition={0,2,7}; app.m_editorCameraRotation={0,0,0};
+        const auto initialPosition=app.m_editorCameraPosition; const auto initialRotation=app.m_editorCameraRotation;
+        const auto draw=[&]{ app.UpdateSceneCamera(true,true); }; auto &io=ImGui::GetIO();
+        io.AddMousePosEvent(300,300); Frame(draw);
+        io.AddKeyEvent(ImGuiMod_Alt,true); io.AddMouseButtonEvent(0,true); Frame(draw); Frame(draw);
+        Check(Length(app.m_editorCameraPosition-initialPosition)<.0001f && Length(app.m_editorCameraRotation-initialRotation)<.0001f,
+              "holding Alt-orbit stationary does not snap to an off-center selection");
+        io.AddMousePosEvent(320,300); Frame(draw);
+        Check(std::abs(app.m_editorCameraRotation.y-3.6f)<.01f,"off-center orbit applies mouse angle without an orientation jump");
+        io.AddMouseButtonEvent(0,false); io.AddKeyEvent(ImGuiMod_Alt,false); Frame(draw);
+        app.ResetSceneInteraction(); app.m_editorCameraRotation={-10,0,0}; world.Clear();
+    }
+
+    void P1SceneDrag()
+    {
+        const auto root=std::filesystem::absolute("Saved/P1SceneDrag")/std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
+        const auto assets=root/"assets"; std::filesystem::create_directories(assets);
+        PlatformFile::WriteAllText(assets/"a.mesh",PlatformFile::ReadAllText("assets/player.mesh"));
+        ResourceManager resources; resources.Initialize(nullptr,assets); Renderer renderer; renderer.SetResourceManager(&resources);
+        auto gpu=std::make_unique<SdlGlRenderDevice>(256,128,"Viewport drag transaction"); auto *device=gpu.get();
+        Check(renderer.Initialize(std::move(gpu)),"viewport drop fixture initializes real render target");
+        SDL_HideWindow(static_cast<SDL_Window *>(device->GetNativeWindow())); device->EnableSceneRenderTarget(true,256,128);
+        auto &context=const_cast<EngineContext &>(app.m_engine.GetContext()); context.resourceManager=&resources; context.renderer=&renderer;
+        auto &settings=const_cast<ProjectSettings &>(app.m_engine.GetProjectSettings()); const auto oldSettings=settings;
+        settings.projectFile=root/"Drag.tinyproject"; settings.assetDirectory="assets"; app.m_device=device;
+        world.Clear(); app.ResetSceneInteraction(); app.m_undo.clear(); app.m_redo.clear(); app.m_sceneDirty=false;
+        app.m_assetFolder=assets; app.m_assetViewMode=EditorApp::AssetViewMode::List; app.m_assetSearch.fill(0); app.m_assetTypeFilter.clear();
+        app.m_showAssets=true; app.m_sceneMaximized=false; app.m_editorCameraPosition={0,2,7}; app.m_editorCameraRotation={-20,0,0};
+        const auto draw=[&] {
+            renderer.SetCameraOverride(true,app.m_editorCameraPosition,app.m_editorCameraRotation,app.m_editorCameraFov);
+            renderer.RenderFrame(world); app.DrawSceneView(); app.DrawAssets();
+        };
+        Frame(draw); Frame(draw);
+        ImGuiWindow *browser=nullptr; for(auto *candidate:ImGui::GetCurrentContext()->Windows)
+            if(candidate->ParentWindow==ImGui::FindWindowByName("Assets")) browser=candidate;
+        Check(browser!=nullptr,"viewport drag fixture exposes asset rows");
+        auto *table=ImGui::GetCurrentContext()->Tables.GetByKey(browser->GetID("AssetList"));
+        Check(table!=nullptr,"viewport drag fixture exposes actual list table");
+        const float rowHeight=ImGui::GetFontSize()+ImGui::GetStyle().CellPadding.y*2;
+        const ImVec2 source{table->Columns[0].MinX+24,table->OuterRect.Min.y+rowHeight*1.5f};
+        const auto *scene=ImGui::FindWindowByName("Scene View");
+        auto &io=ImGui::GetIO();
+        const ImVec2 cubeHome{scene->WorkRect.Min.x+device->GetSceneTargetWidth()/app.m_dpiScale-130,
+            scene->DC.CursorMaxPos.y-device->GetSceneTargetHeight()/app.m_dpiScale+25};
+        io.AddMousePosEvent(cubeHome.x,cubeHome.y); Frame(draw); Frame(draw);
+        io.AddMouseButtonEvent(0,true); Frame(draw);
+        Check(app.m_viewCubeActive,"ViewCube captures input above the actual viewport image");
+        io.AddMouseButtonEvent(0,false); Frame(draw); Frame(draw);
+        Check(std::abs(app.m_editorCameraRotation.y+35)<.01f,"ViewCube home click completes above the actual viewport image");
+        const ImVec2 cubeCenter{cubeHome.x+52,cubeHome.y+53};
+        io.AddMousePosEvent(cubeCenter.x,cubeCenter.y); Frame(draw); io.AddMouseButtonEvent(0,true); Frame(draw);
+        const auto orbitBefore=app.m_editorCameraPosition;
+        io.AddMousePosEvent(cubeCenter.x+20,cubeCenter.y+10); Frame(draw);
+        Check(Length(app.m_editorCameraPosition-orbitBefore)>.1f,"ViewCube drag works with real viewport input ownership");
+        io.AddMouseButtonEvent(0,false); Frame(draw);
+        app.m_editorCameraPosition={0,2,7}; app.m_editorCameraRotation={-20,0,0}; Frame(draw); Frame(draw);
+        Check(scene && scene->ScrollMax.y<1,"viewport overlay does not introduce a vertical scrollbar");
+        app.m_viewportRenderMode=ViewportRenderMode::Unlit; Frame(draw); Frame(draw);
+        Check(renderer.GetFrameView().renderMode==ViewportRenderMode::Unlit,"viewport selection reaches renderer frame state");
+        renderer.SetCameraOverride(false); renderer.RenderFrame(world);
+        Check(renderer.GetFrameView().renderMode==ViewportRenderMode::Lit,"runtime camera always restores normal Lit rendering");
+        app.m_viewportRenderMode=ViewportRenderMode::Lit; Frame(draw); Frame(draw);
+        const ImVec2 target{scene->InnerRect.Min.x+scene->InnerRect.GetWidth()*.7f,scene->InnerRect.Max.y-30};
+        io.AddMousePosEvent(source.x,source.y); Frame(draw);
+        io.AddMouseButtonEvent(0,true); Frame(draw); io.AddMousePosEvent(source.x+20,source.y); Frame(draw);
+        Check(ImGui::GetDragDropPayload()!=nullptr,"real asset mouse gesture starts a payload");
+        io.AddMousePosEvent(target.x,target.y); Frame(draw); Frame(draw);
+        Check(world.GetEntityManager().GetAliveEntities().empty() && app.m_undo.empty() && !app.m_sceneDirty,
+              "hovering placement preview never creates an entity or undo record");
+        Check(!app.m_scenePreviewAsset.empty() && app.m_scenePreviewBoundsValid,"hovering viewport resolves ghost bounds for the dragged mesh");
+        io.AddMouseButtonEvent(0,false); Frame(draw); Frame(draw);
+        Check(world.GetEntityManager().GetAliveEntities().size()==1 && app.m_undo.size()==1,
+              "drop delivery creates exactly one mesh and one undo record");
+        const auto *transform=world.GetComponent<TransformComponent>(app.m_selected);
+        Check(transform && std::abs(transform->position.y)<.001f && std::abs(transform->position.x)>.1f,
+              "delivered mesh uses the preview pointer position instead of the origin");
+        app.Undo(); Check(world.GetEntityManager().GetAliveEntities().empty(),"one undo reverses the delivered viewport drop");
+        app.ResetSceneInteraction(); settings=oldSettings; app.m_device=nullptr; context.renderer=nullptr; context.resourceManager=nullptr;
+        renderer.Shutdown(); resources.Shutdown(); app.m_editorCameraRotation={-10,0,0};
+    }
+
     void Shortcuts()
     {
         const Entity entity = world.CreateEntity("Selected");
         app.m_selected = entity;
         app.m_selection = {entity};
+        world.GetComponent<TransformComponent>(entity)->position = {14.0f, 2.0f, -6.0f};
+        app.m_editorCameraPosition = {0.0f, 2.5f, 7.0f};
+        app.m_sceneCommandsFocused = false;
+        Key(ImGuiKey_F);
+        Check(app.m_editorCameraPosition.x == 0.0f, "F in another panel does not move the scene camera");
+        app.m_sceneCommandsFocused = true;
+        Key(ImGuiKey_F, false, false, true);
+        Check(app.m_editorCameraPosition.x == 0.0f, "text editing owns the F key");
+        Key(ImGuiKey_F);
+        Check(std::abs(app.m_editorCameraPosition.x - 14.0f) < 0.01f,
+              "F frames the selected entity when scene commands have focus");
         app.m_sceneCommandsFocused = false;
         Key(ImGuiKey_Delete);
         Check(world.IsAlive(entity) && app.m_undo.empty(), "Delete in another panel does not delete scene objects");
@@ -104,9 +568,11 @@ struct EditorInteractionTests
         Check(world.IsAlive(entity), "text editing owns Delete");
         Key(ImGuiKey_Delete, false, false, false, true);
         Check(world.IsAlive(entity), "popup at any stack level blocks scene Delete");
+        ImGui::GetIO().AddMouseButtonEvent(ImGuiMouseButton_Right, true); Frame();
         app.m_sceneOrbitActive = true;
         Key(ImGuiKey_Delete);
         Check(world.IsAlive(entity), "camera gesture blocks scene commands");
+        ImGui::GetIO().AddMouseButtonEvent(ImGuiMouseButton_Right, false); Frame();
         app.m_sceneOrbitActive = false;
         app.m_marqueeActive = true;
         Key(ImGuiKey_Escape);
@@ -184,6 +650,72 @@ struct EditorInteractionTests
         app.m_exitInProgress = false;
     }
 
+    void AssetClicks()
+    {
+        const auto root = std::filesystem::absolute("Saved/EditorP0Clicks/assets");
+        std::filesystem::create_directories(root);
+        PlatformFile::WriteAllText(root / "a.mesh", "v 0 0 0\nv 1 0 0\nv 0 1 0\nf 1 2 3\n");
+        PlatformFile::WriteAllText(root / "b.frag", "#version 330 core\nvoid main() {}\n");
+        ResourceManager resources;
+        resources.Initialize(nullptr, root);
+        auto &context = const_cast<EngineContext &>(app.m_engine.GetContext());
+        context.resourceManager = &resources;
+        auto &settings = const_cast<ProjectSettings &>(app.m_engine.GetProjectSettings());
+        const auto oldSettings = settings;
+        settings.projectFile = root.parent_path() / "Clicks.tinyproject";
+        settings.assetDirectory = "assets";
+        app.m_assetFolder = root;
+        app.m_assetViewMode = EditorApp::AssetViewMode::List;
+        app.m_selectedAsset.clear();
+        app.m_assetSearch.fill('\0');
+        app.m_assetTypeFilter.clear();
+        world.Clear();
+        const auto entity = world.CreateEntity("Keep scene object");
+        app.m_selected = entity;
+        app.m_selection = {entity};
+        const auto draw = [&] { app.DrawAssets(); };
+        app.m_sceneDirty = false;
+        auto &io = ImGui::GetIO();
+        Frame(draw);
+        Frame(draw);
+        ImGuiWindow *browser = nullptr;
+        for (auto *candidate : ImGui::GetCurrentContext()->Windows)
+            if (candidate->ParentWindow == ImGui::FindWindowByName("Assets")) browser = candidate;
+        Check(browser != nullptr, "asset click fixture exposes the real browser");
+        auto *table = ImGui::GetCurrentContext()->Tables.GetByKey(browser->GetID("AssetList"));
+        Check(table != nullptr, "asset click fixture exposes its rows");
+        const float rowHeight = ImGui::GetFontSize() + ImGui::GetStyle().CellPadding.y * 2.0f;
+        const float x = table->Columns[0].MinX + 24.0f;
+        const float firstRow = table->OuterRect.Min.y + rowHeight * 1.5f;
+        const auto click = [&](const float y) {
+            io.AddMousePosEvent(x, y); Frame(draw);
+            io.AddMouseButtonEvent(0, true); Frame(draw);
+            io.AddMouseButtonEvent(0, false); Frame(draw);
+        };
+        click(firstRow);
+        Check(std::filesystem::path(app.m_selectedAsset).filename() == "a.mesh", "single click selects an asset");
+        click(firstRow);
+        Check(world.GetEntityManager().GetAliveEntities().size() == 1 && !app.m_sceneDirty && app.m_showAssetPreview,
+              "double clicking a mesh previews it without changing the scene");
+        for (int frame = 0; frame < 24; ++frame) Frame(draw);
+        click(firstRow + rowHeight);
+        Check(std::filesystem::path(app.m_selectedAsset).filename() == "b.frag" && app.m_openShaderAsset.empty(),
+              "single clicking a shader selects without opening its document");
+        click(firstRow + rowHeight);
+        Check(std::filesystem::path(app.m_openShaderAsset).filename() == "b.frag",
+              "double clicking a shader opens its document");
+        app.m_openShaderAsset.clear();
+        app.m_shaderSource.clear();
+        app.m_savedShaderSource.clear();
+        app.m_selectedAsset.clear();
+        app.m_selectedAssets.clear();
+        app.m_showAssetPreview = false;
+        app.ResetSceneInteraction();
+        settings = oldSettings;
+        context.resourceManager = nullptr;
+        resources.Shutdown();
+    }
+
     void Inspector()
     {
         world.Clear();
@@ -203,9 +735,15 @@ struct EditorInteractionTests
         Frame(draw);
         const auto *window = ImGui::FindWindowByName("Inspector");
         const auto &style = ImGui::GetStyle();
-        const float x = window->DC.CursorStartPos.x + 15.0f;
-        const float y = window->DC.CursorStartPos.y + ImGui::GetFontSize() + style.SeparatorTextPadding.y * 2.0f + style.ItemSpacing.y +
-                        ImGui::GetFrameHeight() * 0.5f;
+        const auto fieldPoint = [&](const char *component, bool vector) {
+            const auto id = ImHashStr("Properties", 0, ImHashStr(component, 0, window->ID));
+            const auto *table = ImGui::GetCurrentContext()->Tables.GetByKey(id);
+            if (!table) throw std::runtime_error("Inspector property table is missing");
+            return ImVec2{table->Columns[1].WorkMinX + (vector ? ImGui::GetFrameHeight() + style.ItemSpacing.x : 0) + 8,
+                          table->OuterRect.Min.y + style.CellPadding.y + ImGui::GetFrameHeight() * .5f};
+        };
+        auto point = fieldPoint("Transform", true);
+        const float x = point.x, y = point.y;
         auto &io = ImGui::GetIO();
         io.AddMousePosEvent(x, y);
         Frame(draw);
@@ -240,7 +778,8 @@ struct EditorInteractionTests
         app.m_undo.clear();
         app.m_sceneDirty = false;
         Frame(draw);
-        io.AddMousePosEvent(x, y);
+        point = fieldPoint("Name", false);
+        io.AddMousePosEvent(point.x, point.y);
         Frame(draw);
         io.AddMouseButtonEvent(0, true);
         Frame(draw);
@@ -262,10 +801,53 @@ struct EditorInteractionTests
               "text field Undo restores the complete original name");
     }
 
+    void AssetGridDrag()
+    {
+        const auto root = std::filesystem::absolute("Saved/EditorP0Clicks/assets");
+        ResourceManager resources; resources.Initialize(nullptr,root);
+        auto &context = const_cast<EngineContext &>(app.m_engine.GetContext()); context.resourceManager = &resources;
+        auto &settings = const_cast<ProjectSettings &>(app.m_engine.GetProjectSettings()); const auto previous = settings;
+        settings.projectFile = root.parent_path()/"Clicks.tinyproject"; settings.assetDirectory = "assets";
+        world.Clear(); const auto entity = world.CreateEntity("Drop target");
+        world.RemoveComponent<NameComponent>(entity); world.RemoveComponent<ActiveComponent>(entity);
+        world.RemoveComponent<TagComponent>(entity); world.RemoveComponent<LayerComponent>(entity);
+        world.RemoveComponent<TransformComponent>(entity); world.AddComponent(entity,MeshComponent{});
+        app.m_selected = entity; app.m_selection = {entity}; app.m_selectedAsset.clear();
+        app.m_assetFolder = root; app.m_assetViewMode = EditorApp::AssetViewMode::Grid; app.m_assetThumbnailSize = 64;
+        app.m_undo.clear(); app.m_sceneDirty = false;
+        const auto draw = [&] { app.DrawInspector(); app.DrawAssets(); };
+        Frame(draw); Frame(draw);
+        ImGuiWindow *browser = nullptr;
+        for (auto *candidate : ImGui::GetCurrentContext()->Windows)
+            if (candidate->ParentWindow == ImGui::FindWindowByName("Assets")) browser = candidate;
+        const ImVec2 source{browser->DC.CursorStartPos.x + 32,browser->DC.CursorStartPos.y + 32};
+        const auto *inspector = ImGui::FindWindowByName("Inspector");
+        const auto *table = ImGui::GetCurrentContext()->Tables.GetByKey(ImHashStr("Properties",0,ImHashStr("Mesh Renderer",0,inspector->ID)));
+        const ImVec2 target{table->Columns[1].WorkMinX + 20,table->OuterRect.Min.y + ImGui::GetStyle().CellPadding.y + ImGui::GetFrameHeight() * .5f};
+        auto &io = ImGui::GetIO(); io.AddMousePosEvent(source.x,source.y); Frame(draw);
+        io.AddMouseButtonEvent(0,true); Frame(draw); Frame(draw);
+        Check(app.m_selectedAsset.empty(),"grid mouse-down preserves the entity inspector until click release");
+        io.AddMousePosEvent(source.x+20,source.y+20); Frame(draw); Frame(draw);
+        io.AddMousePosEvent(target.x,target.y); Frame(draw); Frame(draw);
+        io.AddMouseButtonEvent(0,false); Frame(draw); Frame(draw);
+        Check(world.GetComponent<MeshComponent>(entity)->meshPath == "assets/a.mesh" && app.m_undo.size() == 1,
+              "real grid drag assigns a typed property without hiding its target");
+        const auto asset = resources.GetAssetRegistry().Find((root/"a.mesh").generic_u8string());
+        app.SelectAsset(asset->path,false);
+        Check(app.PlaceAssetInScene(*asset) && app.m_selected != entity && app.m_selectedAsset.empty(),
+              "explicit placement transfers the inspector to the new scene object");
+        app.m_assetViewMode = EditorApp::AssetViewMode::List;
+        app.ResetSceneInteraction(); app.m_selectedAsset.clear();
+        context.resourceManager = nullptr; settings = previous; resources.Shutdown();
+    }
+
     void Gizmo()
     {
         Renderer renderer;
         const_cast<EngineContext &>(app.m_engine.GetContext()).renderer = &renderer;
+        auto &view=const_cast<FrameView &>(renderer.GetFrameView());
+        view.cameraPosition={0,0,5}; view.view=LookAt(view.cameraPosition,{}, {0,1,0}); view.projection=Perspective(60,1,.1f,100);
+        app.m_editorCameraPosition=view.cameraPosition; app.m_gizmoSpace=EditorApp::GizmoSpace::World;
         world.Clear();
         const auto entity = world.CreateEntity("Gizmo");
         app.ResetSceneInteraction();
@@ -308,6 +890,159 @@ struct EditorInteractionTests
         const_cast<EngineContext &>(app.m_engine.GetContext()).renderer = nullptr;
     }
 
+    void InspectorBatchAndValidation()
+    {
+        world.Clear();
+        app.ResetSceneInteraction();
+        app.m_undo.clear(); app.m_redo.clear(); app.m_sceneDirty = false;
+        const auto first = world.CreateEntity("First"), second = world.CreateEntity("Second");
+        world.GetComponent<TransformComponent>(first)->position = {1,2,3};
+        world.GetComponent<TransformComponent>(second)->position = {4,5,6};
+        app.m_selected = first; app.m_selection = {first,second};
+        const auto &transform = *ReflectionRegistry::Get().FindComponent("Transform");
+        const auto &position = transform.properties[0];
+        const Vec3 edited{10,2,3};
+        Frame([&] {
+            ImGui::Begin("Batch host");
+            app.ApplyInspectorProperty(transform,position,&edited,false,0);
+            ImGui::End();
+        });
+        Check(world.GetComponent<TransformComponent>(first)->position.x == 10 &&
+              world.GetComponent<TransformComponent>(second)->position.x == 10 &&
+              world.GetComponent<TransformComponent>(second)->position.y == 5 &&
+              world.GetComponent<TransformComponent>(second)->position.z == 6 && app.m_undo.size() == 1,
+              "batch axis edit preserves untouched mixed axes and records one transaction");
+        app.Undo();
+        Entity restoredFirst = InvalidEntity, restoredSecond = InvalidEntity;
+        for (const auto entity : world.GetEntityManager().GetAliveEntities())
+        {
+            const auto &name = world.GetComponent<NameComponent>(entity)->name;
+            if (name == "First") restoredFirst = entity;
+            if (name == "Second") restoredSecond = entity;
+        }
+        Check(world.GetComponent<TransformComponent>(restoredFirst)->position.x == 1 &&
+              world.GetComponent<TransformComponent>(restoredSecond)->position.x == 4,
+              "one Undo restores both objects after a batch edit");
+        app.m_selected = restoredFirst; app.m_selection = {restoredFirst,restoredSecond};
+        app.m_undo.clear(); app.m_redo.clear(); app.m_sceneDirty = false;
+        app.ResetInspectorComponent(transform);
+        Check(world.GetComponent<TransformComponent>(restoredFirst)->position.x == 0 &&
+              world.GetComponent<TransformComponent>(restoredSecond)->position.y == 0 &&
+              world.GetComponent<TransformComponent>(restoredSecond)->scale.x == 1 && app.m_undo.size() == 1,
+              "component reset applies defaults to the selection as one transaction");
+        app.m_undo.clear(); app.m_sceneDirty = false;
+        app.ResetInspectorComponent(transform);
+        Check(app.m_undo.empty() && !app.m_sceneDirty, "resetting default properties does not dirty the scene");
+
+        const auto root = std::filesystem::absolute("Saved/EditorP0Clicks/assets");
+        ResourceManager resources; resources.Initialize(nullptr,root);
+        auto &context = const_cast<EngineContext &>(app.m_engine.GetContext()); context.resourceManager = &resources;
+        auto &settings = const_cast<ProjectSettings &>(app.m_engine.GetProjectSettings()); const auto oldSettings = settings;
+        settings.projectFile = root.parent_path()/"Clicks.tinyproject"; settings.assetDirectory = "assets";
+        world.AddComponent(restoredFirst,MeshComponent{"assets/a.mesh",""});
+        world.AddComponent(restoredSecond,MeshComponent{"assets/a.mesh",""});
+        const auto &mesh = *ReflectionRegistry::Get().FindComponent("Mesh Renderer");
+        const auto &meshPath = mesh.properties[0];
+        app.m_feedback.clear();
+        const auto fieldId = 321u;
+        Check(!app.ApplyInspectorAsset(mesh,meshPath,(root/"b.frag").generic_u8string(),fieldId) &&
+              world.GetComponent<MeshComponent>(restoredFirst)->meshPath == "assets/a.mesh" && app.m_undo.empty() &&
+              app.m_inspectorErrors.count(fieldId) && !app.m_feedback.empty() && app.m_feedback.back().kind == EditorApp::FeedbackKind::Error,
+              "wrong asset type retains the old reference and shows inline and global errors");
+        Check(!app.ApplyInspectorAsset(mesh,meshPath,"assets/missing.mesh",fieldId) && !app.m_sceneDirty,
+              "missing asset path cannot silently overwrite a valid reference");
+        Check(app.ApplyInspectorAsset(mesh,meshPath,(root/"a.mesh").generic_u8string(),fieldId) &&
+              !app.m_inspectorErrors.count(fieldId) && world.GetComponent<MeshComponent>(restoredFirst)->meshPath == "assets/a.mesh" && app.m_undo.empty(),
+              "valid asset correction clears the field error and preserves a portable reference");
+        Check(app.ApplyInspectorAsset(mesh,meshPath,"",fieldId) && app.m_undo.size() == 1 &&
+              world.GetComponent<MeshComponent>(restoredFirst)->meshPath.empty() && world.GetComponent<MeshComponent>(restoredSecond)->meshPath.empty(),
+              "clearing a resource reference edits the selection in one undoable operation");
+        Frame([&] { app.DrawFeedback(); });
+        Check(!app.m_feedback.empty(), "operation errors are visible without opening the console");
+        const auto oldDelta = ImGui::GetIO().DeltaTime; ImGui::GetIO().DeltaTime = 13;
+        Frame([&] { app.DrawFeedback(); }); ImGui::GetIO().DeltaTime = oldDelta;
+        Check(app.m_feedback.empty(), "transient feedback expires without blocking the editor");
+        context.resourceManager = nullptr; settings = oldSettings; resources.Shutdown();
+        app.ResetSceneInteraction();
+    }
+
+    void InspectorAxisDefaults()
+    {
+        world.Clear(); app.ResetSceneInteraction(); app.m_selectedAsset.clear();
+        const auto entity = world.CreateEntity("Collider reset");
+        world.RemoveComponent<NameComponent>(entity); world.RemoveComponent<ActiveComponent>(entity);
+        world.RemoveComponent<TagComponent>(entity); world.RemoveComponent<LayerComponent>(entity);
+        world.RemoveComponent<TransformComponent>(entity);
+        ColliderComponent collider; collider.halfExtents = {2,3,4}; world.AddComponent(entity,collider);
+        app.m_selected = entity; app.m_selection = {entity}; app.m_undo.clear();
+        const auto draw = [&] { app.DrawInspector(); };
+        Frame(draw); Frame(draw);
+        const auto *window = ImGui::FindWindowByName("Inspector");
+        const auto tableId = ImHashStr("Properties",0,ImHashStr("Collider",0,window->ID));
+        const auto *table = ImGui::GetCurrentContext()->Tables.GetByKey(tableId);
+        Check(table != nullptr,"collider reset fixture exposes the actual property controls");
+        const float rowHeight = ImGui::GetFrameHeight() + ImGui::GetStyle().CellPadding.y * 2;
+        const float x = table->Columns[1].WorkMinX + ImGui::GetFrameHeight() * .5f;
+        const float y = table->OuterRect.Min.y + rowHeight * 1.5f;
+        auto &io = ImGui::GetIO(); io.AddMousePosEvent(x,y); Frame(draw);
+        io.AddMouseButtonEvent(0,true); Frame(draw); io.AddMouseButtonEvent(0,false); Frame(draw);
+        Check(world.GetComponent<ColliderComponent>(entity)->halfExtents.x == .5f &&
+              world.GetComponent<ColliderComponent>(entity)->halfExtents.y == 3 && app.m_undo.size() == 1,
+              "axis reset uses the component default and preserves the other axes");
+        app.ResetSceneInteraction();
+    }
+
+    void TypedSkeletonAndFailedOpen()
+    {
+        const auto root = std::filesystem::absolute("Saved/EditorP0Typed/assets");
+        PlatformFile::WriteAllText(root/"rig.skeleton","skeleton fixture");
+        PlatformFile::WriteAllText(root/"locomotion.blendtree","blend tree fixture");
+        ResourceManager resources; resources.Initialize(nullptr,root);
+        auto &context = const_cast<EngineContext &>(app.m_engine.GetContext()); context.resourceManager = &resources;
+        auto &settings = const_cast<ProjectSettings &>(app.m_engine.GetProjectSettings()); const auto previous = settings;
+        settings.projectFile = root.parent_path()/"Typed.tinyproject"; settings.assetDirectory = "assets";
+        world.Clear(); const auto entity = world.CreateEntity("Animated"); world.AddComponent(entity,AnimationComponent{});
+        app.m_selected = entity; app.m_selection = {entity}; app.m_selectedAsset.clear();
+        const auto &component = *ReflectionRegistry::Get().FindComponent("Animation");
+        const auto property = std::find_if(component.properties.begin(),component.properties.end(),[](const auto &p) { return p.name == "Skeleton"; });
+        Check(app.ApplyInspectorAsset(component,*property,(root/"rig.skeleton").generic_u8string(),963) &&
+              world.GetComponent<AnimationComponent>(entity)->skeletonPath == "assets/rig.skeleton",
+              "typed skeleton fields accept registered skeleton assets");
+        const auto clip = std::find_if(component.properties.begin(),component.properties.end(),[](const auto &p) { return p.name == "Clip"; });
+        Check(app.ApplyInspectorAsset(component,*clip,(root/"locomotion.blendtree").generic_u8string(),964) &&
+              world.GetComponent<AnimationComponent>(entity)->clipPath == "assets/locomotion.blendtree",
+              "animation clip picker accepts blend trees supported by the runtime");
+        context.resourceManager = nullptr; settings = previous; resources.Shutdown();
+        app.m_messages.clear(); app.m_feedback.clear();
+        app.m_editingAsset = (root/"missing.vfx").generic_u8string(); app.m_openEffectAsset.clear();
+        Frame([&] { app.DrawEffectEditor(); }); Frame([&] { app.DrawEffectEditor(); });
+        Check(app.m_messages.size() == 1 && app.m_feedback.size() == 1,
+              "a failed asset open reports once instead of retrying every frame");
+        app.ResetSceneInteraction();
+    }
+
+    void PackagingWriteLock()
+    {
+        world.Clear(); const auto entity = world.CreateEntity("Packaging snapshot");
+        app.m_selected = entity; app.m_selection = {entity}; app.m_selectedAsset.clear();
+        const auto path = std::filesystem::absolute("Saved/EditorP0Packaging/locked.scene");
+        const auto packageInput = app.m_engine.GetSceneManager().CreateSnapshot();
+        PlatformFile::WriteAllText(path,packageInput);
+        world.CreateEntity("Unsaved addition");
+        auto &document = app.m_sceneDocuments[app.m_activeSceneDocument]; const auto previousPath = document.path;
+        document.path = path;
+        std::promise<PackageResult> completion; app.m_packageFuture = completion.get_future();
+        app.m_sceneCommandsFocused = true;
+        Key(ImGuiKey_Delete);
+        Check(world.IsAlive(entity),"packaging blocks scene keyboard writes until staging completes");
+        Check(!app.SaveCurrentScene() && PlatformFile::ReadAllText(path) == packageInput,
+              "packaging cannot overwrite source scenes while the worker reads them");
+        PackageResult result; result.success = true; result.outputDirectory = path.parent_path(); completion.set_value(result);
+        Frame([&] { app.DrawPackagingStatus(); });
+        Check(!app.m_packageFuture.valid(),"completed packaging releases the edit lock through the UI status poll");
+        document.path = previousPath; app.ResetSceneInteraction();
+    }
+
     void HierarchyCameraFocus()
     {
         world.Clear();
@@ -326,13 +1061,14 @@ struct EditorInteractionTests
         ImVec2 rowMinimum{}, rowMaximum{};
         const auto draw = [&]() {
             app.DrawHierarchy();
-            rowMinimum = ImGui::GetItemRectMin();
-            rowMaximum = ImGui::GetItemRectMax();
+            const auto *panel=ImGui::FindWindowByName("Hierarchy");
+            rowMinimum={panel->WorkRect.Min.x,panel->DC.CursorPosPrevLine.y};
+            rowMaximum={panel->WorkRect.Max.x,rowMinimum.y+panel->DC.PrevLineSize.y};
         };
         auto &io = ImGui::GetIO();
-        Frame(draw);
+        Frame(draw); Frame(draw);
         Check(rowMaximum.y > rowMinimum.y, "hierarchy exposes a clickable entity row");
-        io.AddMousePosEvent(rowMinimum.x + 38.0f, rowMaximum.y + 5.5f);
+        io.AddMousePosEvent(rowMinimum.x + 38.0f, (rowMinimum.y+rowMaximum.y)*.5f);
         Frame(draw);
         io.AddMouseButtonEvent(0, true);
         Frame(draw);
@@ -365,6 +1101,76 @@ struct EditorInteractionTests
         app.ResetSceneInteraction();
     }
 
+    void CombinedGizmo()
+    {
+        Renderer renderer; auto &context=const_cast<EngineContext &>(app.m_engine.GetContext()); context.renderer=&renderer;
+        auto &view=const_cast<FrameView &>(renderer.GetFrameView());
+        view.cameraPosition={4,3,6}; view.view=LookAt(view.cameraPosition,{}, {0,1,0}); view.projection=Perspective(60,1,.1f,100);
+        app.m_editorCameraPosition=view.cameraPosition; app.m_gizmoSpace=EditorApp::GizmoSpace::World;
+        app.m_pivotMode=EditorApp::PivotMode::Individual; app.m_gizmoSnap=false;
+        const float length=Length(view.cameraPosition)*.13f;
+        const auto project=[&](Vec3 p) {
+            const auto matrix=view.projection*view.view;
+            const float w=matrix.At(3,0)*p.x+matrix.At(3,1)*p.y+matrix.At(3,2)*p.z+matrix.At(3,3);
+            return ImVec2{50+400*(1+(matrix.At(0,0)*p.x+matrix.At(0,1)*p.y+matrix.At(0,2)*p.z+matrix.At(0,3))/w),
+                          50+400*(1-(matrix.At(1,0)*p.x+matrix.At(1,1)*p.y+matrix.At(1,2)*p.z+matrix.At(1,3))/w)};
+        };
+        const auto draw=[&] {
+            ImGui::SetNextWindowPos({0,0}); ImGui::SetNextWindowSize({1000,850});
+            ImGui::Begin("CombinedGizmo"); app.DrawGizmo(50,50,800,800,true); ImGui::End();
+        };
+        auto &io=ImGui::GetIO();
+        const auto select=[&] {
+            world.Clear(); app.ResetSceneInteraction(); app.m_undo.clear(); app.m_redo.clear(); app.m_sceneDirty=false;
+            const auto e=world.CreateEntity("Combined"); app.m_selected=e; app.m_selection={e}; Frame(draw); Frame(draw); return e;
+        };
+        const auto drag=[&](ImVec2 from,ImVec2 to,EditorApp::GizmoMode operation,int axis) {
+            io.AddMousePosEvent(from.x,from.y); Frame(draw); io.AddMouseButtonEvent(0,true); Frame(draw);
+            Check(app.m_activeGizmoAxis==axis && app.m_gizmoDragMode==operation,"combined handle chooses its operation and axis without a mode switch");
+            io.AddMousePosEvent(to.x,to.y); Frame(draw);
+            io.AddMouseButtonEvent(0,false); Frame(draw);
+        };
+        for(int axis=0;axis<3;++axis)
+        {
+            const auto e=select(); const Vec3 direction=axis==0 ? Vec3{1,0,0} : axis==1 ? Vec3{0,1,0} : Vec3{0,0,1};
+            const auto from=project(direction*(length*.52f)),center=project({});
+            drag(from,{from.x+(from.x-center.x)*.25f,from.y+(from.y-center.y)*.25f},EditorApp::GizmoMode::Scale,axis);
+            const auto *t=world.GetComponent<TransformComponent>(e);
+            // Projected axes still admit ImGui's integer mouse-coordinate rounding.
+            Check(std::abs((&t->scale.x)[axis]-1.25f)<.03f && Length(t->position)<.001f && Length(t->rotation)<.001f && app.m_undo.size()==1,
+                  "inner scale cube changes only scale and records one undo");
+            app.Undo(); Check(std::abs(world.GetComponent<TransformComponent>(*world.GetEntityManager().GetAliveEntities().begin())->scale.x-1)<.001f,
+                  "undo restores a combined scale gesture");
+        }
+        for(int axis=0;axis<3;++axis)
+        {
+            const auto e=select(); const Vec3 direction=axis==0 ? Vec3{1,0,0} : axis==1 ? Vec3{0,1,0} : Vec3{0,0,1};
+            const auto from=project(direction*length),center=project({});
+            drag(from,{from.x+(from.x-center.x)*.25f,from.y+(from.y-center.y)*.25f},EditorApp::GizmoMode::Translate,axis);
+            const auto *t=world.GetComponent<TransformComponent>(e);
+            Check(Dot(t->position,direction)>0 && Length(t->scale-Vec3{1,1,1})<.001f && Length(t->rotation)<.001f && app.m_undo.size()==1,
+                  "outer arrow changes only translation and records one undo");
+        }
+        for(int axis=0;axis<3;++axis)
+        {
+            const auto e=select(); const Vec3 u=axis==0 ? Vec3{0,1,0} : axis==1 ? Vec3{0,0,1} : Vec3{1,0,0};
+            const Vec3 v=axis==0 ? Vec3{0,0,1} : axis==1 ? Vec3{1,0,0} : Vec3{0,1,0};
+            const float first=DegreesToRadians(140),last=DegreesToRadians(175);
+            drag(project((u*std::cos(first)+v*std::sin(first))*(length*.8f)),
+                 project((u*std::cos(last)+v*std::sin(last))*(length*.8f)),EditorApp::GizmoMode::Rotate,axis);
+            const auto *t=world.GetComponent<TransformComponent>(e);
+            Check(std::abs((&t->rotation.x)[axis]-35)<2 && Length(t->position)<.001f && Length(t->scale-Vec3{1,1,1})<.001f && app.m_undo.size()==1,
+                  "rotation ring remains available after scaling and translation without a mode switch");
+        }
+        const auto e=select(); world.GetComponent<TransformComponent>(e)->rotation.z=90;
+        const auto localX=project({0,length*.52f,0}),center=project({});
+        drag(localX,{localX.x+(localX.x-center.x)*.25f,localX.y+(localX.y-center.y)*.25f},EditorApp::GizmoMode::Scale,0);
+        const auto *scaled=world.GetComponent<TransformComponent>(e);
+        Check(std::abs(scaled->scale.x-1.25f)<.03f && std::abs(scaled->scale.y-1)<.001f && Length(scaled->position)<.001f,
+              "local scale cube wins over an overlapping world translation shaft");
+        app.ResetSceneInteraction(); world.Clear(); context.renderer=nullptr;
+    }
+
     void ViewportRegression()
     {
         Renderer renderer;
@@ -380,12 +1186,12 @@ struct EditorInteractionTests
         auto project = [&](Vec3 point) {
             const auto m = view.projection * view.view;
             const float w = m.At(3, 0) * point.x + m.At(3, 1) * point.y + m.At(3, 2) * point.z + m.At(3, 3);
-            return ImVec2{50 + 200 * (1 + (m.At(0, 0) * point.x + m.At(0, 1) * point.y + m.At(0, 2) * point.z + m.At(0, 3)) / w),
-                          50 + 200 * (1 - (m.At(1, 0) * point.x + m.At(1, 1) * point.y + m.At(1, 2) * point.z + m.At(1, 3)) / w)};
+            return ImVec2{50 + 400 * (1 + (m.At(0, 0) * point.x + m.At(0, 1) * point.y + m.At(0, 2) * point.z + m.At(0, 3)) / w),
+                          50 + 400 * (1 - (m.At(1, 0) * point.x + m.At(1, 1) * point.y + m.At(1, 2) * point.z + m.At(1, 3)) / w)};
         };
         auto draw = [&]() {
-            ImGui::SetNextWindowPos({0, 0}); ImGui::SetNextWindowSize({600, 600});
-            ImGui::Begin("GizmoGeometry"); app.DrawGizmo(50, 50, 400, 400, true); ImGui::End();
+            ImGui::SetNextWindowPos({0, 0}); ImGui::SetNextWindowSize({1000,850});
+            ImGui::Begin("GizmoGeometry"); app.DrawGizmo(50, 50, 800, 800, true); ImGui::End();
         };
         auto &io = ImGui::GetIO();
         const float length = Length(view.cameraPosition) * 0.13f;
@@ -400,17 +1206,15 @@ struct EditorInteractionTests
         {
             world.Clear(); const auto entity = world.CreateEntity("Axis");
             app.ResetSceneInteraction(); app.m_selected = entity; app.m_selection = {entity}; app.m_undo.clear();
-            app.m_gizmoMode = EditorApp::GizmoMode::Translate;
             const Vec3 direction = axis == 0 ? Vec3{1, 0, 0} : axis == 1 ? Vec3{0, 1, 0} : Vec3{0, 0, 1};
-            const auto from = project(direction * (length * 0.8f)), end = project(direction * length), origin = project({});
+            const auto from = project(direction * length), end = project(direction * length), origin = project({});
             drag(from, {from.x + (end.x - origin.x) * 0.3f, from.y + (end.y - origin.y) * 0.3f}, axis);
             Check(Dot(world.GetComponent<TransformComponent>(entity)->position, direction) > 0 && app.m_undo.size() == 1,
                   "dragging along each visible arrow moves positively on that axis with one Undo");
         }
         world.Clear(); const auto scaled = world.CreateEntity("Scale");
         app.ResetSceneInteraction(); app.m_selected = scaled; app.m_selection = {scaled};
-        app.m_gizmoMode = EditorApp::GizmoMode::Scale;
-        const auto blue = project({0, 0, length}), origin = project({});
+        const auto blue = project({0, 0, length*.52f}), origin = project({});
         drag(blue, {blue.x + (blue.x - origin.x) * 0.25f, blue.y + (blue.y - origin.y) * 0.25f}, 2);
         Check(std::abs(world.GetComponent<TransformComponent>(scaled)->scale.z - 1.25f) < 0.02f,
               "blue scale handle grows in its displayed direction by the drag ratio");
@@ -419,12 +1223,11 @@ struct EditorInteractionTests
         {
             world.Clear(); const auto rotated = world.CreateEntity("Rotate");
             app.ResetSceneInteraction(); app.m_selected = rotated; app.m_selection = {rotated};
-            app.m_gizmoMode = EditorApp::GizmoMode::Rotate;
             const Vec3 u = axis == 0 ? Vec3{0, 1, 0} : axis == 1 ? Vec3{0, 0, 1} : Vec3{1, 0, 0};
             const Vec3 v = axis == 0 ? Vec3{0, 0, 1} : axis == 1 ? Vec3{1, 0, 0} : Vec3{0, 1, 0};
-            const float firstAngle = DegreesToRadians(30), lastAngle = DegreesToRadians(65);
-            drag(project((u * std::cos(firstAngle) + v * std::sin(firstAngle)) * length),
-                 project((u * std::cos(lastAngle) + v * std::sin(lastAngle)) * length), axis);
+            const float firstAngle = DegreesToRadians(140), lastAngle = DegreesToRadians(175);
+            drag(project((u * std::cos(firstAngle) + v * std::sin(firstAngle)) * (length*.8f)),
+                 project((u * std::cos(lastAngle) + v * std::sin(lastAngle)) * (length*.8f)), axis);
             const auto rotation = world.GetComponent<TransformComponent>(rotated)->rotation;
             const float angle = axis == 0 ? rotation.x : axis == 1 ? rotation.y : rotation.z;
             // ImGui 会把注入的指针位置取整到像素，角度允许相应的微小误差。
@@ -436,8 +1239,7 @@ struct EditorInteractionTests
         world.GetComponent<TransformComponent>(parent)->rotation.y = 90;
         world.GetComponent<TransformComponent>(parent)->scale = {2, 2, 2};
         app.ResetSceneInteraction(); app.m_selected = child; app.m_selection = {child};
-        app.m_gizmoMode = EditorApp::GizmoMode::Translate;
-        auto red = project({length * 0.8f, 0, 0}), redEnd = project({length, 0, 0});
+        auto red = project({length, 0, 0}), redEnd = project({length, 0, 0});
         drag(red, {red.x + (redEnd.x - origin.x) * 0.3f, red.y + (redEnd.y - origin.y) * 0.3f}, 0);
         const auto childWorld = world.GetWorldMatrix(child);
         Check(childWorld.At(0, 3) > 0 && std::abs(childWorld.At(2, 3)) < 0.001f,
@@ -821,7 +1623,7 @@ struct EditorInteractionTests
         PlatformFile::WriteAllText(assets/"child.mat",SerializeMaterialAsset(data));
         ResourceManager resources; resources.Initialize(nullptr,assets); Renderer renderer; renderer.SetResourceManager(&resources);
         EditorApp app; auto &context=const_cast<EngineContext &>(app.m_engine.GetContext()); context.resourceManager=&resources; context.renderer=&renderer;
-        const auto select=[&](const std::string &name) { for (const auto &a:resources.GetAssetRegistry().GetAssets()) if (std::filesystem::u8path(a.path).filename()==name) app.m_selectedAsset=a.path; };
+        const auto select=[&](const std::string &name) { for (const auto &a:resources.GetAssetRegistry().GetAssets()) if (std::filesystem::u8path(a.path).filename()==name) { app.SelectAsset(a.path,false); app.OpenAsset(a); } };
         const auto draw=[&] { app.DrawMaterialGraphEditor(); };
         const auto reload=[&] { auto &io=ImGui::GetIO(); io.AddKeyEvent(ImGuiMod_Ctrl,true); io.AddKeyEvent(ImGuiKey_R,true); Frame(draw); io.AddKeyEvent(ImGuiKey_R,false); io.AddKeyEvent(ImGuiMod_Ctrl,false); Frame(draw); };
         select("child.mat"); Frame(draw); data.overrides["Roughness"]=.8f; PlatformFile::WriteAllText(assets/"child.mat",SerializeMaterialAsset(data)); reload();
@@ -881,16 +1683,44 @@ struct EditorInteractionTests
 };
 } // 结束 MiniEngine 命名空间
 
-int main()
+int main(int argc, char **argv)
 {
     try
     {
+        std::cout << std::unitbuf;
         MiniEngine::EditorInteractionTests tests;
+        if (argc>1 && std::string(argv[1])!="--legacy") {
+            const std::string filter=argv[1];
+            if(filter=="--logical-ui") tests.LogicalUiMetrics();
+            else if(filter=="--dpi") tests.NativeDialogDpi();
+            else if(filter=="--ground-grid") tests.GroundGridContinuity();
+            else if(filter=="--view-cube") tests.ViewCubeNavigation();
+            else if(filter=="--combined-gizmo") tests.CombinedGizmo();
+            else if(filter=="--p1-drop") tests.P1SceneDrag();
+            else if(filter=="--p1-orbit") tests.P1OrbitStability();
+            else if(filter=="--p1-import") tests.P1HiddenImport();
+            else if(filter=="--p1-docking") tests.P1Docking();
+            else if(filter=="--p1-settings") tests.P1Settings();
+            else if(filter=="--p1-assets") tests.P1AssetWorkflow();
+            else if(filter=="--p1-scene") tests.P1SceneNavigation();
+            return 0;
+        }
+        if(argc==1) { tests.P1Settings(); tests.P1HiddenImport(); tests.P1Docking(); tests.P1AssetWorkflow(); tests.P1SceneNavigation(); tests.P1OrbitStability(); tests.P1SceneDrag(); }
+        tests.LogicalUiMetrics();
+        tests.GroundGridContinuity();
+        tests.ViewCubeNavigation();
         tests.Shortcuts();
         tests.Documents();
+        tests.AssetClicks();
+        tests.AssetGridDrag();
         tests.Inspector();
+        tests.InspectorAxisDefaults();
+        tests.InspectorBatchAndValidation();
+        tests.TypedSkeletonAndFailedOpen();
+        tests.PackagingWriteLock();
         tests.Gizmo();
         tests.HierarchyCameraFocus();
+        tests.CombinedGizmo();
         tests.ViewportRegression();
         tests.CompactWorkspace();
         tests.SceneOpenRegression();
