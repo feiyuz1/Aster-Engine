@@ -11,7 +11,7 @@ set(_tiny_sdk_include "${CMAKE_CURRENT_BINARY_DIR}/generated/sdk/include")
 set(_tiny_sdk_cmake "${CMAKE_CURRENT_BINARY_DIR}/generated/sdk/cmake")
 file(MAKE_DIRECTORY "${_tiny_sdk_include}/MiniEngine/ProjectSDK" "${_tiny_sdk_cmake}")
 
-add_library(tinyengine_project_sdk STATIC src/ProjectSDK/SDKInfo.cpp)
+add_library(tinyengine_project_sdk STATIC src/ProjectSDK/SDKInfo.cpp src/ProjectSDK/Project.cpp)
 add_library(TinyEngine::ProjectSDK ALIAS tinyengine_project_sdk)
 set_target_properties(tinyengine_project_sdk PROPERTIES EXPORT_NAME ProjectSDK)
 target_compile_features(tinyengine_project_sdk PUBLIC cxx_std_17)

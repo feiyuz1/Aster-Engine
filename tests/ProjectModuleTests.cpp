@@ -5,6 +5,12 @@
 #include "MiniEngine/Project/ProjectModuleHost.hpp"
 #include "MiniEngine/Platform/DynamicLibrary.hpp"
 #include "MiniEngine/Plugin/PluginManager.hpp"
+#include "MiniEngine/Project/ProjectHostBridge.hpp"
+#include "MiniEngine/ProjectSDK/Project.hpp"
+#include "MiniEngine/ECS/ECS.hpp"
+#include "MiniEngine/ECS/Components.hpp"
+#include "MiniEngine/Input/InputSystem.hpp"
+#include "MiniEngine/Core/Logger.hpp"
 
 #include <chrono>
 #include <cstdlib>
@@ -14,6 +20,8 @@
 #include <string>
 #include <vector>
 #include <algorithm>
+#include <thread>
+#include <limits>
 
 namespace fs = std::filesystem;
 using namespace MiniEngine;
@@ -229,6 +237,68 @@ void LoaderTests()
     Check(std::find(pluginLog.begin(), pluginLog.end(), "dynamic plugin tick") != pluginLog.end(),
           "plugin retained HostAPI remains alive after Startup");
 }
+
+struct ThrowingSession : ProjectSDK::Session
+{
+    void OnBeginPlay(ProjectSDK::Context &) override { throw std::runtime_error("test begin exception"); }
+    void OnUpdate(ProjectSDK::Context &, float) override { throw std::runtime_error("test update exception"); }
+};
+void BridgeTests()
+{
+    World world; InputSystem input; Logger logger;
+    const auto player = world.CreateEntity("Player");
+    world.AddComponent(player, TransformComponent{});
+    const auto second = world.CreateEntity("Player"); world.AddComponent(second, TransformComponent{});
+    ProjectHostBridge bridge(world, input, logger);
+    const auto &api = bridge.GetAPI(); auto *c = api.host_context;
+    TinyProjectEntity entity{999,999};
+    Check(api.find_entity(c, bridge.GetWorld(), Span(std::string("Player")), &entity) == TINY_PROJECT_NOT_READY && !entity.world_id,
+          "registration world access is not ready and clears output");
+    bridge.SetWorldAccess(true, false);
+    ProjectSDK::Context context(api, bridge.GetWorld());
+    entity = context.FindEntity("Player");
+    Check(entity.value == std::min(player, second) && context.IsAlive(entity), "duplicate names choose stable first entity");
+    TinyProjectTransform transform{};
+    Check(context.GetTransform(entity, transform), "SDK reads POD transform");
+    transform.rotation.y = 90;
+    Check(!context.SetTransform(entity, transform) && context.GetLastResult() == TINY_PROJECT_READ_ONLY &&
+          world.GetComponent<TransformComponent>(player)->rotation.y == 0, "registration_and_edit_world_read_only");
+    bridge.SetWorldAccess(true, true);
+    Check(context.SetTransform(entity, transform) && world.GetComponent<TransformComponent>(player)->rotation.y == 90,
+          "find_and_rotate_existing_entity");
+    transform.position.x = std::numeric_limits<float>::infinity();
+    Check(!context.SetTransform(entity, transform) && context.GetLastResult() == TINY_PROJECT_INVALID_ARGUMENT,
+          "nonfinite transforms are rejected");
+    InputState state{}; state.moveX = .75f; state.jump = true; input.Update(state);
+    Check(context.GetAxis("MoveX") == .75f && context.IsDown("Jump"), "input_axis_and_action_bridge");
+    const void *extension = &world;
+    Check(api.query_interface(c, Span(std::string("unknown")), 1, &extension) == TINY_PROJECT_UNSUPPORTED && !extension,
+          "unknown extension clears output");
+    Check(api.get_transform(c, entity, nullptr) == TINY_PROJECT_INVALID_ARGUMENT, "null output rejected");
+    transform.position.x = 12;
+    Check(api.get_transform(c, TinyProjectEntity{999,999}, &transform) != TINY_PROJECT_OK && transform.position.x == 0,
+          "invalid_out_parameters_are_cleared");
+    TinyProjectResult threaded = TINY_PROJECT_OK;
+    std::thread worker([&] { uint32_t alive = 99; threaded = api.is_alive(c, entity, &alive); if (alive) threaded = -1; });
+    worker.join(); Check(threaded == TINY_PROJECT_WRONG_THREAD, "wrong_thread_rejected");
+    void *memory = &world;
+    Check(api.allocate(c, 64, 3, &memory) == TINY_PROJECT_INVALID_ARGUMENT && !memory, "invalid alignment clears allocation");
+    Check(api.allocate(c, 64, 32, &memory) == TINY_PROJECT_OK && reinterpret_cast<uintptr_t>(memory) % 32 == 0,
+          "host aligned allocation succeeds"); api.deallocate(c, memory, 32);
+    const auto oldWorld = bridge.GetWorld(); world.Clear(); bridge.InvalidateWorld();
+    world.CreateEntity("Player"); uint32_t alive = 99;
+    Check(bridge.GetWorld().id != oldWorld.id && api.is_alive(c, entity, &alive) != TINY_PROJECT_OK && !alive,
+          "stale_world_entity_rejected");
+    const auto info = TinyProjectModuleInfo{};
+    const auto *exported = ProjectSDK::ExportProject<ThrowingSession>(TINY_PROJECT_ABI_VERSION, info);
+    Check(exported && !ProjectSDK::ExportProject<ThrowingSession>(99, info), "SDK adapts only supported ABI");
+    void *module = nullptr, *session = nullptr;
+    Check(exported->load(&api, &module) == TINY_PROJECT_OK && exported->create_session(module, bridge.GetWorld(), &session) == TINY_PROJECT_OK,
+          "SDK allocates module and session in same library");
+    Check(exported->begin_play(session) == TINY_PROJECT_FAILED && exported->update(session, .01f) == TINY_PROJECT_FAILED,
+          "sdk_exception_does_not_cross_c_callback");
+    exported->destroy_session(session); exported->unload(module);
+}
 }
 
 int main(int argc, char **argv)
@@ -238,6 +308,7 @@ int main(int argc, char **argv)
         const std::string group = argc == 3 && std::string(argv[1]) == "--group" ? argv[2] : "manifest";
         if (group == "manifest") ManifestTests();
         else if (group == "loader") LoaderTests();
+        else if (group == "bridge") BridgeTests();
         else throw std::runtime_error("unknown test group");
         std::cout << checks << " checks passed\n";
         return 0;

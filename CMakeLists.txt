@@ -144,6 +144,7 @@ add_library(tinyengine STATIC
     src/Project/Project.cpp
     src/Project/ProjectModuleManifest.cpp
     src/Project/ProjectModuleHost.cpp
+    src/Project/ProjectHostBridge.cpp
     src/Platform/DynamicLibrary.cpp
     src/Project/ProjectScaffolder.cpp
     src/Project/SolutionGenerator.cpp
@@ -192,8 +193,8 @@ set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
 configure_file(src/Render/BuiltinShaders.hpp.in
     "${CMAKE_CURRENT_BINARY_DIR}/generated/MiniEngine/Render/BuiltinShaders.hpp" @ONLY)
 target_include_directories(tinyengine PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
-target_compile_definitions(tinyengine PRIVATE
-    TINYENGINE_HAS_STB_VORBIS=1
+target_compile_definitions(tinyengine PRIVATE TINYENGINE_HAS_STB_VORBIS=1)
+set_property(SOURCE src/Build/BuildCompatibility.cpp APPEND PROPERTY COMPILE_DEFINITIONS
     TINYENGINE_VERSION="${PROJECT_VERSION}"
     TINYENGINE_BUILD_ID="${TINYENGINE_BUILD_ID}"
     TINYENGINE_BUILD_CONFIGURATION="$<CONFIG>"
@@ -318,6 +319,7 @@ if(TINYENGINE_BUILD_TESTS)
     target_link_libraries(tinyengine_project_module_tests PRIVATE tinyengine tinyengine_project_sdk)
     add_test(NAME tinyengine_project_manifest COMMAND tinyengine_project_module_tests --group manifest)
     add_test(NAME tinyengine_project_loader COMMAND tinyengine_project_module_tests --group loader)
+    add_test(NAME tinyengine_project_bridge COMMAND tinyengine_project_module_tests --group bridge)
     foreach(variant IN ITEMS VALID ABI SHORT OPTIONAL LARGE IDENTITY CALLBACK)
         if(variant STREQUAL "VALID")
             set(mode 0)

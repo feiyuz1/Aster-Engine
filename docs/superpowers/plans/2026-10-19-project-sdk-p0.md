@@ -173,7 +173,7 @@ ProjectModuleTests.cpp 接受 --group manifest、loader、bridge、session；各
 - Consumes: Task 1 的 HostAPI，现有 World/TransformComponent/InputSystem/Logger。
 - Produces: `ProjectHostBridge(World&,InputSystem&,Logger&)`；GetAPI() const noexcept->const TinyProjectHostAPI&、GetWorld() const noexcept->TinyProjectWorld、SetWorldAccess(bool ready,bool writable) noexcept、InvalidateWorld() noexcept；SDK Context/Session/ExportProject 签名见固定接口约定。
 
-- [ ] **Step 1: 写失败测试。** `find_and_rotate_existing_entity`、`input_axis_and_action_bridge`、`stale_world_entity_rejected`、`registration_and_edit_world_read_only`、`invalid_out_parameters_are_cleared`、`wrong_thread_rejected`、`sdk_exception_does_not_cross_c_callback`。创建 Player，写 rotation.y=90 后断言引擎值为 90；直接清理测试 World 后调用 InvalidateWorld，再复用槽位，旧句柄仍失败（真实 Engine 自动通知由 Task 5 验证）；只读期 set_transform 返回 READ_ONLY 且值不变；未知接口返回 UNSUPPORTED 并置空；非主线程 World 访问返回 WRONG_THREAD；抛异常的 SDK 回调返回 FAILED。
+- [x] **Step 1: 写失败测试。** `find_and_rotate_existing_entity`、`input_axis_and_action_bridge`、`stale_world_entity_rejected`、`registration_and_edit_world_read_only`、`invalid_out_parameters_are_cleared`、`wrong_thread_rejected`、`sdk_exception_does_not_cross_c_callback`。创建 Player，写 rotation.y=90 后断言引擎值为 90；直接清理测试 World 后调用 InvalidateWorld，再复用槽位，旧句柄仍失败（真实 Engine 自动通知由 Task 5 验证）；只读期 set_transform 返回 READ_ONLY 且值不变；未知接口返回 UNSUPPORTED 并置空；非主线程 World 访问返回 WRONG_THREAD；抛异常的 SDK 回调返回 FAILED。
 
   ```cpp
   CHECK(api.set_transform(api.host_context, player, &rotated) == TINY_PROJECT_READ_ONLY);
@@ -182,10 +182,10 @@ ProjectModuleTests.cpp 接受 --group manifest、loader、bridge、session；各
   CHECK(extension == nullptr);
   ```
 
-- [ ] **Step 2: 验证 RED。** 构建后运行 `ctest --test-dir build-project-sdk -C Debug -R '^tinyengine_project_bridge$' --output-on-failure`，失败应来自未接通的真实服务。
-- [ ] **Step 3: 实现桥接和包装。** HostAPI 为 Bridge 成员且 Bridge 不可移动；每个有效世界代次使用进程内唯一非零 ID，Clear/恢复时换 ID；find_entity 按实体句柄稳定顺序返回首个同名实体。读写复制 POD，不返回引擎对象地址；Transform 校验有限数；内存对齐参数须为有效二次幂。SDK 适配在模块内创建/销毁对象，Session 调用参数由模块内 Context 持有；C++ Session 虚接口不跨界，异常日志和状态码在适配器边界生成。
-- [ ] **Step 4: 验证 GREEN。** 运行 bridge 和 ABI 测试；夹具 DLL 仅链接 ProjectSDK。卸载前让 SDK 对象析构，确保没有宿主 delete 项目对象、没有仍使用已失效 HostAPI 的包装。
-- [ ] **Step 5: 提交。** `feat(sdk): bridge entity transforms input and project sessions`。
+- [x] **Step 2: 验证 RED。** 构建后运行 `ctest --test-dir build-project-sdk -C Debug -R '^tinyengine_project_bridge$' --output-on-failure`，失败应来自未接通的真实服务。
+- [x] **Step 3: 实现桥接和包装。** HostAPI 为 Bridge 成员且 Bridge 不可移动；每个有效世界代次使用进程内唯一非零 ID，Clear/恢复时换 ID；find_entity 按实体句柄稳定顺序返回首个同名实体。读写复制 POD，不返回引擎对象地址；Transform 校验有限数；内存对齐参数须为有效二次幂。SDK 适配在模块内创建/销毁对象，Session 调用参数由模块内 Context 持有；C++ Session 虚接口不跨界，异常日志和状态码在适配器边界生成。
+- [x] **Step 4: 验证 GREEN。** 运行 bridge 和 ABI 测试；夹具 DLL 仅链接 ProjectSDK。卸载前让 SDK 对象析构，确保没有宿主 delete 项目对象、没有仍使用已失效 HostAPI 的包装。
+- [x] **Step 5: 提交。** `feat(sdk): bridge entity transforms input and project sessions`。
 
 ### Task 5: 模块会话状态机与实际 PIE/游戏接线
 
