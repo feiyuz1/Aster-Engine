@@ -1,0 +1,12 @@
+@PACKAGE_INIT@
+
+include("${CMAKE_CURRENT_LIST_DIR}/TinyEngineTargets.cmake")
+foreach(_tiny_config Debug Release RelWithDebInfo MinSizeRel)
+    if(EXISTS "${CMAKE_CURRENT_LIST_DIR}/TinyEngineSDKInfo-${_tiny_config}.cmake")
+        include("${CMAKE_CURRENT_LIST_DIR}/TinyEngineSDKInfo-${_tiny_config}.cmake")
+    endif()
+endforeach()
+if(EXISTS "${CMAKE_CURRENT_LIST_DIR}/TinyEngineProject.cmake")
+    include("${CMAKE_CURRENT_LIST_DIR}/TinyEngineProject.cmake")
+endif()
+check_required_components(TinyEngine)

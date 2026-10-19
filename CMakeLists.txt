@@ -30,6 +30,8 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+include(cmake/ProjectSDK.cmake)
+
 find_package(SDL2 CONFIG QUIET)
 if (NOT SDL2_FOUND)
     set(SDL_SHARED OFF CACHE BOOL "" FORCE)
@@ -304,6 +306,10 @@ endif()
 
 if(TINYENGINE_BUILD_TESTS)
     enable_testing()
+    add_executable(tinyengine_project_sdk_abi_tests tests/ProjectSDKAbiTests.cpp tests/ProjectSDKAbiC.c)
+    target_include_directories(tinyengine_project_sdk_abi_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/include")
+    target_link_libraries(tinyengine_project_sdk_abi_tests PRIVATE tinyengine_project_sdk)
+    add_test(NAME tinyengine_project_sdk_abi COMMAND tinyengine_project_sdk_abi_tests)
     # 只有启用测试目标时才开放测试读取接口，正常构建不会带上这些入口。
     target_compile_definitions(tinyengine PUBLIC TINYENGINE_TEST_HOOKS=1)
     add_executable(tinyengine_material_tests tests/MaterialSystemTests.cpp)

@@ -98,7 +98,7 @@ ProjectModuleTests.cpp 接受 --group manifest、loader、bridge、session；各
 - Consumes: 现有 CMake 引擎版本/修订/编译器变量及上述固定 C 契约。
 - Produces: tinyengine_project_sdk（安装名 TinyEngine::ProjectSDK）；ProjectSDK/BuildInfo.h 中的 TINYENGINE_PROJECT_SDK_BUILD_ID；MiniEngine::ProjectSDK::GetSDKBuildId() noexcept->const char*；安装包的 include、lib 和 lib/cmake/TinyEngine。
 
-- [ ] **Step 1: 写失败测试。** 新增 C 与 C++ ABI 目标，测试 `c_header_is_self_contained`、`cpp17_header_is_self_contained`、`entity_handle_layout` 和 `sdk_identity_is_nonempty`。核心断言：`sizeof(TinyProjectEntity)==16`、`sizeof(TinyProjectVec3)==12`、`offsetof(TinyProjectHostAPI,host_context)==8`、`TINY_PROJECT_ABI_VERSION==1`；C 和 C++ 得到相同布局。编译命令只包含 SDK 公开头目录。
+- [x] **Step 1: 写失败测试。** 新增 C 与 C++ ABI 目标，测试 `c_header_is_self_contained`、`cpp17_header_is_self_contained`、`entity_handle_layout` 和 `sdk_identity_is_nonempty`。核心断言：`sizeof(TinyProjectEntity)==16`、`sizeof(TinyProjectVec3)==12`、`offsetof(TinyProjectHostAPI,host_context)==8`、`TINY_PROJECT_ABI_VERSION==1`；C 和 C++ 得到相同布局。编译命令只包含 SDK 公开头目录。
 
   ```cpp
   CHECK(sizeof(TinyProjectEntity) == 16);
@@ -106,10 +106,10 @@ ProjectModuleTests.cpp 接受 --group manifest、loader、bridge、session；各
   CHECK(MiniEngine::ProjectSDK::GetSDKBuildId()[0] != '\0');
   ```
 
-- [ ] **Step 2: 验证 RED。** 配置后执行 `cmake --build build-project-sdk --config Debug --target tinyengine_project_sdk_abi_tests`，预期缺少新头/SDK 符号，不能把原工程配置错误当作 RED。
-- [ ] **Step 3: 实现基础 SDK 和安装配置。** 声明固定契约，生成按配置的 BuildInfo.h，静态包装库只包含 SDK 身份实现；使用 CMakePackageConfigHelpers 和安装导出集，不调用 find_dependency(SDL2/OpenGL/ImGui)。标注 C++17 和 Windows-x64 支持条件，公开接口不 include 内部引擎头。
-- [ ] **Step 4: 验证 GREEN。** 构建相同目标；执行 `ctest --test-dir build-project-sdk -C Debug -R '^tinyengine_project_sdk_abi$' --output-on-failure`，预期全部断言通过。配置一次 Release，确认其 ID 与 Debug 不同且头/库一致。
-- [ ] **Step 5: 提交本任务涉及文件。** `git diff --check` 后提交 `feat(sdk): add installable project ABI foundation`，不包含工作区其他文件。
+- [x] **Step 2: 验证 RED。** 配置后执行 `cmake --build build-project-sdk --config Debug --target tinyengine_project_sdk_abi_tests`，预期缺少新头/SDK 符号，不能把原工程配置错误当作 RED。
+- [x] **Step 3: 实现基础 SDK 和安装配置。** 声明固定契约，生成按配置的 BuildInfo.h，静态包装库只包含 SDK 身份实现；使用 CMakePackageConfigHelpers 和安装导出集，不调用 find_dependency(SDL2/OpenGL/ImGui)。标注 C++17 和 Windows-x64 支持条件，公开接口不 include 内部引擎头。
+- [x] **Step 4: 验证 GREEN。** 构建相同目标；执行 `ctest --test-dir build-project-sdk -C Debug -R '^tinyengine_project_sdk_abi$' --output-on-failure`，预期全部断言通过。配置一次 Release，确认其 ID 与 Debug 不同且头/库一致。
+- [x] **Step 5: 提交本任务涉及文件。** `git diff --check` 后提交 `feat(sdk): add installable project ABI foundation`，不包含工作区其他文件。
 
 ### Task 2: 项目代码配置、模块清单和身份校验
 
