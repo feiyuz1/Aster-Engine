@@ -147,7 +147,7 @@ ProjectModuleTests.cpp 接受 --group manifest、loader、bridge、session；各
 - Consumes: Task 1/2 的 C ABI 和 ProjectModuleSelection。
 - Produces: move-only `DynamicLibrary`，Open(const std::filesystem::path&,const std::vector<std::filesystem::path>&,std::string* error=nullptr)->bool、FindSymbol(const char*) const->void*、Close() noexcept；ProjectModuleHost::Load(const ProjectModuleSelection&,const TinyProjectHostAPI&)->bool、Close() noexcept、GetLastError() const->const std::string&、GetState() const->ProjectModuleState、GetLoadedBuildId() const->const std::string&、GetLoadedLibraryPath() const->const std::filesystem::path&、GetLoadedPdbPath() const->const std::filesystem::path&；ProjectModuleState={Unconfigured,Missing,Incompatible,Registered,Playing,Faulted,Closed}。
 
-- [ ] **Step 1: 写失败测试。** `real_module_loads`、`missing_entry_rejected`、`abi_and_short_table_rejected`、`binary_identity_must_match_manifest`、`only_valid_modules_reach_load_callback`、`unicode_shadow_copy_loads`、`close_is_idempotent`。事件日志验证 load/unload 各一次；不兼容库不调用 load；复制后的真实加载路径位于 Library/ProjectModules/<BuildId>。追加通用插件测试：Startup 结束后，Tick 仍可安全通过保留的 HostAPI 记录日志。
+- [x] **Step 1: 写失败测试。** `real_module_loads`、`missing_entry_rejected`、`abi_and_short_table_rejected`、`binary_identity_must_match_manifest`、`only_valid_modules_reach_load_callback`、`unicode_shadow_copy_loads`、`close_is_idempotent`。事件日志验证 load/unload 各一次；不兼容库不调用 load；复制后的真实加载路径位于 Library/ProjectModules/<BuildId>。追加通用插件测试：Startup 结束后，Tick 仍可安全通过保留的 HostAPI 记录日志。
 
   ```cpp
   CHECK(host.Load(validSelection, hostApi));
@@ -157,10 +157,10 @@ ProjectModuleTests.cpp 接受 --group manifest、loader、bridge、session；各
 
   项目测试夹具通过 Host 日志记录固定事件字符串 load/create/begin/update/end/destroy/unload；失败夹具用于断言回调未发生，不通过假模块返回值替代动态装载。
 
-- [ ] **Step 2: 验证 RED。** 构建有效/缺入口夹具及 module_tests，运行 `ctest --test-dir build-project-sdk -C Debug -R '^tinyengine_project_loader$' --output-on-failure`；观察缺装载能力和 HostAPI 生命周期断言失败。
-- [ ] **Step 3: 实现 RAII 与模块 Load/Close。** Windows 使用明确 DLL 依赖搜索目录，失败带 Windows 错误码/路径；不改变进程 cwd 或全局 PATH。先校验清单/文件，再影子复制库、匹配 PDB（存在时）及依赖，然后查入口、前缀、逐字段大小、必需回调及实际身份，最后调用 load。失败释放本次全部句柄/上下文并清空输出；模块请求未知 ABI 返回 null。P0 不实现活跃进程内重新 Load，重复请求清晰拒绝。DynamicLibrary 保留已有非 Windows 通用插件的 dlopen 分支；项目 SDK 的首版支持范围仍为 Windows。
-- [ ] **Step 4: 回归与 GREEN。** PluginManager 复用 DynamicLibrary，保留原公开 API/诊断语义，为各插件提供地址稳定的 HostAPI 所有者；运行 loader 测试和 `tinyengine_core|tinyengine_extended` 中通用插件验证，确认 Startup 后 HostAPI 仍有效。新增函数表尾部字段的测试验证未知更大结构可接受、缺少可选尾字段不会越界读取。
-- [ ] **Step 5: 提交。** `feat(project): load validated project modules with owned libraries`。
+- [x] **Step 2: 验证 RED。** 构建有效/缺入口夹具及 module_tests，运行 `ctest --test-dir build-project-sdk -C Debug -R '^tinyengine_project_loader$' --output-on-failure`；观察缺装载能力和 HostAPI 生命周期断言失败。
+- [x] **Step 3: 实现 RAII 与模块 Load/Close。** Windows 使用明确 DLL 依赖搜索目录，失败带 Windows 错误码/路径；不改变进程 cwd 或全局 PATH。先校验清单/文件，再影子复制库、匹配 PDB（存在时）及依赖，然后查入口、前缀、逐字段大小、必需回调及实际身份，最后调用 load。失败释放本次全部句柄/上下文并清空输出；模块请求未知 ABI 返回 null。P0 不实现活跃进程内重新 Load，重复请求清晰拒绝。DynamicLibrary 保留已有非 Windows 通用插件的 dlopen 分支；项目 SDK 的首版支持范围仍为 Windows。
+- [x] **Step 4: 回归与 GREEN。** PluginManager 复用 DynamicLibrary，保留原公开 API/诊断语义，为各插件提供地址稳定的 HostAPI 所有者；运行 loader 测试和 `tinyengine_core|tinyengine_extended` 中通用插件验证，确认 Startup 后 HostAPI 仍有效。新增函数表尾部字段的测试验证未知更大结构可接受、缺少可选尾字段不会越界读取。
+- [x] **Step 5: 提交。** `feat(project): load validated project modules with owned libraries`。
 
 ### Task 4: World/输入桥接与 C++ 会话包装
 

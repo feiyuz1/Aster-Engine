@@ -2,6 +2,9 @@
 #include "MiniEngine/Project/Project.hpp"
 #include "MiniEngine/ProjectSDK/SDKInfo.hpp"
 #include "MiniEngine/Platform/Platform.hpp"
+#include "MiniEngine/Project/ProjectModuleHost.hpp"
+#include "MiniEngine/Platform/DynamicLibrary.hpp"
+#include "MiniEngine/Plugin/PluginManager.hpp"
 
 #include <chrono>
 #include <cstdlib>
@@ -9,6 +12,8 @@
 #include <iostream>
 #include <stdexcept>
 #include <string>
+#include <vector>
+#include <algorithm>
 
 namespace fs = std::filesystem;
 using namespace MiniEngine;
@@ -166,6 +171,64 @@ void ManifestTests()
     Check(LoadProjectModuleSelection(settings, ProjectCodeProfile::Development, selection, &error),
           "profiles can retain different SDK identities without invalidating Development");
 }
+
+void TINY_PROJECT_CALL RecordEvent(void *context, uint32_t, TinyProjectString text)
+{
+    static_cast<std::vector<std::string> *>(context)->emplace_back(text.data, static_cast<size_t>(text.size));
+}
+void LoaderTests()
+{
+    Fixture f;
+    std::vector<std::string> events;
+    TinyProjectHostAPI api{}; api.abi_version = TINY_PROJECT_ABI_VERSION; api.struct_size = sizeof(api);
+    api.host_context = &events; api.log = &RecordEvent;
+    ProjectModuleSelection selection; std::string error;
+    Check(LoadProjectModuleSelection(f.Settings(), ProjectCodeProfile::Development, selection, &error), "loader fixture manifest");
+    const auto put = [&](const fs::path &source) { fs::copy_file(source, selection.libraryPath, fs::copy_options::overwrite_existing); };
+    put(fs::u8path(TINY_TEST_PROJECT_VALID));
+    DynamicLibrary direct;
+    Check(direct.Open(selection.libraryPath, {}, &error), "RAII opens real unicode DLL path");
+    const auto entry = reinterpret_cast<TinyProjectGetAPIFn>(direct.FindSymbol(TINY_PROJECT_ENTRY_POINT));
+    Check(entry && !entry(99), "module refuses unknown ABI");
+    DynamicLibrary moved(std::move(direct));
+    Check(!direct.FindSymbol(TINY_PROJECT_ENTRY_POINT) && moved.FindSymbol(TINY_PROJECT_ENTRY_POINT), "library ownership moves");
+    moved.Close(); moved.Close();
+    ProjectModuleHost host;
+    Check(host.Load(selection, api), "real_module_loads");
+    Check(events == std::vector<std::string>{"load"}, "load does not create gameplay session");
+    Check(host.GetLoadedBuildId() == selection.projectBuildId && host.GetState() == ProjectModuleState::Registered,
+          "registered module exposes build identity");
+    Check(host.GetLoadedLibraryPath().parent_path() == f.projectRoot / "Library/ProjectModules/build-1",
+          "unicode_shadow_copy_loads");
+    Check(!host.Load(selection, api), "loaded module rejects repeated Load");
+    host.Close(); host.Close();
+    Check(events == std::vector<std::string>({"load", "unload"}) && host.GetLoadedBuildId().empty(), "close_is_idempotent");
+    const char *invalid[] = {TINY_TEST_PROJECT_MISSING, TINY_TEST_PROJECT_ABI, TINY_TEST_PROJECT_SHORT,
+                            TINY_TEST_PROJECT_IDENTITY, TINY_TEST_PROJECT_CALLBACK};
+    for (const auto *binary : invalid)
+    {
+        put(fs::u8path(binary)); events.clear(); ProjectModuleHost rejected;
+        Check(!rejected.Load(selection, api) && !rejected.GetLastError().empty(), "incompatible real binary rejected");
+        Check(events.empty() && rejected.GetLoadedLibraryPath().empty(), "only_valid_modules_reach_load_callback");
+    }
+    const char *compatible[] = {TINY_TEST_PROJECT_OPTIONAL, TINY_TEST_PROJECT_LARGE};
+    for (const auto *binary : compatible)
+    {
+        put(fs::u8path(binary)); events.clear(); ProjectModuleHost compatibleHost;
+        Check(compatibleHost.Load(selection, api), "optional absent tail or larger API accepted");
+        compatibleHost.Close();
+        Check(events == std::vector<std::string>({"load", "unload"}), "compatible table unloads exactly once");
+    }
+    fs::remove(selection.libraryPath);
+    ProjectModuleHost missing;
+    Check(!missing.Load(selection, api) && missing.GetState() == ProjectModuleState::Missing, "missing DLL state is explicit");
+    PluginManager plugins; std::vector<std::string> pluginLog;
+    plugins.SetLogCallback([&](TinyPluginLogLevel, const std::string &s) { pluginLog.push_back(s); });
+    Check(plugins.Load(fs::u8path(TINY_TEST_DYNAMIC_PLUGIN)), "existing plugin ABI still loads");
+    plugins.Tick(0.016); plugins.UnloadAll();
+    Check(std::find(pluginLog.begin(), pluginLog.end(), "dynamic plugin tick") != pluginLog.end(),
+          "plugin retained HostAPI remains alive after Startup");
+}
 }
 
 int main(int argc, char **argv)
@@ -173,8 +236,9 @@ int main(int argc, char **argv)
     try
     {
         const std::string group = argc == 3 && std::string(argv[1]) == "--group" ? argv[2] : "manifest";
-        if (group != "manifest") throw std::runtime_error("unknown test group");
-        ManifestTests();
+        if (group == "manifest") ManifestTests();
+        else if (group == "loader") LoaderTests();
+        else throw std::runtime_error("unknown test group");
         std::cout << checks << " checks passed\n";
         return 0;
     }

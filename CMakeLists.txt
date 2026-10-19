@@ -143,6 +143,8 @@ add_library(tinyengine STATIC
     src/Gameplay/Gameplay.cpp
     src/Project/Project.cpp
     src/Project/ProjectModuleManifest.cpp
+    src/Project/ProjectModuleHost.cpp
+    src/Platform/DynamicLibrary.cpp
     src/Project/ProjectScaffolder.cpp
     src/Project/SolutionGenerator.cpp
     src/Project/ProjectPackager.cpp
@@ -315,6 +317,36 @@ if(TINYENGINE_BUILD_TESTS)
     add_executable(tinyengine_project_module_tests tests/ProjectModuleTests.cpp)
     target_link_libraries(tinyengine_project_module_tests PRIVATE tinyengine tinyengine_project_sdk)
     add_test(NAME tinyengine_project_manifest COMMAND tinyengine_project_module_tests --group manifest)
+    add_test(NAME tinyengine_project_loader COMMAND tinyengine_project_module_tests --group loader)
+    foreach(variant IN ITEMS VALID ABI SHORT OPTIONAL LARGE IDENTITY CALLBACK)
+        if(variant STREQUAL "VALID")
+            set(mode 0)
+        elseif(variant STREQUAL "ABI")
+            set(mode 1)
+        elseif(variant STREQUAL "SHORT")
+            set(mode 2)
+        elseif(variant STREQUAL "OPTIONAL")
+            set(mode 3)
+        elseif(variant STREQUAL "LARGE")
+            set(mode 4)
+        elseif(variant STREQUAL "IDENTITY")
+            set(mode 5)
+        else()
+            set(mode 6)
+        endif()
+        add_library(tinyengine_test_project_${variant} SHARED tests/TestProjectModule.cpp)
+        target_link_libraries(tinyengine_test_project_${variant} PRIVATE tinyengine_project_sdk)
+        target_compile_definitions(tinyengine_test_project_${variant} PRIVATE
+            TINY_TEST_MODE=${mode} TINY_TEST_PROFILE="$<IF:$<CONFIG:Debug>,Development,Shipping>")
+        target_compile_definitions(tinyengine_project_module_tests PRIVATE
+            TINY_TEST_PROJECT_${variant}="$<TARGET_FILE:tinyengine_test_project_${variant}>")
+        add_dependencies(tinyengine_project_module_tests tinyengine_test_project_${variant})
+    endforeach()
+    add_library(tinyengine_test_project_MISSING SHARED tests/TestProjectMissingEntry.cpp)
+    target_compile_definitions(tinyengine_project_module_tests PRIVATE
+        TINY_TEST_PROJECT_MISSING="$<TARGET_FILE:tinyengine_test_project_MISSING>"
+        TINY_TEST_DYNAMIC_PLUGIN="$<TARGET_FILE:tinyengine_test_dynamic_plugin>")
+    add_dependencies(tinyengine_project_module_tests tinyengine_test_project_MISSING tinyengine_test_dynamic_plugin)
     # 只有启用测试目标时才开放测试读取接口，正常构建不会带上这些入口。
     target_compile_definitions(tinyengine PUBLIC TINYENGINE_TEST_HOOKS=1)
     add_executable(tinyengine_material_tests tests/MaterialSystemTests.cpp)

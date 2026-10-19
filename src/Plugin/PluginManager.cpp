@@ -9,30 +9,10 @@
 #include <cstdlib>
 #include <new>
 
-#ifdef _WIN32
-#define WIN32_LEAN_AND_MEAN
-#define NOMINMAX
-#include <Windows.h>
-#else
-#include <dlfcn.h>
-#endif
+#include <malloc.h>
 
 namespace MiniEngine
 {
-namespace
-{
-void CloseLibrary(void *library)
-{
-    if (!library)
-        return;
-#ifdef _WIN32
-    FreeLibrary(static_cast<HMODULE>(library));
-#else
-    dlclose(library);
-#endif
-}
-} // 结束匿名命名空间
-
 PluginManager::~PluginManager()
 {
     UnloadAll();
@@ -46,37 +26,26 @@ void PluginManager::SetLogCallback(LogCallback callback)
 bool PluginManager::Load(const std::filesystem::path &path)
 {
     m_lastError.clear();
-#ifdef _WIN32
-    void *library = static_cast<void *>(LoadLibraryW(path.wstring().c_str()));
-    auto getApi =
-        library ? reinterpret_cast<TinyPluginGetAPIFn>(GetProcAddress(static_cast<HMODULE>(library), TINY_PLUGIN_ENTRY_POINT)) : nullptr;
-#else
-    void *library = dlopen(path.string().c_str(), RTLD_NOW | RTLD_LOCAL);
-    auto getApi = library ? reinterpret_cast<TinyPluginGetAPIFn>(dlsym(library, TINY_PLUGIN_ENTRY_POINT)) : nullptr;
-#endif
-    if (!library || !getApi)
+    DynamicLibrary library;
+    if (!library.Open(path, {std::filesystem::absolute(path).parent_path()}, &m_lastError)) return false;
+    auto getApi = reinterpret_cast<TinyPluginGetAPIFn>(library.FindSymbol(TINY_PLUGIN_ENTRY_POINT));
+    if (!getApi)
     {
-        m_lastError = library ? "Plugin entry point is missing" : "Plugin library could not be opened";
-        CloseLibrary(library);
+        m_lastError = "Plugin entry point is missing";
         return false;
     }
     const TinyPluginAPI *api = getApi(TINY_PLUGIN_ABI_VERSION);
-    if (!Register(library, api))
-    {
-        CloseLibrary(library);
-        return false;
-    }
-    return true;
+    return Register(std::move(library), api);
 }
 
 bool PluginManager::RegisterStatic(const TinyPluginAPI *api)
 {
     m_lastError.clear();
-    return Register(nullptr, api);
+    return Register({}, api);
 }
 
 // 在调用插件代码前验证 ABI 版本、结构尺寸和必需函数；失败时立即归还动态库句柄。
-bool PluginManager::Register(void *library, const TinyPluginAPI *api)
+bool PluginManager::Register(DynamicLibrary library, const TinyPluginAPI *api)
 {
     if (!api || api->abi_version != TINY_PLUGIN_ABI_VERSION || api->struct_size < sizeof(TinyPluginAPI) || !api->name || !api->startup ||
         !api->shutdown)
@@ -89,14 +58,15 @@ bool PluginManager::Register(void *library, const TinyPluginAPI *api)
         m_lastError = "A plugin with the same name is already loaded";
         return false;
     }
-    const TinyPluginHostAPI host{TINY_PLUGIN_ABI_VERSION,   sizeof(TinyPluginHostAPI),      this,
-                                 &PluginManager::LogBridge, &PluginManager::AllocateBridge, &PluginManager::DeallocateBridge};
-    if (api->startup(&host) == 0)
+    auto host = std::make_unique<TinyPluginHostAPI>(TinyPluginHostAPI{
+        TINY_PLUGIN_ABI_VERSION, sizeof(TinyPluginHostAPI), this,
+        &PluginManager::LogBridge, &PluginManager::AllocateBridge, &PluginManager::DeallocateBridge});
+    if (api->startup(host.get()) == 0)
     {
         m_lastError = "Plugin startup rejected the host";
         return false;
     }
-    m_plugins.push_back({library, api, api->name});
+    m_plugins.push_back({std::move(library), api, api->name, std::move(host)});
     return true;
 }
 
@@ -113,7 +83,7 @@ void PluginManager::UnloadAll()
     for (auto plugin = m_plugins.rbegin(); plugin != m_plugins.rend(); ++plugin)
     {
         plugin->api->shutdown();
-        CloseLibrary(plugin->library);
+        plugin->library.Close();
     }
     m_plugins.clear();
 }

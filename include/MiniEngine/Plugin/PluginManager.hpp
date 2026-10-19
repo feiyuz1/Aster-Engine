@@ -6,9 +6,11 @@
 #pragma once
 
 #include "MiniEngine/Plugin/PluginAPI.h"
+#include "MiniEngine/Platform/DynamicLibrary.hpp"
 
 #include <filesystem>
 #include <functional>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -46,15 +48,16 @@ class PluginManager
   private:
     struct LoadedPlugin
     {
-        void *library = nullptr;
+        DynamicLibrary library;
         const TinyPluginAPI *api = nullptr;
         std::string name;
+        std::unique_ptr<TinyPluginHostAPI> host;
     };
     /// @brief 注册对象或处理器。
     /// @param library 接口所需的输入参数。
     /// @param api 插件或宿主 API 函数表。
     /// @return 操作成功时返回 `true`，否则返回 `false`。
-    bool Register(void *library, const TinyPluginAPI *api);
+    bool Register(DynamicLibrary library, const TinyPluginAPI *api);
     /// @brief 记录日志 `Bridge`。
     /// @param context 要处理的输入或输出数据。
     /// @param level 日志、Mip 或层级值。
