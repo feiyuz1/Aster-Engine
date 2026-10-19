@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <cstring>
 #include <cwctype>
+#include <cmath>
 #include <fstream>
 #include <set>
 
@@ -31,6 +32,7 @@ bool Inside(const fs::path &root, const fs::path &path)
 ProjectModuleHost::~ProjectModuleHost() { Close(); }
 void ProjectModuleHost::Release() noexcept
 {
+    EndPlay();
     if (m_module && m_api.unload) { try { m_api.unload(m_module); } catch (...) {} }
     m_module = nullptr; m_api = {}; m_library.Close(); m_host = {};
     m_libraryPath.clear(); m_pdbPath.clear(); m_buildId.clear();
@@ -93,6 +95,42 @@ bool ProjectModuleHost::Load(const ProjectModuleSelection &selection, const Tiny
     }
     catch (const std::exception &e) { return Fail(ProjectModuleState::Faulted, e.what()); }
     catch (...) { return Fail(ProjectModuleState::Faulted, "Project module load threw an exception"); }
+}
+bool ProjectModuleHost::BeginPlay(TinyProjectWorld world)
+{
+    if (m_state != ProjectModuleState::Registered || !world.id) return false;
+    m_lastError.clear();
+    try
+    {
+        if (m_api.create_session(m_module,world,&m_session) != TINY_PROJECT_OK || !m_session)
+            m_lastError = "Project create_session failed";
+        else if (m_api.begin_play(m_session) != TINY_PROJECT_OK)
+            m_lastError = "Project begin_play failed";
+        else { m_begun=true; m_state=ProjectModuleState::Playing; return true; }
+    }
+    catch (...) { m_lastError="Project session startup threw an exception"; }
+    m_state=ProjectModuleState::Faulted; EndPlay(); return false;
+}
+bool ProjectModuleHost::Step(TinyProjectResult (TINY_PROJECT_CALL *callback)(void *,float),float dt,const char *name)
+{
+    if (m_state != ProjectModuleState::Playing || !m_session) return false;
+    if (std::isfinite(dt) && dt >= 0)
+    {
+        try { if (!callback || callback(m_session,dt)==TINY_PROJECT_OK) return true; }
+        catch (...) {}
+    }
+    m_lastError=std::string("Project ")+name+" failed"; m_state=ProjectModuleState::Faulted; return false;
+}
+bool ProjectModuleHost::Update(float dt) { return Step(m_api.update,dt,"update"); }
+bool ProjectModuleHost::FixedUpdate(float dt) { return Step(m_api.fixed_update,dt,"fixed_update"); }
+bool ProjectModuleHost::LateUpdate(float dt) { return Step(m_api.late_update,dt,"late_update"); }
+void ProjectModuleHost::EndPlay() noexcept
+{
+    if (!m_session) return;
+    if (m_begun) { m_begun=false; try { m_api.end_play(m_session); } catch (...) { m_state=ProjectModuleState::Faulted; } }
+    auto *session=m_session; m_session=nullptr;
+    try { m_api.destroy_session(session); } catch (...) { m_state=ProjectModuleState::Faulted; }
+    if (m_state==ProjectModuleState::Playing) m_state=ProjectModuleState::Registered;
 }
 void ProjectModuleHost::Close() noexcept { Release(); m_state = ProjectModuleState::Closed; }
 }

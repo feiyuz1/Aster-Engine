@@ -238,6 +238,43 @@ void LoaderTests()
           "plugin retained HostAPI remains alive after Startup");
 }
 
+void SessionTests()
+{
+    Fixture f; ProjectModuleSelection selection; std::string error;
+    Check(LoadProjectModuleSelection(f.Settings(),ProjectCodeProfile::Development,selection,&error), "session fixture manifest");
+    std::vector<std::string> events; TinyProjectHostAPI api{};
+    api.abi_version=1; api.struct_size=sizeof(api); api.host_context=&events; api.log=&RecordEvent;
+    const auto put = [&](const char *source) { fs::copy_file(fs::u8path(source),selection.libraryPath,fs::copy_options::overwrite_existing); };
+    put(TINY_TEST_PROJECT_VALID);
+    {
+        ProjectModuleHost host; Check(host.Load(selection,api), "session module load");
+        for (int i=0;i<2;++i)
+        {
+            Check(host.BeginPlay({42}) && host.Update(.1f) && host.FixedUpdate(.1f) && host.LateUpdate(.1f), "session callbacks run");
+            host.EndPlay(); host.EndPlay();
+        }
+        Check(std::count(events.begin(),events.end(),"begin")==2 && std::count(events.begin(),events.end(),"destroy")==2,
+              "session_begin_end_twice");
+        Check(host.BeginPlay({43}), "close active session fixture"); host.Close(); host.Close();
+        Check(events[events.size()-3]=="end" && events[events.size()-2]=="destroy" && events.back()=="unload",
+              "close orders end destroy unload");
+    }
+    for (const auto *binary : {TINY_TEST_PROJECT_BEGINFAIL,TINY_TEST_PROJECT_CREATEFAIL})
+    {
+        put(binary); events.clear(); ProjectModuleHost host;
+        Check(host.Load(selection,api) && !host.BeginPlay({42}), "create_or_begin_failure_cleans_once");
+        host.EndPlay(); host.Close();
+        Check(std::count(events.begin(),events.end(),"destroy")==1 && std::count(events.begin(),events.end(),"end")==0 &&
+              !host.GetLastError().empty(), "failed begin is destroyed without EndPlay and preserves diagnostic");
+    }
+    put(TINY_TEST_PROJECT_UPDATEFAIL); events.clear(); ProjectModuleHost host;
+    Check(host.Load(selection,api) && host.BeginPlay({42}) && !host.Update(.1f), "update_failure_faults_session");
+    Check(host.GetState()==ProjectModuleState::Faulted && !host.Update(.1f) && !host.FixedUpdate(.1f), "fault prevents further callbacks");
+    host.EndPlay(); host.Close();
+    Check(std::count(events.begin(),events.end(),"update")==1 && std::count(events.begin(),events.end(),"end")==1 &&
+          std::count(events.begin(),events.end(),"destroy")==1, "faulted active session cleans once");
+}
+
 struct ThrowingSession : ProjectSDK::Session
 {
     void OnBeginPlay(ProjectSDK::Context &) override { throw std::runtime_error("test begin exception"); }
@@ -309,6 +346,7 @@ int main(int argc, char **argv)
         if (group == "manifest") ManifestTests();
         else if (group == "loader") LoaderTests();
         else if (group == "bridge") BridgeTests();
+        else if (group == "session") SessionTests();
         else throw std::runtime_error("unknown test group");
         std::cout << checks << " checks passed\n";
         return 0;

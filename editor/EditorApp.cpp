@@ -1347,17 +1347,20 @@ void EditorApp::DrawMenuBar()
         ImGui::SameLine();
         if (ImGui::Button(Localize("Play", "运行")))
         {
-            m_engine.EnterPlayMode();
-            Notify(Localize("Entered play mode", "已进入运行模式"));
+            if (m_engine.EnterPlayMode()) Notify(Localize("Entered play mode", "已进入运行模式"));
+            else Notify(m_engine.GetProjectCodeError().empty() ? Localize("Cannot enter play mode", "无法进入运行模式") : m_engine.GetProjectCodeError(), FeedbackKind::Error);
         }
     }
     else
     {
         if (ImGui::Button(Localize("Stop", "停止")))
         {
-            m_engine.ExitPlayMode();
-            ResetSceneInteraction();
-            Notify(Localize("Play mode stopped; edit scene restored", "运行模式已停止，编辑场景已恢复"), FeedbackKind::Success);
+            if (m_engine.ExitPlayMode())
+            {
+                ResetSceneInteraction();
+                Notify(Localize("Play mode stopped; edit scene restored", "运行模式已停止，编辑场景已恢复"), FeedbackKind::Success);
+            }
+            else Notify(Localize("Could not restore edit scene", "恢复编辑场景失败"), FeedbackKind::Error);
         }
     }
     ImGui::SameLine();

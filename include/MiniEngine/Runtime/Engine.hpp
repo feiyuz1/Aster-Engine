@@ -18,6 +18,8 @@
 #include "MiniEngine/Platform/Platform.hpp"
 #include "MiniEngine/Plugin/PluginManager.hpp"
 #include "MiniEngine/Project/Project.hpp"
+#include "MiniEngine/Project/ProjectHostBridge.hpp"
+#include "MiniEngine/Project/ProjectModuleHost.hpp"
 #include "MiniEngine/Render/Renderer.hpp"
 #include "MiniEngine/Resource/AssetStreaming.hpp"
 #include "MiniEngine/Resource/ResourceManager.hpp"
@@ -120,6 +122,8 @@ class Engine : private WorldListener
     /// @brief 获取 `PluginManager`。
     /// @return 返回对应对象的引用；有效期不超过其所属对象。
     PluginManager &GetPluginManager();
+    ProjectModuleHost &GetProjectModuleHost() { return *m_projectModuleHost; }
+    const std::string &GetProjectCodeError() const { return m_projectCodeError; }
     /// @brief 请求退出主循环；下一帧检查点结束 Run。
     void RequestExit();
 
@@ -157,6 +161,10 @@ class Engine : private WorldListener
     PluginManager m_pluginManager;
     ProjectSettings m_projectSettings;
     SceneManager m_sceneManager{&m_world};
+    ProjectHostBridge m_projectBridge{m_world,m_inputSystem,m_logger};
+    std::unique_ptr<ProjectModuleHost> m_projectModuleHost=std::make_unique<ProjectModuleHost>();
+    std::string m_projectCodeError;
+    bool m_useProjectCode=false;
     std::unique_ptr<GameInstance> m_gameInstance;
     EngineClock m_clock;
     EngineContext m_context;

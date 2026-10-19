@@ -23,7 +23,15 @@ bool Engine::Initialize(const std::filesystem::path &projectFile, const bool sta
         return true;
     m_diagnostics.Initialize();
     m_logger.Info("Engine initialize begin.");
+    m_projectCodeError.clear(); m_useProjectCode=false;
+    m_projectBridge.SetWorldAccess(false,false); m_projectBridge.InvalidateWorld();
+    m_projectModuleHost=std::make_unique<ProjectModuleHost>();
     const bool projectLoaded = !projectFile.empty() && m_projectSettings.Load(projectFile);
+    if (!projectFile.empty() && !projectLoaded)
+    {
+        m_projectCodeError="Cannot load explicit project: "+projectFile.u8string();
+        m_logger.Error(m_projectCodeError); Shutdown(); return false;
+    }
     m_logger.SetStructuredOutput(projectLoaded ? m_projectSettings.Resolve("Logs/TinyEngine.jsonl")
                                                : std::filesystem::path{"Logs/TinyEngine.jsonl"});
     if (projectLoaded && !m_projectSettings.packageArchive.empty())
@@ -40,6 +48,25 @@ bool Engine::Initialize(const std::filesystem::path &projectFile, const bool sta
     m_memoryManager.Initialize();
     const auto hardwareCount = std::thread::hardware_concurrency();
     m_jobSystem.Initialize(std::max(1u, hardwareCount > 1 ? hardwareCount - 1 : 1u));
+    if (projectLoaded && !m_projectSettings.codeModule.empty())
+    {
+        ProjectModuleSelection selection;
+#ifdef NDEBUG
+        constexpr auto profile=ProjectCodeProfile::Shipping;
+#else
+        constexpr auto profile=ProjectCodeProfile::Development;
+#endif
+        if (LoadProjectModuleSelection(m_projectSettings,profile,selection,&m_projectCodeError))
+        {
+            m_useProjectCode=m_projectModuleHost->Load(selection,m_projectBridge.GetAPI());
+            if (!m_useProjectCode) m_projectCodeError=m_projectModuleHost->GetLastError();
+        }
+        if (!m_projectCodeError.empty())
+        {
+            m_logger.Error(m_projectCodeError);
+            if (startInPlayMode && m_projectSettings.codeRequired) { Shutdown(); return false; }
+        }
+    }
     m_resourceManager.Initialize(&m_jobSystem, projectLoaded ? m_projectSettings.Resolve(m_projectSettings.assetDirectory)
                                                          : std::filesystem::path{"assets"},
                                  projectLoaded ? m_projectSettings.assetDirectory : std::filesystem::path{"assets"});
@@ -139,13 +166,21 @@ bool Engine::Initialize(const std::filesystem::path &projectFile, const bool sta
     if (projectLoaded)
         sceneLoaded = m_sceneManager.LoadScene(m_projectPakMounted ? m_projectSettings.startupScene
                                                                    : m_projectSettings.Resolve(m_projectSettings.startupScene));
-    if (!sceneLoaded)
+    if (projectLoaded && !sceneLoaded)
+    {
+        m_projectCodeError="Cannot load startup scene: "+m_projectSettings.Resolve(m_projectSettings.startupScene).u8string();
+        m_logger.Error(m_projectCodeError); Shutdown(); return false;
+    }
+    if (!projectLoaded)
         SetupDemoScene();
+    m_projectBridge.SetWorldAccess(true,false);
     if (m_gameInstance)
         m_gameInstance->OnInitialize();
     m_initialized = true;
     if (startInPlayMode)
-        EnterPlayMode();
+    {
+        if (!EnterPlayMode()) { Shutdown(); return false; }
+    }
     else
         m_paused = true;
     const auto *glDevice = dynamic_cast<const SdlGlRenderDevice *>(m_renderer.GetDevice());
@@ -185,10 +220,13 @@ void Engine::Run(const std::uint32_t maxFrames)
 void Engine::Shutdown()
 {
     m_running = false;
-    if (m_gameInstance)
+    if (m_playing) ExitPlayMode();
+    if (m_gameInstance && m_initialized)
         m_gameInstance->OnShutdown();
     m_pluginManager.UnloadAll();
     m_moduleManager.ShutdownAll();
+    m_projectBridge.SetWorldAccess(false,false);
+    m_projectModuleHost->Close();
     m_worldPartition.UnloadAll();
     m_navigation.Clear();
     m_scriptEngine.Shutdown();
@@ -254,11 +292,22 @@ bool Engine::EnterPlayMode()
 {
     if (!m_initialized || m_playing)
         return false;
+    if (m_projectSettings.codeRequired && !m_useProjectCode) return false;
+    if (m_useProjectCode && m_projectModuleHost->GetState()!=ProjectModuleState::Registered)
+    { m_projectCodeError=m_projectModuleHost->GetLastError(); return false; }
     m_editSnapshot = m_sceneManager.CreateSnapshot();
     if (m_editSnapshot.empty())
         return false;
     m_scriptEngine.RebuildWorldInstances(m_world);
     m_gameplay.StartPlay();
+    m_projectBridge.SetWorldAccess(true,true);
+    if (m_useProjectCode && !m_projectModuleHost->BeginPlay(m_projectBridge.GetWorld()))
+    {
+        m_projectCodeError=m_projectModuleHost->GetLastError(); m_logger.Error(m_projectCodeError);
+        m_scriptEngine.ClearInstances(); m_gameplay.StopPlay();
+        m_sceneManager.RestoreSnapshot(m_editSnapshot); m_editSnapshot.clear();
+        m_projectBridge.SetWorldAccess(true,false); m_paused=true; return false;
+    }
     m_fixedAccumulator = 0.0f;
     m_paused = false;
     m_playing = true;
@@ -269,6 +318,7 @@ bool Engine::ExitPlayMode()
 {
     if (!m_initialized || !m_playing)
         return false;
+    if (m_useProjectCode) m_projectModuleHost->EndPlay();
     m_scriptEngine.ClearInstances();
     m_gameplay.StopPlay();
     const bool restored = m_sceneManager.RestoreSnapshot(m_editSnapshot);
@@ -276,6 +326,7 @@ bool Engine::ExitPlayMode()
     m_fixedAccumulator = 0.0f;
     m_paused = true;
     m_playing = false;
+    m_projectBridge.SetWorldAccess(true,false);
     return restored;
 }
 
@@ -346,7 +397,11 @@ void Engine::Tick(const float rawDeltaTime)
         m_gameplay.Update(deltaTime);
         m_scriptEngine.UpdateAll(deltaTime);
         m_pluginManager.Tick(deltaTime);
-        if (m_gameInstance)
+        if (m_useProjectCode && !m_projectModuleHost->Update(deltaTime))
+        {
+            m_projectCodeError=m_projectModuleHost->GetLastError(); m_logger.Error(m_projectCodeError); ExitPlayMode(); return;
+        }
+        if (!m_useProjectCode && m_gameInstance)
             m_gameInstance->OnUpdate(deltaTime);
         m_world.Update(deltaTime);
         m_vfxSystem.Update(deltaTime);
@@ -354,10 +409,14 @@ void Engine::Tick(const float rawDeltaTime)
         m_fixedAccumulator = std::min(m_fixedAccumulator + deltaTime, 0.25f);
         while (m_fixedAccumulator >= fixedStep)
         {
+            if (m_useProjectCode && !m_projectModuleHost->FixedUpdate(fixedStep))
+            { m_projectCodeError=m_projectModuleHost->GetLastError(); m_logger.Error(m_projectCodeError); ExitPlayMode(); return; }
             m_physicsWorld.Step(m_world, fixedStep);
             m_fixedAccumulator -= fixedStep;
         }
         m_audioEngine.UpdateWorld(m_world);
+        if (m_useProjectCode && !m_projectModuleHost->LateUpdate(deltaTime))
+        { m_projectCodeError=m_projectModuleHost->GetLastError(); m_logger.Error(m_projectCodeError); ExitPlayMode(); return; }
     }
     m_renderer.RenderFrame(m_world);
     const auto &profile = m_renderer.GetLastFrameProfile();
@@ -442,6 +501,7 @@ void Engine::OnEntityDestroying(World &, const Entity entity)
 }
 void Engine::OnWorldCleared(World &)
 {
+    m_projectBridge.InvalidateWorld();
     m_scriptEngine.ClearInstances();
     m_audioEngine.ClearWorldState();
     m_playerEntity = InvalidEntity;

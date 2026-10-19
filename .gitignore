@@ -107,6 +107,7 @@
 !/tests/ProjectSDKAbiC.c
 !/tests/ProjectSDKAbiTests.cpp
 !/tests/ProjectModuleTests.cpp
+!/tests/ProjectRuntimeTests.cpp
 !/tests/TestProjectModule.cpp
 !/tests/TestProjectMissingEntry.cpp
 !/tests/TestDynamicPlugin.cpp

@@ -13,6 +13,11 @@ public:
     ProjectModuleHost(const ProjectModuleHost &) = delete;
     ProjectModuleHost &operator=(const ProjectModuleHost &) = delete;
     bool Load(const ProjectModuleSelection &, const TinyProjectHostAPI &);
+    bool BeginPlay(TinyProjectWorld);
+    bool Update(float);
+    bool FixedUpdate(float);
+    bool LateUpdate(float);
+    void EndPlay() noexcept;
     void Close() noexcept;
     const std::string &GetLastError() const { return m_lastError; }
     ProjectModuleState GetState() const { return m_state; }
@@ -22,10 +27,13 @@ public:
 private:
     bool Fail(ProjectModuleState, std::string);
     void Release() noexcept;
+    bool Step(TinyProjectResult (TINY_PROJECT_CALL *)(void *, float), float, const char *);
     DynamicLibrary m_library;
     TinyProjectHostAPI m_host{};
     TinyProjectAPI m_api{};
     void *m_module = nullptr;
+    void *m_session = nullptr;
+    bool m_begun = false;
     ProjectModuleState m_state = ProjectModuleState::Unconfigured;
     std::string m_lastError, m_buildId;
     std::filesystem::path m_libraryPath, m_pdbPath;

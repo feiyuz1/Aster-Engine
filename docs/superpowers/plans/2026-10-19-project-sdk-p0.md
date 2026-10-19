@@ -197,7 +197,7 @@ ProjectModuleTests.cpp 接受 --group manifest、loader、bridge、session；各
 - Consumes: 已加载模块、ProjectHostBridge、现有场景快照和 Engine 生命周期。
 - Produces: ProjectModuleHost::BeginPlay(TinyProjectWorld)->bool、Update(float)->bool、FixedUpdate(float)->bool、LateUpdate(float)->bool、EndPlay() noexcept；Engine::GetProjectModuleHost()->ProjectModuleHost&、GetProjectCodeError() const->const std::string&。既有 Engine::Initialize/EnterPlayMode/ExitPlayMode 签名不变。
 
-- [ ] **Step 1: 写失败测试。** module_tests 的 `session_begin_end_twice`、`create_or_begin_failure_cleans_once`、`update_failure_faults_session`；runtime_tests 的 `editor_play_calls_project_code`、`standalone_start_calls_same_project_code`、`stop_restores_snapshot_and_invalidates_handles`、`required_missing_code_blocks_play_but_keeps_editor_scene`、`legacy_game_instance_is_not_double_updated`、`pause_skips_project_updates`。断言两次 Play 得到两组 create/begin/end/destroy，Stop 后 Transform 回原值；编辑态不调用 Update；模块失败的游戏启动返回 false，编辑器可以看场景且 Play 返回 false。
+- [x] **Step 1: 写失败测试。** module_tests 的 `session_begin_end_twice`、`create_or_begin_failure_cleans_once`、`update_failure_faults_session`；runtime_tests 的 `editor_play_calls_project_code`、`standalone_start_calls_same_project_code`、`stop_restores_snapshot_and_invalidates_handles`、`required_missing_code_blocks_play_but_keeps_editor_scene`、`legacy_game_instance_is_not_double_updated`、`pause_skips_project_updates`。断言两次 Play 得到两组 create/begin/end/destroy，Stop 后 Transform 回原值；编辑态不调用 Update；模块失败的游戏启动返回 false，编辑器可以看场景且 Play 返回 false。
 
   ```cpp
   CHECK(std::count(events.begin(), events.end(), "begin") == 2);
@@ -206,11 +206,11 @@ ProjectModuleTests.cpp 接受 --group manifest、loader、bridge、session；各
   CHECK(!missingCodeEngine.EnterPlayMode());
   ```
 
-- [ ] **Step 2: 验证 RED。** `ctest --test-dir build-project-sdk -C Debug -R '^tinyengine_project_(session|runtime)$' --output-on-failure`；runtime 使用真实 SDL/OpenGL，不把无图形环境失败误当实现 RED。
-- [ ] **Step 3: 实现会话状态机。** BeginPlay 创建新 session，begin 成功后进入 Playing；create/begin 失败销毁已创建 session，begin 未成功不调用 end。Update/Fixed/Late 返回错误后禁止继续普通回调，保留诊断，由 Engine 结束/恢复。EndPlay 和 Close 可重复调用，最终顺序 end -> destroy_session -> unload -> 释放库。尾部固定/后置回调不存在时跳过。
-- [ ] **Step 4: 接入 Engine 和 UI。** 基础服务建立后、场景/资产消费前加载模块，注册期 Bridge 返回 NOT_READY/READ_ONLY；场景成功后开放查询，Play/End 清理期间按契约开放写入。新增代码失败保留编辑器场景并显示诊断；standalone 立即失败。显式项目文件/启动场景错误不回退 Demo；无参数演示路径保留。Play 先快照、再脚本/Gameplay 和项目会话，任一步失败反序清理/恢复；Tick 按规格插入 Update/Fixed/Late，项目会话启用时不再更新 legacy GameInstance。OnWorldCleared 调用 InvalidateWorld。Shutdown 在引擎服务仍有效时清理会话，待模块使用者清理后卸载；编辑器仅在 EnterPlayMode/ExitPlayMode 成功时显示成功提示。
-- [ ] **Step 5: 验证 GREEN。** 运行 session/runtime 和已有 scene_save、script_lifecycle、editor_interaction；核对 begin 失败、Update 失败以及直接关闭运行中的 Engine 均清理一次并保留有用错误。暂停只验证现有底层暂停能力，P0 不新增 Pause/单步界面。
-- [ ] **Step 6: 提交。** `feat(runtime): execute project modules in PIE and standalone sessions`。
+- [x] **Step 2: 验证 RED。** `ctest --test-dir build-project-sdk -C Debug -R '^tinyengine_project_(session|runtime)$' --output-on-failure`；runtime 使用真实 SDL/OpenGL，不把无图形环境失败误当实现 RED。
+- [x] **Step 3: 实现会话状态机。** BeginPlay 创建新 session，begin 成功后进入 Playing；create/begin 失败销毁已创建 session，begin 未成功不调用 end。Update/Fixed/Late 返回错误后禁止继续普通回调，保留诊断，由 Engine 结束/恢复。EndPlay 和 Close 可重复调用，最终顺序 end -> destroy_session -> unload -> 释放库。尾部固定/后置回调不存在时跳过。
+- [x] **Step 4: 接入 Engine 和 UI。** 基础服务建立后、场景/资产消费前加载模块，注册期 Bridge 返回 NOT_READY/READ_ONLY；场景成功后开放查询，Play/End 清理期间按契约开放写入。新增代码失败保留编辑器场景并显示诊断；standalone 立即失败。显式项目文件/启动场景错误不回退 Demo；无参数演示路径保留。Play 先快照、再脚本/Gameplay 和项目会话，任一步失败反序清理/恢复；Tick 按规格插入 Update/Fixed/Late，项目会话启用时不再更新 legacy GameInstance。OnWorldCleared 调用 InvalidateWorld。Shutdown 在引擎服务仍有效时清理会话，待模块使用者清理后卸载；编辑器仅在 EnterPlayMode/ExitPlayMode 成功时显示成功提示。
+- [x] **Step 5: 验证 GREEN。** 运行 session/runtime 和已有 scene_save、script_lifecycle、editor_interaction；核对 begin 失败、Update 失败以及直接关闭运行中的 Engine 均清理一次并保留有用错误。暂停只验证现有底层暂停能力，P0 不新增 Pause/单步界面。
+- [x] **Step 6: 提交。** `feat(runtime): execute project modules in PIE and standalone sessions`。
 
 ### Task 6: SDK 项目构建辅助、可移动安装包和成功清单
 

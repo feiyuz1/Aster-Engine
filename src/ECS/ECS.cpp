@@ -124,9 +124,9 @@ bool World::IsAlive(const Entity entity) const
 
 void World::Clear()
 {
-    if (!m_entityManager.GetAliveEntities().empty())
-        for (auto *listener : m_listeners)
-            listener->OnWorldCleared(*this);
+    // Empty resets also begin a new world epoch for external handles.
+    for (auto *listener : m_listeners)
+        listener->OnWorldCleared(*this);
     m_componentManager.Clear();
     m_entityManager.Reset();
 }
