@@ -2,6 +2,7 @@
 #include "MiniEngine/ECS/SceneSerializer.hpp"
 #include "MiniEngine/ECS/Components.hpp"
 #include "MiniEngine/ProjectSDK/SDKInfo.hpp"
+#include "MiniEngine/Platform/UTF8Arguments.hpp"
 #include <chrono>
 #include <iostream>
 #include <stdexcept>
@@ -97,4 +98,32 @@ void RuntimeTests()
     Engine badScene; Check(!badScene.Initialize(f.project,false),"explicit invalid startup scene never opens demo"); badScene.Shutdown();
 }
 }
-int main(int, char **) { try { RuntimeTests(); return 0; } catch(const std::exception &e) { std::cerr<<"FAIL "<<e.what()<<'\n'; return 1; } }
+static int RunMain(int argc, char **argv)
+{
+    try
+    {
+        if (argc==3 && std::string(argv[1])=="--write-scene")
+        { World world; world.CreateEntity("Player"); Check(SceneSerializer::Save(world,fs::u8path(argv[2])),"write QA TINYSCENE 11"); return 0; }
+        if (argc==3 && std::string(argv[1])=="--external-project")
+        {
+            Engine engine; Check(engine.Initialize(fs::u8path(argv[2]),false),"PIE uses installed external project DLL");
+            const auto snapshot=SceneSerializer::Serialize(*engine.GetContext().world);
+            const auto &host=engine.GetProjectModuleHost();
+            Check(fs::is_regular_file(host.GetLoadedPdbPath()) && host.GetLoadedLibraryPath().stem()==host.GetLoadedPdbPath().stem(),"shadow DLL and matching PDB are present");
+            for(int i=0;i<2;++i)
+            {
+                Check(engine.EnterPlayMode(),"external SDK project enters PIE"); engine.Run(3);
+                Check(Rotation(engine)>0,"external SDK project rotates in PIE");
+                Check(engine.ExitPlayMode() && SceneSerializer::Serialize(*engine.GetContext().world)==snapshot,"external SDK project Stop restores scene");
+            }
+            engine.Shutdown(); return 0;
+        }
+        RuntimeTests(); return 0;
+    }
+    catch(const std::exception &e) { std::cerr<<"FAIL "<<e.what()<<'\n'; return 1; }
+}
+#ifdef _WIN32
+int wmain(int argc,wchar_t **argv) { return MiniEngine::RunWideMain(argc,argv,RunMain); }
+#else
+int main(int argc,char **argv) { return RunMain(argc,argv); }
+#endif

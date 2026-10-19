@@ -247,7 +247,7 @@ ProjectModuleTests.cpp 接受 --group manifest、loader、bridge、session；各
 - Consumes: 所有前置接口、安装 SDK 的 editor/game 路径及外部消费 DLL/清单。
 - Produces: CTest tinyengine_project_sdk_runtime_consumer；可按文档复现的项目会话示例和准确阶段说明。
 
-- [ ] **Step 1: 写失败端到端检查。** 从外部 QA 项目生成包含 Player 的 TINYSCENE 11 和项目配置，使用安装后 DLL 清单；在无关 cwd 启动 SDK 游戏 `tinyengine_game.exe <absolute-project-file> --frames=3`，必须退出 0 并出现 BEGIN/ROTATED/END。runtime_tests 使用同一 DLL 通过 Engine::Initialize(project,false) 和 EnterPlayMode 触发实际项目更新、Stop 恢复、再次 Play，核对对应日志和 Transform。PDB 路径须匹配影子 DLL；SDK 工作流文档提供 VS 启动宿主与附加的步骤。
+- [x] **Step 1: 写失败端到端检查。** 从外部 QA 项目生成包含 Player 的 TINYSCENE 11 和项目配置，使用安装后 DLL 清单；在无关 cwd 启动 SDK 游戏 `tinyengine_game.exe <absolute-project-file> --frames=3`，必须退出 0 并出现 BEGIN/ROTATED/END。runtime_tests 使用同一 DLL 通过 Engine::Initialize(project,false) 和 EnterPlayMode 触发实际项目更新、Stop 恢复、再次 Play，核对对应日志和 Transform。PDB 路径须匹配影子 DLL；SDK 工作流文档提供 VS 启动宿主与附加的步骤。
 
   ```cmake
   if(NOT run_exit EQUAL 0 OR NOT run_output MATCHES "P0_PROJECT_ROTATED")
@@ -257,10 +257,10 @@ ProjectModuleTests.cpp 接受 --group manifest、loader、bridge、session；各
 
   run_output 收集进程 stdout/stderr 和项目 Logs/TinyEngine.jsonl；不得仅检查 EXE 文件存在或进程退出码。
 
-- [ ] **Step 2: 验证 RED。** `ctest --test-dir build-project-sdk -C Debug -R '^tinyengine_project_sdk_runtime_consumer$' --output-on-failure`；如果单元通过但外部产物失败，保留实际 stdout/stderr 以定位接线缺口。
-- [ ] **Step 3: 补齐安装/运行接线。** 确保安装 SDK 包含宿主 EXE/基础运行依赖、模板素材、正确配置标识与构建辅助；仅修正端到端失败暴露的 P0 缺口，不绕过清单校验或链接引擎源码。文档明确这是项目会话能力，项目新建向导/SDK 模板迁移、Inspector 组件与发布由后续阶段接入，不宣称第一版已完成。
-- [ ] **Step 4: 验证 GREEN 与回归。** 构建本计划全部新增目标、tinyengine_game/editor 及所需既有测试目标；运行 `ctest --test-dir build-project-sdk -C Debug -R '^tinyengine_project_' --output-on-failure`，全部通过后运行一次完整 Debug CTest。Release 构建 SDK/模块与限帧游戏也通过；在 VS 手工命中外部项目 Update 断点并核对实际 DLL/PDB。环境缺少独立干净 Windows VM 时记录真实限制，不把本机运行表述为干净机器验收。
-- [ ] **Step 5: 自查、记录和提交。** 审查各 C 边界、HostAPI 生命周期、错误清理和依赖闭包，运行 git diff --check。记录实际命令、结果、失败修复和未完成的 P1–P4，提交 `docs(project): verify and document external SDK code execution`。P0 结束再进入下一阶段的计划，不通过改代码绕过尚未实施的数据层。
+- [x] **Step 2: 验证 RED。** `ctest --test-dir build-project-sdk -C Debug -R '^tinyengine_project_sdk_runtime_consumer$' --output-on-failure`；如果单元通过但外部产物失败，保留实际 stdout/stderr 以定位接线缺口。
+- [x] **Step 3: 补齐安装/运行接线。** 确保安装 SDK 包含宿主 EXE/基础运行依赖、模板素材、正确配置标识与构建辅助；仅修正端到端失败暴露的 P0 缺口，不绕过清单校验或链接引擎源码。文档明确这是项目会话能力，项目新建向导/SDK 模板迁移、Inspector 组件与发布由后续阶段接入，不宣称第一版已完成。
+- [x] **Step 4: 验证 GREEN 与回归。** 构建本计划全部新增目标、tinyengine_game/editor 及所需既有测试目标；运行 `ctest --test-dir build-project-sdk -C Debug -R '^tinyengine_project_' --output-on-failure`，全部通过后运行一次完整 Debug CTest。Release 构建 SDK/模块与限帧游戏也通过；在 VS 手工命中外部项目 Update 断点并核对实际 DLL/PDB。环境缺少独立干净 Windows VM 时记录真实限制，不把本机运行表述为干净机器验收。
+- [x] **Step 5: 自查、记录和提交。** 审查各 C 边界、HostAPI 生命周期、错误清理和依赖闭包，运行 git diff --check。记录实际命令、结果、失败修复和未完成的 P1–P4，提交 `docs(project): verify and document external SDK code execution`。P0 结束再进入下一阶段的计划，不通过改代码绕过尚未实施的数据层。
 
 ## 需求归属与自查
 
@@ -274,4 +274,4 @@ ProjectModuleTests.cpp 接受 --group manifest、loader、bridge、session；各
 | 项目新建向导切换 SDK、旧项目迁移、VS 自动配置、暂停/单步 UI、构建/重启恢复 | P3 |
 | 项目目标构建、Cook、资产索引、依赖部署与原子发布 | P4；P0 只证明 DLL 可被独立启动器使用 |
 
-自查项目：接口拼写和返回类型一致；每个 Review Focus 均有归属测试；清单和实际 DLL 双重身份检查；不会从磁盘缺失回退为成功；尚未有任何任务标记完成。规格的书面审阅由用户在本计划生成前的“开始”确认；本计划仍需审阅并确认执行方式。
+自查项目：接口拼写和返回类型一致；每个 Review Focus 均有归属测试；清单和实际 DLL 双重身份检查；不会从磁盘缺失回退为成功；七项任务的实现及自动验证已完成；Step 7.4 的 VS 断点手工验收因桌面工具无法定位控件而待完成，未宣称通过，详见执行账本和项目代码开发文档。用户已用“开始做吧”确认顺序实施。

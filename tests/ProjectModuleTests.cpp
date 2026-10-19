@@ -2,6 +2,7 @@
 #include "MiniEngine/Project/Project.hpp"
 #include "MiniEngine/ProjectSDK/SDKInfo.hpp"
 #include "MiniEngine/Platform/Platform.hpp"
+#include "MiniEngine/Platform/UTF8Arguments.hpp"
 #include "MiniEngine/Project/ProjectModuleHost.hpp"
 #include "MiniEngine/Platform/DynamicLibrary.hpp"
 #include "MiniEngine/Plugin/PluginManager.hpp"
@@ -338,7 +339,7 @@ void BridgeTests()
 }
 }
 
-int main(int argc, char **argv)
+static int RunMain(int argc, char **argv)
 {
     try
     {
@@ -371,3 +372,8 @@ int main(int argc, char **argv)
         return 1;
     }
 }
+#ifdef _WIN32
+int wmain(int argc,wchar_t **argv) { return MiniEngine::RunWideMain(argc,argv,RunMain); }
+#else
+int main(int argc,char **argv) { return RunMain(argc,argv); }
+#endif

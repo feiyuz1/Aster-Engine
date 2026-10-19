@@ -57,3 +57,9 @@ install(FILES "${_tiny_sdk_cmake}/TinyEngineConfig.cmake" "${_tiny_sdk_cmake}/Ti
 install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/cmake/TinyEngineProject.cmake"
     "${CMAKE_CURRENT_SOURCE_DIR}/cmake/WriteProjectModuleManifest.cmake"
     DESTINATION "${CMAKE_INSTALL_LIBDIR}/cmake/TinyEngine" COMPONENT ProjectSDK)
+install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/tests/ProjectSDKConsumer/CMakeLists.txt"
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/ProjectSDKConsumer/Game.tinyproject"
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/ProjectSDKConsumer/Start.scene"
+    DESTINATION "${CMAKE_INSTALL_DATADIR}/tinyengine/templates/ProjectModule" COMPONENT ProjectSDK)
+install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/tests/ProjectSDKConsumer/Source/"
+    DESTINATION "${CMAKE_INSTALL_DATADIR}/tinyengine/templates/ProjectModule/Source" COMPONENT ProjectSDK)

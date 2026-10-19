@@ -115,6 +115,9 @@ struct EditorInteractionTests
         const auto root=std::filesystem::absolute("Saved/EditorDpi")/std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
         std::filesystem::create_directories(root/"assets");
         ProjectSettings project; project.name="DPI regression"; project.projectFile=root/"Dpi.tinyproject"; project.assetDirectory="assets";
+        project.startupScene="assets/Startup.scene";
+        World startupWorld; startupWorld.CreateEntity("Player");
+        Check(SceneSerializer::Save(startupWorld,root/project.startupScene),"save valid isolated DPI startup scene");
         Check(project.Save(project.projectFile),"save isolated DPI startup fixture");
         auto *previousContext=ImGui::GetCurrentContext(); EditorApp editor;
         struct Restore { EditorApp &editor; ImGuiContext *context; ~Restore() { editor.Shutdown(); ImGui::SetCurrentContext(context); } } restore{editor,previousContext};

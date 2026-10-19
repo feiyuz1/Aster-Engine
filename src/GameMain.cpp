@@ -5,6 +5,7 @@
 
 #include "MiniEngine/Core/CrashReporter.hpp"
 #include "MiniEngine/Runtime/Engine.hpp"
+#include "MiniEngine/Platform/UTF8Arguments.hpp"
 
 #include <cstdint>
 #include <cstdlib>
@@ -25,11 +26,11 @@ std::filesystem::path FindProject(const std::filesystem::path &executableDirecto
 }
 } // 结束匿名命名空间
 
-int main(int argc, char **argv)
+static int RunMain(int argc, char **argv)
 {
     MiniEngine::CrashReporter::Install("TinyEngineGame");
     const auto launchDirectory = std::filesystem::current_path();
-    const auto executableDirectory = std::filesystem::absolute(argv[0]).parent_path().lexically_normal();
+    const auto executableDirectory = std::filesystem::absolute(std::filesystem::u8path(argv[0])).parent_path().lexically_normal();
     std::filesystem::path projectFile;
     std::uint32_t maxFrames = 0;
     for (int index = 1; index < argc; ++index)
@@ -42,7 +43,7 @@ int main(int argc, char **argv)
                 maxFrames = static_cast<std::uint32_t>(value);
         }
         else if (projectFile.empty())
-            projectFile = std::filesystem::path(argument).is_absolute() ? argument : launchDirectory / argument;
+            projectFile = std::filesystem::u8path(argument).is_absolute() ? std::filesystem::u8path(argument) : launchDirectory / std::filesystem::u8path(argument);
     }
     if (projectFile.empty())
         projectFile = FindProject(executableDirectory);
@@ -59,3 +60,8 @@ int main(int argc, char **argv)
     engine.Shutdown();
     return 0;
 }
+#ifdef _WIN32
+int wmain(int argc,wchar_t **argv) { return MiniEngine::RunWideMain(argc,argv,RunMain); }
+#else
+int main(int argc,char **argv) { return RunMain(argc,argv); }
+#endif

@@ -329,6 +329,13 @@ if(TINYENGINE_BUILD_TESTS)
         "-DGENERATOR=${CMAKE_GENERATOR}" "-DMODULE_TEST_EXE=$<TARGET_FILE:tinyengine_project_module_tests>"
         "-DQA_POINTER=${CMAKE_CURRENT_BINARY_DIR}/project-sdk-qa.txt"
         -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/ProjectSDKConsumerTests.cmake")
+    add_test(NAME tinyengine_project_sdk_runtime_consumer COMMAND ${CMAKE_COMMAND}
+        "-DENGINE_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}" "-DENGINE_BUILD=${CMAKE_CURRENT_BINARY_DIR}"
+        "-DGENERATOR=${CMAKE_GENERATOR}" "-DMODULE_TEST_EXE=$<TARGET_FILE:tinyengine_project_module_tests>"
+        "-DRUNTIME_TEST_EXE=$<TARGET_FILE:tinyengine_project_runtime_tests>" -DRUNTIME=ON
+        "-DRELEASE_MODULE_TEST_EXE=${CMAKE_CURRENT_BINARY_DIR}/Release/tinyengine_project_module_tests.exe"
+        "-DQA_POINTER=${CMAKE_CURRENT_BINARY_DIR}/project-sdk-runtime-qa.txt"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/ProjectSDKConsumerTests.cmake")
     foreach(variant IN ITEMS VALID ABI SHORT OPTIONAL LARGE IDENTITY CALLBACK BEGINFAIL UPDATEFAIL CREATEFAIL)
         if(variant STREQUAL "VALID")
             set(mode 0)
@@ -489,9 +496,16 @@ if(TINYENGINE_BUILD_DEMO)
 endif()
 if(TINYENGINE_BUILD_GAME)
     install(TARGETS tinyengine_game RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+    install(TARGETS tinyengine_game RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}/$<CONFIG>" COMPONENT ProjectRuntime)
 endif()
 if(TINYENGINE_BUILD_EDITOR)
     install(TARGETS tinyengine_editor RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+    install(TARGETS tinyengine_editor RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}/$<CONFIG>" COMPONENT EditorRuntime)
+endif()
+if(MSVC)
+    set(CMAKE_INSTALL_SYSTEM_RUNTIME_COMPONENT ProjectRuntime)
+    set(CMAKE_INSTALL_SYSTEM_RUNTIME_DESTINATION "${CMAKE_INSTALL_BINDIR}/$<CONFIG>")
+    include(InstallRequiredSystemLibraries)
 endif()
 install(TARGETS tinyengine_asset_tool RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 install(TARGETS tinyengine_scene_tool RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})

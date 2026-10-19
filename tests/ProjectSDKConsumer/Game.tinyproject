@@ -1,0 +1,7 @@
+project.name=RotateGame
+project.id=sdk-consumer
+project.assets=assets
+project.startupScene=Start.scene
+code.module=game.rotate
+code.required=true
+code.manifest=Binaries/Windows-x64/Project.modules
