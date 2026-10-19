@@ -20,6 +20,10 @@ class World;
 struct ProjectSettings
 {
     std::string name = "TinyGame";
+    std::string projectId;
+    std::string codeModule;
+    bool codeRequired = false;
+    std::filesystem::path codeManifest;
     std::filesystem::path projectFile;
     std::filesystem::path assetDirectory = "assets";
     std::filesystem::path startupScene = "Saved/Demo.scene";

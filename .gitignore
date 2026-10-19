@@ -106,3 +106,4 @@
 !/docs/superpowers/plans/2026-10-19-project-sdk-p0.md
 !/tests/ProjectSDKAbiC.c
 !/tests/ProjectSDKAbiTests.cpp
+!/tests/ProjectModuleTests.cpp

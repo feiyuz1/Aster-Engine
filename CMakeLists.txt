@@ -142,6 +142,7 @@ add_library(tinyengine STATIC
     src/Localization/Localization.cpp
     src/Gameplay/Gameplay.cpp
     src/Project/Project.cpp
+    src/Project/ProjectModuleManifest.cpp
     src/Project/ProjectScaffolder.cpp
     src/Project/SolutionGenerator.cpp
     src/Project/ProjectPackager.cpp
@@ -173,6 +174,7 @@ add_library(tinyengine STATIC
 
 target_include_directories(tinyengine PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include> $<INSTALL_INTERFACE:include>)
 target_include_directories(tinyengine PRIVATE "${TINYENGINE_STB_DIR}")
+target_link_libraries(tinyengine PRIVATE tinyengine_project_sdk)
 
 # 外部着色器不可用时，内置版本仍须完整支持实例、运动矢量和分簇光照。
 # 两条路径共用同一份 GLSL，避免备用版本随渲染管线升级而过时。
@@ -310,6 +312,9 @@ if(TINYENGINE_BUILD_TESTS)
     target_include_directories(tinyengine_project_sdk_abi_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/include")
     target_link_libraries(tinyengine_project_sdk_abi_tests PRIVATE tinyengine_project_sdk)
     add_test(NAME tinyengine_project_sdk_abi COMMAND tinyengine_project_sdk_abi_tests)
+    add_executable(tinyengine_project_module_tests tests/ProjectModuleTests.cpp)
+    target_link_libraries(tinyengine_project_module_tests PRIVATE tinyengine tinyengine_project_sdk)
+    add_test(NAME tinyengine_project_manifest COMMAND tinyengine_project_module_tests --group manifest)
     # 只有启用测试目标时才开放测试读取接口，正常构建不会带上这些入口。
     target_compile_definitions(tinyengine PUBLIC TINYENGINE_TEST_HOOKS=1)
     add_executable(tinyengine_material_tests tests/MaterialSystemTests.cpp)
@@ -412,6 +417,7 @@ endif()
 # 只为 TinyEngine 自有源码启用 UTF-8；不能把该选项全局传给 Assimp、zlib、SDL 或 ImGui。
 if(MSVC)
     foreach(TINYENGINE_SOURCE_TARGET IN ITEMS
+            tinyengine_project_sdk_abi_tests tinyengine_project_module_tests
             tinyengine tinyengine_demo tinyengine_game tinyengine_importers tinyengine_editor
             tinyengine_asset_tool tinyengine_scene_tool tinyengine_package_tool tinyengine_commandlet
             tinyengine_tests tinyengine_material_tests tinyengine_material_render_tests tinyengine_render_stability_tests tinyengine_scene_save_tests tinyengine_test_dynamic_plugin tinyengine_extended_tests

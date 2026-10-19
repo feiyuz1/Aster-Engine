@@ -122,7 +122,7 @@ ProjectModuleTests.cpp 接受 --group manifest、loader、bridge、session；各
 - Consumes: SDK 构建 ID、TinyProjectModuleInfo、现有 Config/PlatformFile。
 - Produces: ProjectSettings::projectId（project.id）、codeModule（code.module）、codeRequired（code.required）、codeManifest（code.manifest）；enum class ProjectCodeProfile { Development, Shipping }；ProjectModuleSelection，拥有 projectRoot、moduleId、projectId、sdkBuildId、projectBuildId、sourceFingerprint、profile、libraryPath、pdbPath、dependencies；`bool LoadProjectModuleSelection(const ProjectSettings&,ProjectCodeProfile,ProjectModuleSelection&,std::string* error=nullptr)`；`bool ValidateProjectModuleInfo(const TinyProjectModuleInfo&,const ProjectModuleSelection&,std::string* error=nullptr)`。
 
-- [ ] **Step 1: 写失败测试。** `legacy_project_has_no_code`、`code_required_defaults_true`、`project_load_does_not_retain_previous_code_fields`、`manifest_resolves_from_project_root`、`manifest_rejects_incomplete_or_mismatched_identity`、`manifest_rejects_path_escape`。断言旧项目的 codeModule 为空；配置 code.module 后 required 默认 true；二次 Load 不残留上次字段；改变 cwd 不影响中文空格路径；任何身份不匹配返回 false 并含字段名。
+- [x] **Step 1: 写失败测试。** `legacy_project_has_no_code`、`code_required_defaults_true`、`project_load_does_not_retain_previous_code_fields`、`manifest_resolves_from_project_root`、`manifest_rejects_incomplete_or_mismatched_identity`、`manifest_rejects_path_escape`。断言旧项目的 codeModule 为空；配置 code.module 后 required 默认 true；二次 Load 不残留上次字段；改变 cwd 不影响中文空格路径；任何身份不匹配返回 false 并含字段名。
 
   ```cpp
   CHECK(legacy.codeModule.empty());
@@ -131,10 +131,10 @@ ProjectModuleTests.cpp 接受 --group manifest、loader、bridge、session；各
   CHECK(error.find("sdk.buildId") != std::string::npos);
   ```
 
-- [ ] **Step 2: 验证 RED。** 构建 `tinyengine_project_module_tests`，预期缺少新配置/清单接口；随后执行 `ctest --test-dir build-project-sdk -C Debug -R '^tinyengine_project_manifest$' --output-on-failure` 观察相应断言失败。
-- [ ] **Step 3: 实现配置与清单。** ProjectSettings 保存/读取上述四字段，codeModule 非空时要求 project.id 和 code.manifest 有值。使用 u8path，按项目根规范化所有产物路径；拒绝绝对路径、.. 逃逸及符号链接解析后越界，明确哪些依赖属于系统无需列入。清单键固定为 module.id、project.id、sdk.buildId、module.abi、module.platform，以及 Development/Shipping 的 library、pdb、buildId、sourceFingerprint、schemaHash、dependencies.count、dependencies.N。schemaHash 在 P0 固定为 none，不能宣称包含已登记组件。
-- [ ] **Step 4: 验证 GREEN。** 运行 tinyengine_project_manifest；另回归已有 `tinyengine_core` 中项目设置读写，确认无代码项目不新增必需字段。配置错误保留错误原文和已解析路径。
-- [ ] **Step 5: 提交。** `feat(project): validate project module manifests`；检查 .tinyproject 和测试临时资产未被意外修改。
+- [x] **Step 2: 验证 RED。** 构建 `tinyengine_project_module_tests`，预期缺少新配置/清单接口；随后执行 `ctest --test-dir build-project-sdk -C Debug -R '^tinyengine_project_manifest$' --output-on-failure` 观察相应断言失败。
+- [x] **Step 3: 实现配置与清单。** ProjectSettings 保存/读取上述四字段，codeModule 非空时要求 project.id 和 code.manifest 有值。使用 u8path，按项目根规范化所有产物路径；拒绝绝对路径、.. 逃逸及符号链接解析后越界，明确哪些依赖属于系统无需列入。清单键固定为 module.id、project.id、sdk.buildId、module.abi、module.platform，以及 Development/Shipping 的 library、pdb、buildId、sourceFingerprint、schemaHash、dependencies.count、dependencies.N。schemaHash 在 P0 固定为 none，不能宣称包含已登记组件。
+- [x] **Step 4: 验证 GREEN。** 运行 tinyengine_project_manifest；另回归已有 `tinyengine_core` 中项目设置读写，确认无代码项目不新增必需字段。配置错误保留错误原文和已解析路径。
+- [x] **Step 5: 提交。** `feat(project): validate project module manifests`；检查 .tinyproject 和测试临时资产未被意外修改。
 
 ### Task 3: 动态库所有权与项目模块装载
 

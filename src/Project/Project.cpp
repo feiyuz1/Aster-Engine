@@ -19,16 +19,27 @@ namespace MiniEngine
 bool ProjectSettings::Load(const std::filesystem::path &path)
 {
     Config config;
-    if (!config.Load(path.string()))
+    if (!config.Load(path.u8string()))
         return false;
+    const auto nextProjectId = config.GetString("project.id");
+    const auto nextCodeModule = config.GetString("code.module");
+    const auto nextManifest = config.GetString("code.manifest");
+    const bool nextRequired = config.GetBool("code.required", !nextCodeModule.empty());
+    if ((!nextCodeModule.empty() && (nextProjectId.empty() || nextManifest.empty())) ||
+        (nextCodeModule.empty() && (!nextManifest.empty() || nextRequired)))
+        return false;
+    projectId = nextProjectId;
+    codeModule = nextCodeModule;
+    codeManifest = std::filesystem::u8path(nextManifest);
+    codeRequired = nextRequired;
     projectFile = std::filesystem::absolute(path).lexically_normal();
     name = config.GetString("project.name", name);
-    assetDirectory = config.GetString("project.assets", assetDirectory.string());
-    startupScene = config.GetString("project.startupScene", startupScene.string());
-    cookedDirectory = config.GetString("project.cooked", cookedDirectory.string());
-    packageArchive = config.GetString("project.package", "");
-    inputBindings = config.GetString("input.bindings", inputBindings.string());
-    environmentTexture = config.GetString("render.environment", environmentTexture.string());
+    assetDirectory = std::filesystem::u8path(config.GetString("project.assets", assetDirectory.u8string()));
+    startupScene = std::filesystem::u8path(config.GetString("project.startupScene", startupScene.u8string()));
+    cookedDirectory = std::filesystem::u8path(config.GetString("project.cooked", cookedDirectory.u8string()));
+    packageArchive = std::filesystem::u8path(config.GetString("project.package", ""));
+    inputBindings = std::filesystem::u8path(config.GetString("input.bindings", inputBindings.u8string()));
+    environmentTexture = std::filesystem::u8path(config.GetString("render.environment", environmentTexture.u8string()));
     fixedStep = std::max(0.001f, config.GetFloat("physics.fixedStep", fixedStep));
     return true;
 }
@@ -37,17 +48,24 @@ bool ProjectSettings::Save(const std::filesystem::path &path) const
 {
     Config config;
     config.Set("project.name", name);
-    config.Set("project.assets", assetDirectory.generic_string());
-    config.Set("project.startupScene", startupScene.generic_string());
-    config.Set("project.cooked", cookedDirectory.generic_string());
+    if (!projectId.empty()) config.Set("project.id", projectId);
+    if (!codeModule.empty())
+    {
+        config.Set("code.module", codeModule);
+        config.Set("code.required", codeRequired ? "true" : "false");
+        config.Set("code.manifest", codeManifest.generic_u8string());
+    }
+    config.Set("project.assets", assetDirectory.generic_u8string());
+    config.Set("project.startupScene", startupScene.generic_u8string());
+    config.Set("project.cooked", cookedDirectory.generic_u8string());
     if (!packageArchive.empty())
-        config.Set("project.package", packageArchive.generic_string());
+        config.Set("project.package", packageArchive.generic_u8string());
     if (!inputBindings.empty())
-        config.Set("input.bindings", inputBindings.generic_string());
+        config.Set("input.bindings", inputBindings.generic_u8string());
     if (!environmentTexture.empty())
-        config.Set("render.environment", environmentTexture.generic_string());
+        config.Set("render.environment", environmentTexture.generic_u8string());
     config.Set("physics.fixedStep", std::to_string(fixedStep));
-    return config.Save(path.string());
+    return config.Save(path.u8string());
 }
 
 std::filesystem::path ProjectSettings::Resolve(const std::filesystem::path &path) const
