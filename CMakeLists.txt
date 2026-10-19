@@ -324,6 +324,11 @@ if(TINYENGINE_BUILD_TESTS)
     add_executable(tinyengine_project_runtime_tests tests/ProjectRuntimeTests.cpp)
     target_link_libraries(tinyengine_project_runtime_tests PRIVATE tinyengine tinyengine_project_sdk)
     add_test(NAME tinyengine_project_runtime COMMAND tinyengine_project_runtime_tests --group runtime)
+    add_test(NAME tinyengine_project_sdk_consumer COMMAND ${CMAKE_COMMAND}
+        "-DENGINE_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}" "-DENGINE_BUILD=${CMAKE_CURRENT_BINARY_DIR}"
+        "-DGENERATOR=${CMAKE_GENERATOR}" "-DMODULE_TEST_EXE=$<TARGET_FILE:tinyengine_project_module_tests>"
+        "-DQA_POINTER=${CMAKE_CURRENT_BINARY_DIR}/project-sdk-qa.txt"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/ProjectSDKConsumerTests.cmake")
     foreach(variant IN ITEMS VALID ABI SHORT OPTIONAL LARGE IDENTITY CALLBACK BEGINFAIL UPDATEFAIL CREATEFAIL)
         if(variant STREQUAL "VALID")
             set(mode 0)

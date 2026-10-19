@@ -342,6 +342,20 @@ int main(int argc, char **argv)
 {
     try
     {
+        if (argc==4 && std::string(argv[1])=="--inspect-project")
+        {
+            ProjectSettings settings; Check(settings.Load(fs::u8path(argv[2])),"load external project");
+            ProjectModuleSelection selection; std::string error;
+            const auto profile=std::string(argv[3])=="Shipping" ? ProjectCodeProfile::Shipping : ProjectCodeProfile::Development;
+            Check(LoadProjectModuleSelection(settings,profile,selection,&error),error.empty()?"load external manifest":error.c_str());
+            World world; const auto player=world.CreateEntity("Player"); InputSystem input; Logger logger;
+            ProjectHostBridge bridge(world,input,logger); ProjectModuleHost host;
+            Check(host.Load(selection,bridge.GetAPI()),"external binary matches generated manifest identity");
+            bridge.SetWorldAccess(true,true);
+            Check(host.BeginPlay(bridge.GetWorld()) && host.Update(1),"external C++ SDK session executes");
+            Check(world.GetComponent<TransformComponent>(player)->rotation.y==90,"external project rotates actual engine Player");
+            host.EndPlay(); host.Close(); return 0;
+        }
         const std::string group = argc == 3 && std::string(argv[1]) == "--group" ? argv[2] : "manifest";
         if (group == "manifest") ManifestTests();
         else if (group == "loader") LoaderTests();

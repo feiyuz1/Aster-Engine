@@ -223,7 +223,7 @@ ProjectModuleTests.cpp 接受 --group manifest、loader、bridge、session；各
 - Consumes: ProjectSDK 导入目标、SDK ID、Task 2 清单格式、SDK ExportProject<TSession>。
 - Produces: `tinyengine_add_project_module(TARGET <name> PROJECT_ID <stable-id> MODULE_ID <stable-id> SOURCES <list> [RUNTIME_DEPENDENCIES <list>])`；生成 ProjectModuleBuildInfo.h，供项目入口传入完整 TinyProjectModuleInfo；Binaries/Windows-x64/Project.modules 和每配置独立产物目录；CTest tinyengine_project_sdk_consumer。
 
-- [ ] **Step 1: 写失败消费夹具。** find_package(TinyEngine CONFIG REQUIRED)，仅用 TinyEngine::ProjectSDK 和上述辅助声明项目模块。OnUpdate 查询 Player 并增加 rotation.y；OnBegin/End 通过 Host 日志输出 `P0_PROJECT_BEGIN`/`P0_PROJECT_END`，更新至少一次后输出 `P0_PROJECT_ROTATED`。CTest 脚本先安装 SDK，再复制/移动到中文空格 QA 路径，在引擎源码目录之外配置和构建消费项目。断言导入依赖没有 SDL/ImGui/tinyengine，也不引用引擎源码路径。
+- [x] **Step 1: 写失败消费夹具。** find_package(TinyEngine CONFIG REQUIRED)，仅用 TinyEngine::ProjectSDK 和上述辅助声明项目模块。OnUpdate 查询 Player 并增加 rotation.y；OnBegin/End 通过 Host 日志输出 `P0_PROJECT_BEGIN`/`P0_PROJECT_END`，更新至少一次后输出 `P0_PROJECT_ROTATED`。CTest 脚本先安装 SDK，再复制/移动到中文空格 QA 路径，在引擎源码目录之外配置和构建消费项目。断言导入依赖没有 SDL/ImGui/tinyengine，也不引用引擎源码路径。
 
   ```cmake
   if(imported_links MATCHES "SDL|imgui|(^|;)tinyengine($|;)")
@@ -231,10 +231,10 @@ ProjectModuleTests.cpp 接受 --group manifest、loader、bridge、session；各
   endif()
   ```
 
-- [ ] **Step 2: 验证 RED。** 构建已存在 SDK 后运行 `ctest --test-dir build-project-sdk -C Debug -R '^tinyengine_project_sdk_consumer$' --output-on-failure`，预期缺少构建辅助/元数据能力；不能以安装前目标未构建作为 RED。
-- [ ] **Step 3: 实现辅助与清单发布。** 只支持预定 Debug/Release 映射，检查 project/module ID 和 SDK 配置匹配。sourceFingerprint 为按相对路径排序的源码/构建配置/显式依赖内容哈希的 SHA256；projectBuildId 为 SDK ID、profile 和 sourceFingerprint 的 SHA256，元数据编进 DLL。相关源文件加入 CMAKE_CONFIGURE_DEPENDS，内容变化也会重新计算，不只追踪文件列表变化。成功链接后先向新 BuildId 目录发布 DLL/匹配链接 PDB及已复制的显式依赖，再以临时文件和原子替换更新当前配置清单。依赖清单仅记录发布到项目目录的路径。失败保留之前清单和可用 DLL，不能直接覆盖清单仍引用的上一版本文件；另一配置记录保持不变。
-- [ ] **Step 4: 验证 GREEN。** 消费夹具测试通过后，故意制造语法错误并重建，验证命令失败、旧清单及旧产物哈希不变；恢复代码再构建，验证新 BuildId 和二进制元数据一致。Debug 与 Release 同时安装到指定包布局，各自导入正确库。测试使用独立 QA 目录，不重命名、删除或改 ACL 来“隐藏”用户的引擎源码目录。
-- [ ] **Step 5: 提交。** `feat(build): build external project modules from installed SDK`。
+- [x] **Step 2: 验证 RED。** 构建已存在 SDK 后运行 `ctest --test-dir build-project-sdk -C Debug -R '^tinyengine_project_sdk_consumer$' --output-on-failure`，预期缺少构建辅助/元数据能力；不能以安装前目标未构建作为 RED。
+- [x] **Step 3: 实现辅助与清单发布。** 只支持预定 Debug/Release 映射，检查 project/module ID 和 SDK 配置匹配。sourceFingerprint 为按相对路径排序的源码/构建配置/显式依赖内容哈希的 SHA256；projectBuildId 为 SDK ID、profile 和 sourceFingerprint 的 SHA256，元数据编进 DLL。相关源文件加入 CMAKE_CONFIGURE_DEPENDS，内容变化也会重新计算，不只追踪文件列表变化。成功链接后先向新 BuildId 目录发布 DLL/匹配链接 PDB及已复制的显式依赖，再以临时文件和原子替换更新当前配置清单。依赖清单仅记录发布到项目目录的路径。失败保留之前清单和可用 DLL，不能直接覆盖清单仍引用的上一版本文件；另一配置记录保持不变。
+- [x] **Step 4: 验证 GREEN。** 消费夹具测试通过后，故意制造语法错误并重建，验证命令失败、旧清单及旧产物哈希不变；恢复代码再构建，验证新 BuildId 和二进制元数据一致。Debug 与 Release 同时安装到指定包布局，各自导入正确库。测试使用独立 QA 目录，不重命名、删除或改 ACL 来“隐藏”用户的引擎源码目录。
+- [x] **Step 5: 提交。** `feat(build): build external project modules from installed SDK`。
 
 ### Task 7: 外部项目真实运行与 P0 交付验证
 

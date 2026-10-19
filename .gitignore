@@ -108,6 +108,8 @@
 !/tests/ProjectSDKAbiTests.cpp
 !/tests/ProjectModuleTests.cpp
 !/tests/ProjectRuntimeTests.cpp
+!/tests/ProjectSDKConsumer/
+!/tests/ProjectSDKConsumerTests.cmake
 !/tests/TestProjectModule.cpp
 !/tests/TestProjectMissingEntry.cpp
 !/tests/TestDynamicPlugin.cpp
