@@ -97,6 +97,7 @@
 !/docs/superpowers/specs/
 /docs/superpowers/specs/*
 !/docs/superpowers/specs/2026-10-11-material-system-design.md
+!/docs/superpowers/specs/2026-10-19-project-code-integration-design.md
 
 !/tests/EditorAssetRenameTests.cpp
 !/tests/MaterialEditorTests.cpp
