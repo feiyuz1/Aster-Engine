@@ -24,6 +24,7 @@
 - [源码阅读与注释规范](Architecture/源码阅读与注释规范.md)
 - [材质系统](Architecture/材质系统.md)
 - [材质系统验收](Reports/材质系统验收.md)
+- [项目工具与目录整理验收](Reports/2026-10-21-project-tool-and-layout.md)
 
 ## 目录约定
 

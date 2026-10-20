@@ -19,10 +19,10 @@ option(TINYENGINE_BUILD_EDITOR "Build TinyEngine editor" ON)
 option(TINYENGINE_BUILD_IMPORTERS "Build Assimp based asset importers" ON)
 option(TINYENGINE_ENABLE_JOLT "Enable the optional Jolt Physics backend" OFF)
 
-set(TINYENGINE_ASSIMP_DIR "D:/OpenSourceProject/assimp-master" CACHE PATH "Path to the Assimp source tree")
+set(TINYENGINE_ASSIMP_DIR "" CACHE PATH "Path to the Assimp source tree")
 set(TINYENGINE_IMGUI_DIR "" CACHE PATH "Optional path to a Dear ImGui docking source tree")
-set(TINYENGINE_JOLT_DIR "D:/OpenSourceProject/JoltPhysics" CACHE PATH "Path to the Jolt Physics source tree")
-set(TINYENGINE_STB_DIR "D:/OpenSourceProject/Piccolo/engine/3rdparty/stb" CACHE PATH "Path to stb single-header libraries")
+set(TINYENGINE_JOLT_DIR "" CACHE PATH "Path to the Jolt Physics source tree")
+set(TINYENGINE_STB_DIR "" CACHE PATH "Path to stb single-header libraries")
 
 include(FetchContent)
 
@@ -40,6 +40,7 @@ if (NOT SDL2_FOUND)
     set(SDL2_DISABLE_INSTALL ON CACHE BOOL "" FORCE)
     FetchContent_Declare(
         SDL2
+        BINARY_DIR "${CMAKE_BINARY_DIR}/_deps/sdl2-build"
         URL https://github.com/libsdl-org/SDL/archive/refs/tags/release-2.32.10.zip
         DOWNLOAD_EXTRACT_TIMESTAMP TRUE
     )
@@ -74,6 +75,7 @@ if(TINYENGINE_BUILD_EDITOR)
     if(NOT TINYENGINE_IMGUI_HAS_DOCKING)
         message(STATUS "Using pinned Dear ImGui v1.92.8-docking for the editor workspace")
         FetchContent_Declare(imgui_docking
+            BINARY_DIR "${CMAKE_BINARY_DIR}/_deps/imgui_docking-build"
             URL https://codeload.github.com/ocornut/imgui/zip/572f249ce1975f98ad9f8aabce512ffa12a52d6c
             URL_HASH SHA256=ac62c7493bb14b5197ae5c4f100b69a1e894628250bd53a97910adec3d78d5ca
             DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
@@ -85,6 +87,7 @@ endif()
 if(NOT EXISTS "${TINYENGINE_STB_DIR}/stb_vorbis.c")
     FetchContent_Declare(
         stb
+        BINARY_DIR "${CMAKE_BINARY_DIR}/_deps/stb-build"
         URL https://github.com/nothings/stb/archive/refs/heads/master.zip
         DOWNLOAD_EXTRACT_TIMESTAMP TRUE
     )
@@ -320,6 +323,11 @@ endif()
 
 if(TINYENGINE_BUILD_TESTS)
     enable_testing()
+    if(WIN32)
+        find_program(TINYENGINE_POWERSHELL NAMES pwsh powershell REQUIRED)
+        add_test(NAME tinyengine_repository_layout COMMAND "${TINYENGINE_POWERSHELL}" -NoProfile -ExecutionPolicy Bypass
+            -File "${CMAKE_CURRENT_SOURCE_DIR}/Scripts/Tests/RepositoryLayout.ps1")
+    endif()
     if(TINYENGINE_BUILD_EDITOR AND WIN32 AND MSVC)
         add_executable(tinyengine_project_tool_discovery_tests tests/ProjectToolDiscoveryTests.cpp src/Project/SolutionGenerator.cpp)
         target_include_directories(tinyengine_project_tool_discovery_tests PRIVATE include)

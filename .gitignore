@@ -11,6 +11,7 @@
 /.github/workflows/*
 !/.github/workflows/windows.yml
 !/CMakeLists.txt
+!/CMakePresets.json
 !/Doxyfile
 !/README.md
 !/TinyEngine.tinyproject
@@ -139,3 +140,17 @@
 # Keep local-only historical reports ignored.
 /docs/Reports/*
 !/docs/Reports/材质系统验收.md
+!/docs/Reports/2026-10-21-project-tool-and-layout.md
+/docs/Architecture/Local/
+!/tests/SceneSaveTests.cpp
+!/tests/PlatformMountTests.cpp
+!/tests/ScriptLifecycleTests.cpp
+!/tests/fixtures/
+/tests/fixtures/*
+!/tests/fixtures/EditorUI/
+/tests/fixtures/EditorUI/*
+!/tests/fixtures/EditorUI/assets/
+/tests/fixtures/EditorUI/assets/*
+!/tests/fixtures/EditorUI/assets/audio/
+/tests/fixtures/EditorUI/assets/audio/*
+!/tests/fixtures/EditorUI/assets/audio/long_stream.ogg

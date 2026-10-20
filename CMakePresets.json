@@ -1,0 +1,39 @@
+{
+  "version": 3,
+  "cmakeMinimumRequired": { "major": 3, "minor": 21, "patch": 0 },
+  "configurePresets": [
+    {
+      "name": "windows-base",
+      "hidden": true,
+      "generator": "Visual Studio 17 2022",
+      "architecture": "x64",
+      "cacheVariables": {
+        "FETCHCONTENT_BASE_DIR": "${sourceDir}/Intermediate/Dependencies",
+        "TINYENGINE_BUILD_IMPORTERS": "OFF"
+      }
+    },
+    {
+      "name": "editor",
+      "displayName": "Windows editor and regression tests",
+      "inherits": "windows-base",
+      "binaryDir": "${sourceDir}/Intermediate/Build/Editor",
+      "cacheVariables": { "TINYENGINE_BUILD_EDITOR": "ON", "TINYENGINE_BUILD_TESTS": "ON" }
+    },
+    {
+      "name": "core",
+      "displayName": "Windows command line and game runtime",
+      "inherits": "windows-base",
+      "binaryDir": "${sourceDir}/Intermediate/Build/Core",
+      "cacheVariables": { "TINYENGINE_BUILD_EDITOR": "OFF", "TINYENGINE_BUILD_TESTS": "OFF" }
+    }
+  ],
+  "buildPresets": [
+    { "name": "editor-debug", "configurePreset": "editor", "configuration": "Debug", "jobs": 4 },
+    { "name": "editor-release", "configurePreset": "editor", "configuration": "Release", "jobs": 4 },
+    { "name": "core-release", "configurePreset": "core", "configuration": "Release", "jobs": 4 }
+  ],
+  "testPresets": [
+    { "name": "editor-debug", "configurePreset": "editor", "configuration": "Debug", "output": { "outputOnFailure": true } },
+    { "name": "editor-release", "configurePreset": "editor", "configuration": "Release", "output": { "outputOnFailure": true } }
+  ]
+}

@@ -12,6 +12,13 @@ set(sdk "${qa}/SDK 中文 with spaces")
 set(consumer "${qa}/Consumer")
 if(RUNTIME)
     set(consumer "${qa}/项目 Consumer")
+    # This test exercises both profiles. A fresh Debug-only checkout must not
+    # depend on leftover Release executables from an earlier manual build.
+    foreach(config Debug Release)
+        run("${CMAKE_COMMAND}" --build "${ENGINE_BUILD}" --config "${config}"
+            --target tinyengine_game tinyengine_project_module_tests --parallel 4)
+    endforeach()
+    run("${CMAKE_COMMAND}" --build "${ENGINE_BUILD}" --config Debug --target tinyengine_editor --parallel 4)
 endif()
 file(MAKE_DIRECTORY "${consumer}")
 foreach(config Debug Release)

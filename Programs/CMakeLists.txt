@@ -1,4 +1,7 @@
 # Only executable entry points live here; shared functionality stays in src/include.
+if(TINYENGINE_BUILD_TESTS)
+    enable_testing()
+endif()
 add_subdirectory(ProjectTool)
 
 add_executable(tinyengine_asset_tool AssetTool/AssetTool.cpp)

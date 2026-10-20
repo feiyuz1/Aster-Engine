@@ -15,19 +15,19 @@ jobs:
           $files = git ls-files '*.cpp' '*.hpp'
           foreach ($file in $files) { clang-format --dry-run --Werror --style=file $file }
       - name: Configure core build
-        run: cmake -S . -B build-ci -DTINYENGINE_BUILD_EDITOR=OFF -DTINYENGINE_BUILD_IMPORTERS=OFF -DTINYENGINE_BUILD_TESTS=OFF -DTINYENGINE_BUILD_GAME=ON
+        run: cmake --preset core
       - name: Build
-        run: cmake --build build-ci --config Release --parallel 4
+        run: cmake --build --preset core-release
       - name: Validate content
         run: |
-          .\build-ci\Release\tinyengine_commandlet.exe ValidateAssets assets
-          .\build-ci\Release\tinyengine_commandlet.exe ValidateScenes assets
+          .\Intermediate\Build\Core\Release\tinyengine_commandlet.exe ValidateAssets assets
+          .\Intermediate\Build\Core\Release\tinyengine_commandlet.exe ValidateScenes assets
       - name: Platform cook
-        run: .\build-ci\Release\tinyengine_commandlet.exe CookProject TinyEngine.tinyproject build-ci\PlatformCook Windows Shipping
+        run: .\Intermediate\Build\Core\Release\tinyengine_commandlet.exe CookProject TinyEngine.tinyproject Intermediate\Build\Core\PlatformCook Windows Shipping
       - name: Package
-        run: cmake --build build-ci --config Release --target package_game
+        run: cmake --build --preset core-release --target package_game
       - name: Upload package
         uses: actions/upload-artifact@v4
         with:
           name: TinyEngineDemo-Windows
-          path: build-ci/Package/TinyEngineDemo
+          path: Intermediate/Build/Core/Package/TinyEngineDemo
