@@ -1,4 +1,5 @@
 include_guard(GLOBAL)
+include("${CMAKE_CURRENT_LIST_DIR}/ProjectInputFingerprint.cmake")
 
 function(tinyengine_add_project_module)
     cmake_parse_arguments(P "" "TARGET;PROJECT_ID;MODULE_ID" "SOURCES;RUNTIME_DEPENDENCIES" ${ARGN})
@@ -20,11 +21,8 @@ function(tinyengine_add_project_module)
     if(NOT CMAKE_CONFIGURATION_TYPES AND NOT CMAKE_BUILD_TYPE MATCHES "^(Debug|Release)$")
         message(FATAL_ERROR "ProjectSDK P0 supports Debug (Development) and Release (Shipping)")
     endif()
-    # Explicit source/header inputs plus project configuration and runtime dependency bytes.
-    # Generated files and source tree absolute locations do not enter the fingerprint.
-    file(GLOB configs CONFIGURE_DEPENDS "${PROJECT_SOURCE_DIR}/*.tinyproject" "${PROJECT_SOURCE_DIR}/*.cmake")
-    set(inputs ${P_SOURCES} ${P_RUNTIME_DEPENDENCIES} ${configs} "${PROJECT_SOURCE_DIR}/CMakeLists.txt")
-    set(paths)
+    set(inputs ${P_SOURCES} ${P_RUNTIME_DEPENDENCIES})
+    set(absolute_inputs)
     foreach(input IN LISTS inputs)
         get_filename_component(path "${input}" ABSOLUTE BASE_DIR "${CMAKE_CURRENT_SOURCE_DIR}")
         file(REAL_PATH "${path}" path)
@@ -32,17 +30,8 @@ function(tinyengine_add_project_module)
         if(relative MATCHES "^\\.\\.(/|$)" OR IS_ABSOLUTE "${relative}" OR NOT EXISTS "${path}")
             message(FATAL_ERROR "Module input must be an existing file inside the project: ${input}")
         endif()
-        list(APPEND paths "${relative}")
-        set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${path}")
+        list(APPEND absolute_inputs "${path}")
     endforeach()
-    list(REMOVE_DUPLICATES paths)
-    list(SORT paths)
-    set(content "${CMAKE_CXX_FLAGS}|${CMAKE_CXX_FLAGS_DEBUG}|${CMAKE_CXX_FLAGS_RELEASE}|${CMAKE_MSVC_RUNTIME_LIBRARY}\n")
-    foreach(path IN LISTS paths)
-        file(SHA256 "${PROJECT_SOURCE_DIR}/${path}" hash)
-        string(APPEND content "${path}:${hash}\n")
-    endforeach()
-    string(SHA256 fingerprint "${content}")
     set(dependencies)
     foreach(input IN LISTS P_RUNTIME_DEPENDENCIES)
         get_filename_component(path "${input}" ABSOLUTE BASE_DIR "${CMAKE_CURRENT_SOURCE_DIR}")
@@ -56,7 +45,27 @@ function(tinyengine_add_project_module)
     target_include_directories(${P_TARGET} PRIVATE "${generated}/$<CONFIG>")
     set_target_properties(${P_TARGET} PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY "${generated}/link/$<CONFIG>"
-        PDB_OUTPUT_DIRECTORY "${generated}/link/$<CONFIG>")
+        PDB_OUTPUT_DIRECTORY "${generated}/link/$<CONFIG>"
+        TINY_PROJECT_ROOT "${PROJECT_SOURCE_DIR}"
+        TINY_PROJECT_INPUTS "${absolute_inputs}"
+        TINY_PROJECT_DEPENDENCIES "${dependencies}"
+        TINY_PROJECT_GENERATED "${generated}"
+        TINY_PROJECT_ID "${P_PROJECT_ID}"
+        TINY_PROJECT_MODULE "${P_MODULE_ID}")
+    # Capture the target's validated identifier now; deferred calls otherwise
+    # evaluate a function-local variable after its scope has disappeared.
+    cmake_language(EVAL CODE "cmake_language(DEFER CALL tinyengine_finalize_project_module [[${P_TARGET}]])")
+endfunction()
+
+function(tinyengine_finalize_project_module target)
+    get_target_property(root ${target} TINY_PROJECT_ROOT)
+    get_target_property(inputs ${target} TINY_PROJECT_INPUTS)
+    get_target_property(dependencies ${target} TINY_PROJECT_DEPENDENCIES)
+    get_target_property(generated ${target} TINY_PROJECT_GENERATED)
+    get_target_property(P_PROJECT_ID ${target} TINY_PROJECT_ID)
+    get_target_property(P_MODULE_ID ${target} TINY_PROJECT_MODULE)
+    set(P_TARGET "${target}")
+    tinyengine_project_fingerprint("${target}" "${root}" "${inputs}" fingerprint)
     set(profile "$<IF:$<CONFIG:Debug>,Development,Shipping>")
     foreach(config Debug Release)
         if(config STREQUAL "Debug")
@@ -86,7 +95,7 @@ inline const TinyProjectModuleInfo &GetModuleInfo() noexcept {
 }
 ")
     file(GENERATE OUTPUT "${generated}/$<CONFIG>/Publish.cmake" CONTENT
-"set(root [==[${PROJECT_SOURCE_DIR}]==])
+"set(root [==[${root}]==])
 set(module [==[${P_MODULE_ID}]==])
 set(project [==[${P_PROJECT_ID}]==])
 set(profile [==[${profile}]==])

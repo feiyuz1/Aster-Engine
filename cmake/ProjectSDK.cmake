@@ -1,6 +1,7 @@
 # A project module links only this library, never the full engine or SDL/ImGui.
 include(GNUInstallDirs)
 include(CMakePackageConfigHelpers)
+include("${CMAKE_CURRENT_LIST_DIR}/ProjectSDKIdentity.cmake")
 
 if(WIN32 AND CMAKE_SIZEOF_VOID_P EQUAL 8)
     set(TINYENGINE_SDK_PLATFORM "Windows-x64")
@@ -30,7 +31,7 @@ foreach(TINYENGINE_SDK_CONFIGURATION Debug Release RelWithDebInfo MinSizeRel)
     target_compile_definitions(tinyengine_project_sdk PUBLIC
         "$<$<CONFIG:${TINYENGINE_SDK_CONFIGURATION}>:TINYENGINE_PROJECT_SDK_${_tiny_config_upper}=1>")
     string(SHA256 TINYENGINE_SDK_ID
-        "${PROJECT_VERSION}|${TINYENGINE_GIT_REVISION}|1|${TINYENGINE_SDK_PLATFORM}|${TINYENGINE_COMPILER_ID}|${TINYENGINE_SDK_CONFIGURATION}")
+        "${PROJECT_VERSION}|${TINYENGINE_GIT_REVISION}|${TINYENGINE_SDK_INPUT_ID}|1|${TINYENGINE_SDK_PLATFORM}|${TINYENGINE_COMPILER_ID}|${TINYENGINE_SDK_CONFIGURATION}")
     set(_tiny_header "${_tiny_sdk_include}/MiniEngine/ProjectSDK/BuildInfo${TINYENGINE_SDK_CONFIGURATION}.h")
     set(_tiny_info "${_tiny_sdk_cmake}/TinyEngineSDKInfo-${TINYENGINE_SDK_CONFIGURATION}.cmake")
     configure_file("${CMAKE_CURRENT_SOURCE_DIR}/cmake/ProjectSDKBuildInfo.h.in" "${_tiny_header}" @ONLY)
@@ -55,6 +56,7 @@ write_basic_package_version_file("${_tiny_sdk_cmake}/TinyEngineConfigVersion.cma
 install(FILES "${_tiny_sdk_cmake}/TinyEngineConfig.cmake" "${_tiny_sdk_cmake}/TinyEngineConfigVersion.cmake"
     DESTINATION "${CMAKE_INSTALL_LIBDIR}/cmake/TinyEngine" COMPONENT ProjectSDK)
 install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/cmake/TinyEngineProject.cmake"
+    "${CMAKE_CURRENT_SOURCE_DIR}/cmake/ProjectInputFingerprint.cmake"
     "${CMAKE_CURRENT_SOURCE_DIR}/cmake/WriteProjectModuleManifest.cmake"
     DESTINATION "${CMAKE_INSTALL_LIBDIR}/cmake/TinyEngine" COMPONENT ProjectSDK)
 install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/tests/ProjectSDKConsumer/CMakeLists.txt"
@@ -63,3 +65,5 @@ install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/tests/ProjectSDKConsumer/CMakeLists.t
     DESTINATION "${CMAKE_INSTALL_DATADIR}/tinyengine/templates/ProjectModule" COMPONENT ProjectSDK)
 install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/tests/ProjectSDKConsumer/Source/"
     DESTINATION "${CMAKE_INSTALL_DATADIR}/tinyengine/templates/ProjectModule/Source" COMPONENT ProjectSDK)
+install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/assets/default.input"
+    DESTINATION "${CMAKE_INSTALL_DATADIR}/tinyengine/templates/ProjectModule/assets" COMPONENT ProjectSDK)

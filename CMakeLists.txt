@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.20)
+cmake_minimum_required(VERSION 3.21)
 project(TinyEngine VERSION 0.27.0 LANGUAGES C CXX)
 
 execute_process(COMMAND git rev-parse --short=12 HEAD
@@ -336,6 +336,28 @@ if(TINYENGINE_BUILD_TESTS)
         "-DRELEASE_MODULE_TEST_EXE=${CMAKE_CURRENT_BINARY_DIR}/Release/tinyengine_project_module_tests.exe"
         "-DQA_POINTER=${CMAKE_CURRENT_BINARY_DIR}/project-sdk-runtime-qa.txt"
         -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/ProjectSDKConsumerTests.cmake")
+    foreach(mode header cache)
+        add_test(NAME tinyengine_project_fingerprint_${mode} COMMAND ${CMAKE_COMMAND}
+            "-DENGINE_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}" "-DENGINE_BUILD=${CMAKE_CURRENT_BINARY_DIR}"
+            "-DGENERATOR=${CMAKE_GENERATOR}" "-DMODULE_TEST_EXE=$<TARGET_FILE:tinyengine_project_module_tests>"
+            "-DREVIEW_VARIANT=${mode}" "-DQA_POINTER=${CMAKE_CURRENT_BINARY_DIR}/project-sdk-${mode}-qa.txt"
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/ProjectSDKConsumerTests.cmake")
+    endforeach()
+    foreach(mode git source)
+        add_test(NAME tinyengine_project_identity_${mode} COMMAND ${CMAKE_COMMAND}
+            "-DENGINE_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}" "-DGENERATOR=${CMAKE_GENERATOR}" "-DMODE=${mode}"
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/ProjectSDKIdentityTests.cmake")
+    endforeach()
+    add_test(NAME tinyengine_project_host_runtime COMMAND ${CMAKE_COMMAND}
+        "-DENGINE_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}" "-DGENERATOR=${CMAKE_GENERATOR}"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/HostRuntimeTests.cmake")
+    add_library(tinyengine_test_runtime_dependency SHARED tests/TestRuntimeDependency.cpp)
+    add_library(tinyengine_test_dependent_plugin SHARED tests/TestDependentPlugin.cpp)
+    target_include_directories(tinyengine_test_dependent_plugin PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/include")
+    target_link_libraries(tinyengine_test_dependent_plugin PRIVATE tinyengine_test_runtime_dependency)
+    target_compile_definitions(tinyengine_project_module_tests PRIVATE
+        TINY_TEST_DEPENDENT_PLUGIN="$<TARGET_FILE:tinyengine_test_dependent_plugin>")
+    add_dependencies(tinyengine_project_module_tests tinyengine_test_dependent_plugin)
     foreach(variant IN ITEMS VALID ABI SHORT OPTIONAL LARGE IDENTITY CALLBACK BEGINFAIL UPDATEFAIL CREATEFAIL)
         if(variant STREQUAL "VALID")
             set(mode 0)
@@ -490,17 +512,18 @@ if(MSVC)
 endif()
 
 include(GNUInstallDirs)
+include(cmake/InstallHostRuntime.cmake)
 install(TARGETS tinyengine ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR})
 if(TINYENGINE_BUILD_DEMO)
     install(TARGETS tinyengine_demo RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 endif()
 if(TINYENGINE_BUILD_GAME)
     install(TARGETS tinyengine_game RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
-    install(TARGETS tinyengine_game RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}/$<CONFIG>" COMPONENT ProjectRuntime)
+    tinyengine_install_host_runtime(tinyengine_game ProjectRuntime)
 endif()
 if(TINYENGINE_BUILD_EDITOR)
     install(TARGETS tinyengine_editor RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
-    install(TARGETS tinyengine_editor RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}/$<CONFIG>" COMPONENT EditorRuntime)
+    tinyengine_install_host_runtime(tinyengine_editor EditorRuntime)
 endif()
 if(MSVC)
     set(CMAKE_INSTALL_SYSTEM_RUNTIME_COMPONENT ProjectRuntime)

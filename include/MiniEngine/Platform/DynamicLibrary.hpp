@@ -5,10 +5,12 @@
 
 namespace MiniEngine
 {
+enum class DynamicLibrarySearch { ExplicitDirectories, PlatformDefault };
 class DynamicLibrary
 {
 public:
     DynamicLibrary() = default;
+    explicit DynamicLibrary(DynamicLibrarySearch search) : m_search(search) {}
     ~DynamicLibrary();
     DynamicLibrary(const DynamicLibrary &) = delete;
     DynamicLibrary &operator=(const DynamicLibrary &) = delete;
@@ -19,5 +21,6 @@ public:
     void Close() noexcept;
 private:
     void *m_handle = nullptr;
+    DynamicLibrarySearch m_search = DynamicLibrarySearch::ExplicitDirectories;
 };
 }

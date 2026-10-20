@@ -237,6 +237,11 @@ void LoaderTests()
     plugins.Tick(0.016); plugins.UnloadAll();
     Check(std::find(pluginLog.begin(), pluginLog.end(), "dynamic plugin tick") != pluginLog.end(),
           "plugin retained HostAPI remains alive after Startup");
+    fs::create_directories(f.projectRoot/"Plugins");
+    const auto dependent=f.projectRoot/"Plugins/Dependent.dll";
+    fs::copy_file(fs::u8path(TINY_TEST_DEPENDENT_PLUGIN),dependent);
+    Check(plugins.Load(dependent),"generic plugin resolves dependencies beside host executable");
+    plugins.UnloadAll();
 }
 
 void SessionTests()
@@ -343,6 +348,14 @@ static int RunMain(int argc, char **argv)
 {
     try
     {
+        if(argc==3 && std::string(argv[1])=="--probe-value")
+        {
+            DynamicLibrary library; std::string error;
+            Check(library.Open(fs::u8path(argv[2]),{},&error),"open fingerprint probe DLL");
+            const auto value=reinterpret_cast<int (*)()>(library.FindSymbol("TinyTest_ReviewValue"));
+            Check(value!=nullptr,"fingerprint probe symbol exists");
+            std::cout<<"REVIEW_VALUE="<<value()<<'\n'; return 0;
+        }
         if (argc==4 && std::string(argv[1])=="--inspect-project")
         {
             ProjectSettings settings; Check(settings.Load(fs::u8path(argv[2])),"load external project");

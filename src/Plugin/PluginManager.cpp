@@ -26,7 +26,7 @@ void PluginManager::SetLogCallback(LogCallback callback)
 bool PluginManager::Load(const std::filesystem::path &path)
 {
     m_lastError.clear();
-    DynamicLibrary library;
+    DynamicLibrary library(DynamicLibrarySearch::PlatformDefault);
     if (!library.Open(path, {std::filesystem::absolute(path).parent_path()}, &m_lastError)) return false;
     auto getApi = reinterpret_cast<TinyPluginGetAPIFn>(library.FindSymbol(TINY_PLUGIN_ENTRY_POINT));
     if (!getApi)

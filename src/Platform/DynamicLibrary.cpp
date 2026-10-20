@@ -11,10 +11,11 @@
 namespace MiniEngine
 {
 DynamicLibrary::~DynamicLibrary() { Close(); }
-DynamicLibrary::DynamicLibrary(DynamicLibrary &&other) noexcept : m_handle(std::exchange(other.m_handle, nullptr)) {}
+DynamicLibrary::DynamicLibrary(DynamicLibrary &&other) noexcept
+    : m_handle(std::exchange(other.m_handle, nullptr)), m_search(other.m_search) {}
 DynamicLibrary &DynamicLibrary::operator=(DynamicLibrary &&other) noexcept
 {
-    if (this != &other) { Close(); m_handle = std::exchange(other.m_handle, nullptr); }
+    if (this != &other) { Close(); m_handle = std::exchange(other.m_handle, nullptr); m_search = other.m_search; }
     return *this;
 }
 bool DynamicLibrary::Open(const std::filesystem::path &path, const std::vector<std::filesystem::path> &directories, std::string *error)
@@ -24,16 +25,23 @@ bool DynamicLibrary::Open(const std::filesystem::path &path, const std::vector<s
 #ifdef _WIN32
     std::vector<DLL_DIRECTORY_COOKIE> cookies;
     DWORD failure = 0;
-    for (const auto &directory : directories)
+    if (m_search == DynamicLibrarySearch::PlatformDefault)
+    {
+        // Generic plugins retain the pre-existing native search behavior.
+        m_handle = LoadLibraryW(std::filesystem::absolute(path).c_str());
+        if (!m_handle) failure = GetLastError();
+    }
+    for (const auto &directory : m_search == DynamicLibrarySearch::PlatformDefault ? std::vector<std::filesystem::path>{} : directories)
     {
         const auto cookie = AddDllDirectory(std::filesystem::absolute(directory).c_str());
         if (!cookie) { failure = GetLastError(); break; }
         cookies.push_back(cookie);
     }
-    if (!failure)
+    if (!failure && m_search == DynamicLibrarySearch::ExplicitDirectories)
     {
         m_handle = LoadLibraryExW(std::filesystem::absolute(path).c_str(), nullptr,
-                                 LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_SYSTEM32 | LOAD_LIBRARY_SEARCH_USER_DIRS);
+                                 LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_APPLICATION_DIR |
+                                 LOAD_LIBRARY_SEARCH_SYSTEM32 | LOAD_LIBRARY_SEARCH_USER_DIRS);
         if (!m_handle) failure = GetLastError();
     }
     for (const auto cookie : cookies) RemoveDllDirectory(cookie);
