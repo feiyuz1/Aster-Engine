@@ -115,7 +115,12 @@ SolutionResult SolutionGenerator::Generate(const fs::path &projectDirectory, con
 #else
     std::vector<std::wstring> arguments{L"-S", root.wstring(), L"-B", (root/"build").wstring(),
         L"-G", L"Visual Studio 17 2022", L"-A", L"x64"};
-    if (!sdkRoot.empty()) arguments.push_back(L"-DCMAKE_PREFIX_PATH=" + fs::absolute(sdkRoot).wstring());
+    if (!sdkRoot.empty())
+    {
+        const auto sdk = fs::absolute(sdkRoot);
+        arguments.push_back(L"-DCMAKE_PREFIX_PATH=" + sdk.wstring());
+        arguments.push_back(L"-DTinyEngine_DIR=" + (sdk / "lib/cmake/TinyEngine").wstring());
+    }
     auto result = RunProcess(root, FindCMake(cmakeExecutable), arguments);
     if (!result.success) return result;
     for (const auto &entry : fs::directory_iterator(root/"build", error))
@@ -128,8 +133,8 @@ SolutionResult SolutionGenerator::Generate(const fs::path &projectDirectory, con
 #endif
 }
 
-SolutionResult SolutionGenerator::Build(const fs::path &projectDirectory, const fs::path &sdkRoot,
-                                       const std::string &configuration, const fs::path &cmakeExecutable)
+SolutionResult SolutionGenerator::Build(const fs::path &projectDirectory, const fs::path &sdkRoot, const std::string &configuration,
+                                        const fs::path &cmakeExecutable)
 {
     if (configuration != "Debug" && configuration != "Release") return {false, {}, "不支持的编译配置。"};
     try

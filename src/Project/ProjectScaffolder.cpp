@@ -1,4 +1,5 @@
 #include "MiniEngine/Project/ProjectScaffolder.hpp"
+#include "MiniEngine/Project/SDKPaths.hpp"
 #include "MiniEngine/ECS/Components.hpp"
 #include "MiniEngine/ECS/ECS.hpp"
 #include "MiniEngine/ECS/SceneSerializer.hpp"
@@ -94,17 +95,7 @@ std::string CmakeSource(const std::string &name, const std::string &id, const st
 
 std::filesystem::path ProjectScaffolder::FindSDKRoot(fs::path directory)
 {
-    std::error_code error;
-    directory = fs::absolute(directory, error).lexically_normal();
-    while (!error && !directory.empty())
-    {
-        if (fs::is_regular_file(directory / "lib/cmake/TinyEngine/TinyEngineConfig.cmake", error)) return directory;
-        error.clear();
-        const auto parent = directory.parent_path();
-        if (parent == directory) break;
-        directory = parent;
-    }
-    return {};
+    return FindProjectSDK(std::move(directory));
 }
 
 ProjectOperationResult ProjectScaffolder::ValidateExisting(const fs::path &projectFile)

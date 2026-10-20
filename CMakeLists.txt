@@ -31,6 +31,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 include(cmake/ProjectSDK.cmake)
+add_subdirectory(Programs/ProjectTool)
 
 find_package(SDL2 CONFIG QUIET)
 if (NOT SDL2_FOUND)
@@ -148,6 +149,7 @@ add_library(tinyengine STATIC
     src/Platform/DynamicLibrary.cpp
     src/Project/ProjectScaffolder.cpp
     src/Project/SolutionGenerator.cpp
+    src/Project/SDKPaths.cpp
     src/Project/ProjectPackager.cpp
     src/Plugin/PluginManager.cpp
     src/Build/TargetPlatform.cpp
@@ -285,6 +287,12 @@ if(TINYENGINE_BUILD_EDITOR)
         COMMAND "${CMAKE_COMMAND}" --install "${CMAKE_BINARY_DIR}" --config $<CONFIG>
             --component ProjectSDK --prefix "${CMAKE_CURRENT_BINARY_DIR}/ProjectSDK"
         COMMENT "Preparing the SDK for editor project creation" VERBATIM)
+    if(TARGET tinyengine_project_tool)
+        add_dependencies(tinyengine_editor tinyengine_project_tool)
+        add_custom_command(TARGET tinyengine_editor POST_BUILD
+            COMMAND "${CMAKE_COMMAND}" --install "${CMAKE_BINARY_DIR}" --config $<CONFIG>
+                --component ProjectTool --prefix "${CMAKE_CURRENT_BINARY_DIR}/ProjectSDK" VERBATIM)
+    endif()
     if(TINYENGINE_BUILD_GAME)
         add_dependencies(tinyengine_editor tinyengine_game)
         add_custom_command(TARGET tinyengine_editor POST_BUILD
