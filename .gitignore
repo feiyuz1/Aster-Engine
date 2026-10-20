@@ -123,3 +123,7 @@
 !/tests/ProjectCreationTests.cmake
 !/tests/ProjectToolDiscoveryTests.cpp
 !/docs/superpowers/specs/2026-10-20-project-tool-and-repository-layout-design.md
+!/docs/superpowers/plans/2026-10-20-project-tool-and-layout.md
+!/Programs/
+!/tests/ProjectToolTests.cmake
+!/tests/ProjectShellMenuTests.cpp
