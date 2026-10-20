@@ -122,3 +122,4 @@
 !/tests/ProjectCreationTests.cpp
 !/tests/ProjectCreationTests.cmake
 !/tests/ProjectToolDiscoveryTests.cpp
+!/docs/superpowers/specs/2026-10-20-project-tool-and-repository-layout-design.md
