@@ -1,6 +1,6 @@
 PROJECT_NAME           = TinyEngine
 PROJECT_BRIEF          = "TinyEngine 中文 C++ 接口文档"
-OUTPUT_DIRECTORY       = build/doxygen
+OUTPUT_DIRECTORY       = Intermediate/Documentation/doxygen
 INPUT                  = include editor/EditorApp.hpp
 RECURSIVE              = YES
 FILE_PATTERNS          = *.h *.hpp
@@ -17,4 +17,4 @@ QUIET                  = YES
 WARNINGS               = YES
 WARN_IF_UNDOCUMENTED   = YES
 WARN_NO_PARAMDOC       = YES
-WARN_LOGFILE           = build/doxygen-warnings.txt
+WARN_LOGFILE           = Intermediate/Documentation/doxygen-warnings.txt

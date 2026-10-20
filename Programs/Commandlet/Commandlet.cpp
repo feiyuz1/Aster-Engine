@@ -1,4 +1,4 @@
-﻿// 文件：tools/Commandlet.cpp
+// 文件：Programs/Commandlet/Commandlet.cpp
 // 作用：提供无人值守资源检查和自动化任务入口。
 // 约定：命令行工具以非交互方式运行，失败时返回非零退出码并输出可定位的错误。
 // 类型：实现文件。

@@ -2,7 +2,7 @@
 
 TinyEngine 0.27 提供 ABI v1 的稳定 C 接口，适合将原生 Gameplay、工具桥接或第三方库封装为 DLL/Shared Object。它不是 C++ 模块 ABI，也不会跨库传递 STL、异常、RTTI 或引擎内部类。
 
-项目自己的 C++ 开发请参见[项目代码 SDK（P0）](项目代码开发.md)。它使用独立的 `TinyProject_GetAPI` 入口，负责项目身份、Play 会话和场景服务。这里的通用 `TinyPlugin_GetAPI` 继续用于通用插件；仅加载通用插件不会自动接通项目组件或 Play。每个通用插件的 HostAPI 在 startup 之后仍保持地址稳定，直到 shutdown 完成。
+项目自己的 C++ 开发请参见[项目代码 SDK（P0）](../Guides/项目代码开发.md)。它使用独立的 `TinyProject_GetAPI` 入口，负责项目身份、Play 会话和场景服务。这里的通用 `TinyPlugin_GetAPI` 继续用于通用插件；仅加载通用插件不会自动接通项目组件或 Play。每个通用插件的 HostAPI 在 startup 之后仍保持地址稳定，直到 shutdown 完成。
 
 ## 1. ABI 入口
 

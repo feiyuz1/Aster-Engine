@@ -127,3 +127,15 @@
 !/Programs/
 !/tests/ProjectToolTests.cmake
 !/tests/ProjectShellMenuTests.cpp
+
+# Organized repository sources and current documentation
+!/Scripts/
+!/docs/README.md
+!/docs/Guides/
+!/docs/Reference/
+!/docs/Architecture/
+!/docs/Reports/
+
+# Keep local-only historical reports ignored.
+/docs/Reports/*
+!/docs/Reports/材质系统验收.md

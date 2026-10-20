@@ -31,7 +31,6 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 include(cmake/ProjectSDK.cmake)
-add_subdirectory(Programs/ProjectTool)
 
 find_package(SDL2 CONFIG QUIET)
 if (NOT SDL2_FOUND)
@@ -265,6 +264,9 @@ if(TINYENGINE_BUILD_IMPORTERS)
     endif()
 endif()
 
+set_property(GLOBAL PROPERTY USE_FOLDERS ON)
+add_subdirectory(Programs)
+
 if(TINYENGINE_BUILD_EDITOR)
     add_library(tinyengine_imgui STATIC
         ${TINYENGINE_IMGUI_DIR}/imgui.cpp
@@ -305,18 +307,6 @@ if(TINYENGINE_BUILD_EDITOR)
     endif()
 endif()
 
-add_executable(tinyengine_asset_tool tools/AssetTool.cpp)
-target_link_libraries(tinyengine_asset_tool PRIVATE tinyengine)
-if(TINYENGINE_BUILD_IMPORTERS)
-    target_link_libraries(tinyengine_asset_tool PRIVATE tinyengine_importers)
-    target_compile_definitions(tinyengine_asset_tool PRIVATE TINYENGINE_HAS_ASSIMP=1)
-endif()
-add_executable(tinyengine_scene_tool tools/SceneTool.cpp)
-target_link_libraries(tinyengine_scene_tool PRIVATE tinyengine)
-add_executable(tinyengine_package_tool tools/PackageTool.cpp)
-target_link_libraries(tinyengine_package_tool PRIVATE tinyengine)
-add_executable(tinyengine_commandlet tools/Commandlet.cpp)
-target_link_libraries(tinyengine_commandlet PRIVATE tinyengine)
 
 if(TINYENGINE_BUILD_GAME)
     add_custom_target(package_game
