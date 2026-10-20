@@ -66,4 +66,10 @@ install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/tests/ProjectSDKConsumer/CMakeLists.t
 install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/tests/ProjectSDKConsumer/Source/"
     DESTINATION "${CMAKE_INSTALL_DATADIR}/tinyengine/templates/ProjectModule/Source" COMPONENT ProjectSDK)
 install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/assets/default.input"
+    "${CMAKE_CURRENT_SOURCE_DIR}/assets/player.mesh"
+    "${CMAKE_CURRENT_SOURCE_DIR}/assets/default.mat"
+    "${CMAKE_CURRENT_SOURCE_DIR}/assets/default.ppm"
     DESTINATION "${CMAKE_INSTALL_DATADIR}/tinyengine/templates/ProjectModule/assets" COMPONENT ProjectSDK)
+install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/assets/shaders/"
+    DESTINATION "${CMAKE_INSTALL_DATADIR}/tinyengine/templates/ProjectModule/assets/shaders"
+    COMPONENT ProjectSDK PATTERN "*.meta" EXCLUDE)

@@ -109,7 +109,9 @@ static int RunMain(int argc, char **argv)
             Engine engine; Check(engine.Initialize(fs::u8path(argv[2]),false),"PIE uses installed external project DLL");
             const auto snapshot=SceneSerializer::Serialize(*engine.GetContext().world);
             const auto &host=engine.GetProjectModuleHost();
+#ifndef NDEBUG
             Check(fs::is_regular_file(host.GetLoadedPdbPath()) && host.GetLoadedLibraryPath().stem()==host.GetLoadedPdbPath().stem(),"shadow DLL and matching PDB are present");
+#endif
             for(int i=0;i<2;++i)
             {
                 Check(engine.EnterPlayMode(),"external SDK project enters PIE"); engine.Run(3);

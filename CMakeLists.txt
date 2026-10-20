@@ -178,6 +178,7 @@ add_library(tinyengine STATIC
 target_include_directories(tinyengine PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include> $<INSTALL_INTERFACE:include>)
 target_include_directories(tinyengine PRIVATE "${TINYENGINE_STB_DIR}")
 target_link_libraries(tinyengine PRIVATE tinyengine_project_sdk)
+target_compile_definitions(tinyengine PRIVATE TINYENGINE_CMAKE_EXECUTABLE="${CMAKE_COMMAND}")
 
 # 外部着色器不可用时，内置版本仍须完整支持实例、运动矢量和分簇光照。
 # 两条路径共用同一份 GLSL，避免备用版本随渲染管线升级而过时。
@@ -279,7 +280,17 @@ if(TINYENGINE_BUILD_EDITOR)
     endif()
     target_include_directories(tinyengine_editor PRIVATE editor)
     target_link_libraries(tinyengine_editor PRIVATE tinyengine tinyengine_imgui)
-    target_compile_definitions(tinyengine_editor PRIVATE TINYENGINE_SOURCE_ROOT="${CMAKE_CURRENT_SOURCE_DIR}")
+    target_compile_definitions(tinyengine_editor PRIVATE TINYENGINE_DEVELOPMENT_SDK_ROOT="${CMAKE_CURRENT_BINARY_DIR}/ProjectSDK")
+    add_custom_command(TARGET tinyengine_editor POST_BUILD
+        COMMAND "${CMAKE_COMMAND}" --install "${CMAKE_BINARY_DIR}" --config $<CONFIG>
+            --component ProjectSDK --prefix "${CMAKE_CURRENT_BINARY_DIR}/ProjectSDK"
+        COMMENT "Preparing the SDK for editor project creation" VERBATIM)
+    if(TINYENGINE_BUILD_GAME)
+        add_dependencies(tinyengine_editor tinyengine_game)
+        add_custom_command(TARGET tinyengine_editor POST_BUILD
+            COMMAND "${CMAKE_COMMAND}" --install "${CMAKE_BINARY_DIR}" --config $<CONFIG>
+                --component ProjectRuntime --prefix "${CMAKE_CURRENT_BINARY_DIR}/ProjectSDK" VERBATIM)
+    endif()
     if(TINYENGINE_BUILD_IMPORTERS)
         target_link_libraries(tinyengine_editor PRIVATE tinyengine_importers)
         target_compile_definitions(tinyengine_editor PRIVATE TINYENGINE_HAS_ASSIMP=1)
@@ -311,6 +322,23 @@ endif()
 
 if(TINYENGINE_BUILD_TESTS)
     enable_testing()
+    if(TINYENGINE_BUILD_EDITOR AND WIN32 AND MSVC)
+        add_executable(tinyengine_project_tool_discovery_tests tests/ProjectToolDiscoveryTests.cpp src/Project/SolutionGenerator.cpp)
+        target_include_directories(tinyengine_project_tool_discovery_tests PRIVATE include)
+        target_compile_definitions(tinyengine_project_tool_discovery_tests PRIVATE TINYENGINE_CMAKE_EXECUTABLE="Z:/missing-builder/cmake.exe")
+        target_compile_options(tinyengine_project_tool_discovery_tests PRIVATE /utf-8 /FS)
+        add_test(NAME tinyengine_project_tool_discovery COMMAND tinyengine_project_tool_discovery_tests)
+        add_executable(tinyengine_project_creation_tests tests/ProjectCreationTests.cpp)
+        target_link_libraries(tinyengine_project_creation_tests PRIVATE tinyengine)
+        target_compile_options(tinyengine_project_creation_tests PRIVATE /utf-8 /FS)
+        add_test(NAME tinyengine_project_creation COMMAND ${CMAKE_COMMAND}
+            "-DENGINE_BUILD=${CMAKE_CURRENT_BINARY_DIR}"
+            "-DCONFIG=$<CONFIG>"
+            "-DCREATE_EXE=$<TARGET_FILE:tinyengine_project_creation_tests>"
+            "-DRUNTIME_EXE=$<TARGET_FILE:tinyengine_project_runtime_tests>"
+            "-DEDITOR_TEST_EXE=$<TARGET_FILE:tinyengine_editor_interaction_tests>"
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/ProjectCreationTests.cmake")
+    endif()
     add_executable(tinyengine_project_sdk_abi_tests tests/ProjectSDKAbiTests.cpp tests/ProjectSDKAbiC.c)
     target_include_directories(tinyengine_project_sdk_abi_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/include")
     target_link_libraries(tinyengine_project_sdk_abi_tests PRIVATE tinyengine_project_sdk)
@@ -467,6 +495,9 @@ if(TINYENGINE_BUILD_TESTS)
         set_tests_properties(tinyengine_material_editor PROPERTIES WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
         add_executable(tinyengine_editor_interaction_tests tests/EditorInteractionTests.cpp editor/EditorApp.cpp editor/EditorInspector.cpp editor/EditorWorkspace.cpp editor/EditorAssets.cpp editor/EditorAssetReferences.cpp editor/AssetReferenceGraph.cpp editor/AssetTrash.cpp editor/EditorAssetDeletion.cpp editor/EditorMaterialAssignment.cpp editor/EditorSceneView.cpp editor/MaterialAssetEditor.cpp editor/MaterialGraphEditor.cpp)
         target_include_directories(tinyengine_editor_interaction_tests PRIVATE editor)
+        target_compile_definitions(tinyengine_editor_interaction_tests PRIVATE
+            TINYENGINE_DEVELOPMENT_SDK_ROOT="${CMAKE_CURRENT_BINARY_DIR}/ProjectSDK")
+        add_dependencies(tinyengine_editor_interaction_tests tinyengine_editor)
         target_compile_definitions(tinyengine_editor_interaction_tests PRIVATE TINYENGINE_TEST_GAME_PATH="$<TARGET_FILE:tinyengine_game>")
         add_dependencies(tinyengine_editor_interaction_tests tinyengine_game)
         target_link_libraries(tinyengine_editor_interaction_tests PRIVATE tinyengine tinyengine_imgui)
@@ -475,6 +506,9 @@ if(TINYENGINE_BUILD_TESTS)
             target_compile_definitions(tinyengine_editor_interaction_tests PRIVATE TINYENGINE_HAS_ASSIMP=1)
         endif()
         add_test(NAME tinyengine_editor_interaction COMMAND tinyengine_editor_interaction_tests)
+        add_test(NAME tinyengine_editor_project_creation COMMAND tinyengine_editor_interaction_tests --project-create)
+        set_tests_properties(tinyengine_editor_project_creation PROPERTIES
+            WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR} TIMEOUT 180)
         set_tests_properties(tinyengine_editor_interaction PROPERTIES WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
         if(WIN32)
             # Process DPI awareness is fixed once per process; exercise startup in a fresh test process.
@@ -524,6 +558,10 @@ endif()
 if(TINYENGINE_BUILD_EDITOR)
     install(TARGETS tinyengine_editor RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
     tinyengine_install_host_runtime(tinyengine_editor EditorRuntime)
+    file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/generated/editor/$<CONFIG>/TinyEngine.cmd"
+        CONTENT "@echo off\r\nstart \"\" \"%~dp0bin\\$<CONFIG>\\tinyengine_editor.exe\" %*\r\n")
+    install(FILES "${CMAKE_CURRENT_BINARY_DIR}/generated/editor/$<CONFIG>/TinyEngine.cmd"
+        DESTINATION . COMPONENT EditorRuntime)
 endif()
 if(MSVC)
     set(CMAKE_INSTALL_SYSTEM_RUNTIME_COMPONENT ProjectRuntime)

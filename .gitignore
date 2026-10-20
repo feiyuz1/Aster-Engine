@@ -119,3 +119,6 @@
 !/tests/TestDependentPlugin.cpp
 !/tests/ProjectSDKIdentityTests.cmake
 !/tests/HostRuntimeTests.cmake
+!/tests/ProjectCreationTests.cpp
+!/tests/ProjectCreationTests.cmake
+!/tests/ProjectToolDiscoveryTests.cpp

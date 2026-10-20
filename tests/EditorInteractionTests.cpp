@@ -20,6 +20,8 @@
 #include <chrono>
 #include <iostream>
 #include <stdexcept>
+#include <thread>
+#include <fstream>
 
 namespace MiniEngine
 {
@@ -107,6 +109,58 @@ struct EditorInteractionTests
         app.m_uiScale=1.25f;
         Check(std::abs(app.Scaled(96)-120)<.001f,"UI size preference scales logical dimensions independently from monitor DPI");
         app.m_dpiScale=dpi; app.m_uiScale=ui;
+    }
+
+    void ProjectCreation()
+    {
+        namespace fs = std::filesystem;
+        const auto root = fs::temp_directory_path()/("TinyCreateUI-"+std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()))/fs::u8path(u8"中文 with spaces");
+        fs::create_directories(root);
+        std::snprintf(app.m_newProjectName.data(), app.m_newProjectName.size(), "%s", "UIFirstGame");
+        std::snprintf(app.m_newProjectParent.data(), app.m_newProjectParent.size(), "%s", root.u8string().c_str());
+        app.StartProjectCreation();
+        Check(app.m_projectCreationFuture.valid() && app.m_requestedProject.empty(),
+              "create and open starts a background build before requesting a project switch");
+        const auto wait = [&] {
+            const auto until = std::chrono::steady_clock::now() + std::chrono::seconds(70);
+            int frames = 0;
+            while (app.m_projectCreationFuture.valid() && std::chrono::steady_clock::now() < until)
+            {
+                Frame([&] { app.DrawProjectLauncher(); });
+                ++frames;
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            }
+            Check(!app.m_projectCreationFuture.valid() && frames > 1, "launcher keeps drawing while C++ code builds");
+        };
+        wait();
+        const auto project = root/"UIFirstGame/UIFirstGame.tinyproject";
+        if (app.m_requestedProject != project || !app.m_projectLauncherError.empty())
+            std::cerr << app.m_projectLauncherError << '\n' << app.m_projectCreationOutput << '\n';
+        Check(app.m_requestedProject == project && app.m_projectLauncherError.empty(),
+              "successful first compilation automatically opens the new C++ project");
+        // 模拟清理忽略的 build/ 后，通过现有菜单重新生成 VS 工程。
+        fs::rename(project.parent_path()/"build", project.parent_path()/"Saved/InitialBuild");
+        const_cast<ProjectSettings &>(app.m_engine.GetProjectSettings()).projectFile = project;
+        app.StartSolutionGeneration();
+        app.m_solutionFuture.wait();
+        const auto regenerated = app.m_solutionFuture.get();
+        if (!regenerated.success) std::cerr << regenerated.output << '\n';
+        Check(regenerated.success && fs::is_regular_file(regenerated.solutionFile),
+              "Generate VS rediscovers the installed SDK after clearing the build cache");
+        app.m_requestedProject.clear();
+        const auto sourceFile = project.parent_path()/"Source/Game.cpp";
+        const auto read = [](const fs::path &path) { std::ifstream stream(path, std::ios::binary); return std::string(std::istreambuf_iterator<char>(stream), {}); };
+        const auto source = read(sourceFile);
+        std::ofstream(sourceFile, std::ios::app) << "\n#error deliberate_ui_build_failure\n";
+        app.StartCreatedProjectBuild();
+        wait();
+        Check(app.m_requestedProject.empty() && !app.m_projectLauncherError.empty() && !app.m_projectCreationOutput.empty() && fs::exists(project),
+              "compile failure shows diagnostics, retains files and does not open an unbuilt project");
+        std::ofstream(sourceFile, std::ios::trunc) << source;
+        app.StartCreatedProjectBuild();
+        wait();
+        Check(app.m_requestedProject == project && app.m_projectLauncherError.empty(),
+              "retry after fixing the error opens the retained project");
     }
 
     void NativeDialogDpi()
@@ -2125,6 +2179,7 @@ int main(int argc, char **argv)
         if (argc>1 && std::string(argv[1])!="--legacy") {
             const std::string filter=argv[1];
             if(filter=="--logical-ui") tests.LogicalUiMetrics();
+            else if(filter=="--project-create") tests.ProjectCreation();
             else if(filter=="--dpi") tests.NativeDialogDpi();
             else if(filter=="--ground-grid") tests.GroundGridContinuity();
             else if(filter=="--view-cube") tests.ViewCubeNavigation();

@@ -1,11 +1,12 @@
 #include "MiniEngine/Project/ProjectScaffolder.hpp"
-
 #include "MiniEngine/ECS/Components.hpp"
 #include "MiniEngine/ECS/ECS.hpp"
 #include "MiniEngine/ECS/SceneSerializer.hpp"
 #include "MiniEngine/Project/Project.hpp"
 
 #include <fstream>
+#include <iomanip>
+#include <random>
 #include <sstream>
 #include <vector>
 
@@ -14,226 +15,106 @@ namespace MiniEngine
 namespace
 {
 namespace fs = std::filesystem;
-
 bool ValidName(const std::string &name)
 {
-    const auto letter = [](const char character) {
-        return (character >= 'A' && character <= 'Z') || (character >= 'a' && character <= 'z');
-    };
-    if (name.empty() || !letter(name.front()))
-        return false;
-    for (const char character : name)
-        if (!letter(character) && (character < '0' || character > '9') && character != '_')
-            return false;
+    const auto letter = [](char c) { return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z'); };
+    if (name.empty() || name.size() > 100 || !letter(name.front())) return false;
+    for (char c : name) if (!letter(c) && (c < '0' || c > '9') && c != '_') return false;
     return true;
 }
-
 bool WriteText(const fs::path &path, const std::string &contents)
 {
     std::ofstream stream(path, std::ios::binary | std::ios::trunc);
     stream.write(contents.data(), static_cast<std::streamsize>(contents.size()));
     return stream.good();
 }
-
-std::string ReplaceAll(std::string text, const std::string &from, const std::string &to)
+std::string NewProjectId()
 {
-    std::size_t offset = 0;
-    while ((offset = text.find(from, offset)) != std::string::npos)
-    {
-        text.replace(offset, from.size(), to);
-        offset += to.size();
-    }
-    return text;
+    std::random_device random;
+    std::ostringstream result;
+    result << "project." << std::hex << std::setfill('0');
+    for (int i = 0; i < 4; ++i) result << std::setw(8) << static_cast<std::uint32_t>(random());
+    return result.str();
 }
-
-std::string GameHeader()
-{
-    return R"SOURCE(#pragma once
-
-#include "MiniEngine/Runtime/Engine.hpp"
-
-// 从这里开始写项目游戏规则；编辑器 Play 暂不加载项目 C++。
-class ProjectGame final : public MiniEngine::GameInstance
-{
-  public:
-    explicit ProjectGame(MiniEngine::Engine &engine) : m_engine(engine) {}
-    void OnInitialize() override;
-    void OnUpdate(float deltaTime) override;
-
-  private:
-    MiniEngine::Engine &m_engine;
-    MiniEngine::Entity m_player = MiniEngine::InvalidEntity;
-};
-)SOURCE";
-}
-
 std::string GameSource()
 {
-    return R"SOURCE(#include "Game.hpp"
+    return R"SOURCE(#include <MiniEngine/ProjectSDK/Project.hpp>
+#include "ProjectModuleBuildInfo.h"
+#include <stdexcept>
 
-#include "MiniEngine/ECS/Components.hpp"
+using namespace MiniEngine::ProjectSDK;
 
-void ProjectGame::OnInitialize()
+// 点击编辑器“运行”，就会创建这个项目会话。
+class ProjectSession final : public Session
 {
-    auto &world = *m_engine.GetContext().world;
-    for (const auto entity : world.GetEntityManager().GetAliveEntities())
+public:
+    void OnBeginPlay(Context &context) override
     {
-        const auto *name = world.GetComponent<MiniEngine::NameComponent>(entity);
-        if (name && name->name == "Player")
-        {
-            m_player = entity;
-            break;
-        }
+        m_player = context.FindEntity("Player");
+        if (!context.IsAlive(m_player)) throw std::runtime_error("Player is missing");
+        context.Log("PROJECT_BEGIN");
     }
-}
 
-void ProjectGame::OnUpdate(const float deltaTime)
+    void OnUpdate(Context &context, float deltaTime) override
+    {
+        TinyProjectTransform transform{};
+        if (!context.GetTransform(m_player, transform)) return;
+        // 修改这里，加入自己的游戏规则。默认每秒旋转 90 度。
+        transform.rotation.y += 90.0f * deltaTime;
+        transform.position.x += context.GetAxis("MoveX") * 3.0f * deltaTime;
+        transform.position.z -= context.GetAxis("MoveZ") * 3.0f * deltaTime;
+        context.SetTransform(m_player, transform);
+    }
+
+    void OnEndPlay(Context &context) override { context.Log("PROJECT_END"); }
+
+private:
+    TinyProjectEntity m_player{};
+};
+
+extern "C" TINY_PROJECT_EXPORT const TinyProjectAPI *TINY_PROJECT_CALL TinyProject_GetAPI(uint32_t abi)
 {
-    auto &context = m_engine.GetContext();
-    if (!context.world->IsAlive(m_player))
-        return;
-    auto *transform = context.world->GetComponent<MiniEngine::TransformComponent>(m_player);
-    if (!transform)
-        return;
-    // 修改这里即可加入自己的移动、交互和胜利条件。
-    transform->position.x += context.inputSystem->GetAxis("MoveX") * 3.0f * deltaTime;
-    transform->position.z -= context.inputSystem->GetAxis("MoveZ") * 3.0f * deltaTime;
+    return ExportProject<ProjectSession>(abi, TinyEngineProject::GetModuleInfo());
 }
 )SOURCE";
 }
-
-std::string MainSource()
+std::string CmakeSource(const std::string &name, const std::string &id, const std::string &module)
 {
-    return R"SOURCE(#include "Game.hpp"
+    return "cmake_minimum_required(VERSION 3.21)\nproject(" + name + " LANGUAGES CXX)\n"
+           "find_package(TinyEngine CONFIG REQUIRED)\n"
+           "tinyengine_add_project_module(\n    TARGET " + name + "\n    PROJECT_ID " + id +
+           "\n    MODULE_ID " + module + "\n    SOURCES Source/Game.cpp)\n"
+           "get_filename_component(_sdk \"${TinyEngine_DIR}/../../..\" ABSOLUTE)\n"
+           "set_target_properties(" + name + " PROPERTIES\n"
+           "    VS_DEBUGGER_COMMAND \"${_sdk}/bin/$<CONFIG>/tinyengine_game.exe\"\n"
+           "    VS_DEBUGGER_COMMAND_ARGUMENTS \"\\\"${CMAKE_CURRENT_SOURCE_DIR}/" + name + ".tinyproject\\\"\"\n"
+           "    VS_DEBUGGER_WORKING_DIRECTORY \"${CMAKE_CURRENT_SOURCE_DIR}\")\n";
+}
+} // namespace
 
-#include "MiniEngine/Core/CrashReporter.hpp"
-
-#include <cstdint>
-#include <cstdlib>
-#include <filesystem>
-#include <iostream>
-#include <limits>
-#include <memory>
-#include <string>
-
-// 双击构建目录中的程序时，从程序位置向上查找同名项目文件。
-std::filesystem::path FindProject(const std::filesystem::path &executable)
+std::filesystem::path ProjectScaffolder::FindSDKRoot(fs::path directory)
 {
     std::error_code error;
-    auto directory = std::filesystem::absolute(executable, error).parent_path();
-    if (error)
-        return {};
-    const auto projectName = executable.stem().wstring() + L".tinyproject";
-    while (!directory.empty())
+    directory = fs::absolute(directory, error).lexically_normal();
+    while (!error && !directory.empty())
     {
-        const auto candidate = directory / projectName;
-        if (std::filesystem::is_regular_file(candidate, error) && !error)
-            return candidate;
+        if (fs::is_regular_file(directory / "lib/cmake/TinyEngine/TinyEngineConfig.cmake", error)) return directory;
         error.clear();
         const auto parent = directory.parent_path();
-        if (parent == directory)
-            break;
+        if (parent == directory) break;
         directory = parent;
     }
     return {};
 }
-
-int main(int argc, char **argv)
-{
-    MiniEngine::CrashReporter::Install("TinyEngineProject");
-    std::filesystem::path projectFile;
-    std::uint32_t maximumFrames = 0;
-    for (int index = 1; index < argc; ++index)
-    {
-        const std::string argument = argv[index];
-        if (argument.rfind("--frames=", 0) == 0)
-        {
-            const auto value = std::strtoul(argument.c_str() + 9, nullptr, 10);
-            if (value <= static_cast<unsigned long>(std::numeric_limits<std::uint32_t>::max()))
-                maximumFrames = static_cast<std::uint32_t>(value);
-        }
-        else if (projectFile.empty())
-            projectFile = argument;
-    }
-    if (projectFile.empty())
-        projectFile = FindProject(argv[0]);
-    if (projectFile.empty())
-    {
-        std::cerr << "Project file not found. Pass a .tinyproject path as the first argument.\n";
-        return 2;
-    }
-    MiniEngine::Engine engine;
-    engine.SetGameInstance(std::make_unique<ProjectGame>(engine));
-    if (!engine.Initialize(std::filesystem::absolute(projectFile), true))
-        return 1;
-    engine.Run(maximumFrames);
-    engine.Shutdown();
-    return 0;
-}
-)SOURCE";
-}
-
-std::string CmakeSource(const std::string &name, const fs::path &engineRoot)
-{
-    std::string source = R"SOURCE(cmake_minimum_required(VERSION 3.20)
-project(@NAME@ LANGUAGES C CXX)
-set(CMAKE_CXX_STANDARD 17)
-set(CMAKE_CXX_STANDARD_REQUIRED ON)
-set(TINYENGINE_BUILD_TESTS OFF CACHE BOOL "" FORCE)
-set(TINYENGINE_BUILD_DEMO OFF CACHE BOOL "" FORCE)
-set(TINYENGINE_BUILD_GAME OFF CACHE BOOL "" FORCE)
-set(TINYENGINE_BUILD_EDITOR OFF CACHE BOOL "" FORCE)
-set(TINYENGINE_BUILD_IMPORTERS OFF CACHE BOOL "" FORCE)
-set(TINYENGINE_ROOT "@ENGINE_ROOT@" CACHE PATH "TinyEngine source tree")
-if(NOT EXISTS "${TINYENGINE_ROOT}/CMakeLists.txt")
-    message(FATAL_ERROR "Set TINYENGINE_ROOT to the TinyEngine source directory")
-endif()
-add_subdirectory("${TINYENGINE_ROOT}" "${CMAKE_BINARY_DIR}/engine" EXCLUDE_FROM_ALL)
-file(GLOB GAME_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp")
-add_executable(@NAME@ ${GAME_SOURCES})
-target_link_libraries(@NAME@ PRIVATE tinyengine)
-set_target_properties(@NAME@ PROPERTIES
-    VS_DEBUGGER_COMMAND_ARGUMENTS "\"${CMAKE_CURRENT_SOURCE_DIR}/@NAME@.tinyproject\""
-    VS_DEBUGGER_WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}")
-if(MSVC)
-    target_compile_options(@NAME@ PRIVATE /utf-8 /FS)
-endif()
-)SOURCE";
-    source = ReplaceAll(source, "@NAME@", name);
-    return ReplaceAll(source, "@ENGINE_ROOT@", engineRoot.generic_u8string());
-}
-
-std::string ReadmeSource(const std::string &name)
-{
-    return "# " + name + "\n\n"
-           "在 TinyEngine 编辑器中打开 `" + name + ".tinyproject` 编辑场景。\n\n"
-           "项目代码在 `src/Game.cpp`：`OnInitialize` 找到 Player，`OnUpdate` 读取输入并移动它。\n\n"
-           "修改代码后，在生成的 Visual Studio 解决方案中构建并运行 `" + name + "`。"
-           "当前编辑器的 Play 不加载项目 C++ 代码。\n\n"
-           "双击 `build/Release/" + name + ".exe` 可运行；也可以显式传入项目文件："
-           "`build/Release/" + name + ".exe " + name + ".tinyproject`。\n";
-}
-
-bool CopyStarterAsset(const fs::path &engineRoot, const fs::path &projectRoot, const fs::path &relative)
-{
-    std::error_code error;
-    const auto target = projectRoot / relative;
-    fs::create_directories(target.parent_path(), error);
-    return !error && fs::copy_file(engineRoot / relative, target, fs::copy_options::none, error) && !error;
-}
-} // 结束匿名命名空间
 
 ProjectOperationResult ProjectScaffolder::ValidateExisting(const fs::path &projectFile)
 {
     if (projectFile.extension() != ".tinyproject" || !fs::is_regular_file(projectFile))
         return {false, {}, "请选择存在的 .tinyproject 文件。"};
     ProjectSettings settings;
-    if (!settings.Load(projectFile))
-        return {false, {}, "项目配置读取失败。"};
-    if (!fs::is_directory(settings.Resolve(settings.assetDirectory)))
-        return {false, {}, "项目素材目录不存在。"};
-    if (!fs::is_regular_file(settings.Resolve(settings.startupScene)))
-        return {false, {}, "项目启动场景不存在。"};
+    if (!settings.Load(projectFile)) return {false, {}, "项目配置读取失败。"};
+    if (!fs::is_directory(settings.Resolve(settings.assetDirectory))) return {false, {}, "项目素材目录不存在。"};
+    if (!fs::is_regular_file(settings.Resolve(settings.startupScene))) return {false, {}, "项目启动场景不存在。"};
     World startupWorld;
     if (!SceneSerializer::Load(startupWorld, settings.Resolve(settings.startupScene)))
         return {false, {}, "项目启动场景无法读取。"};
@@ -245,45 +126,45 @@ ProjectOperationResult ProjectScaffolder::ValidateExisting(const fs::path &proje
 ProjectOperationResult ProjectScaffolder::Create(const ProjectCreateRequest &request)
 {
     if (!ValidName(request.name))
-        return {false, {}, "项目名须以英文字母开头，只能包含英文字母、数字和下划线。"};
+        return {false, {}, "项目名须以英文字母开头，只能包含英文字母、数字和下划线，最多 100 个字符。"};
     std::error_code error;
     const auto parent = fs::absolute(request.parentDirectory, error).lexically_normal();
-    if (error || !fs::is_directory(parent))
-        return {false, {}, "项目父目录不存在。"};
+    if (error || !fs::is_directory(parent)) return {false, {}, "项目父目录不存在。"};
     const auto root = parent / request.name;
     if (fs::symlink_status(root, error).type() != fs::file_type::not_found)
         return {false, {}, "目标目录已存在，请换一个项目名或位置。"};
     error.clear();
-    const auto engineRoot = fs::absolute(request.engineRoot, error).lexically_normal();
-    if (error || !fs::is_regular_file(engineRoot / "CMakeLists.txt"))
-        return {false, {}, "引擎源码目录无效。"};
-    const std::vector<fs::path> starterAssets = {
-        "assets/player.mesh", "assets/default.mat", "assets/default.ppm", "assets/default.input",
-        "assets/shaders/default.vert", "assets/shaders/default.frag"};
-    for (const auto &asset : starterAssets)
-        if (!fs::is_regular_file(engineRoot / asset))
-            return {false, {}, "引擎基础素材缺失：" + asset.generic_string()};
-    if (!fs::create_directory(root, error) || error)
-        return {false, {}, "无法创建项目目录，请检查写入权限。"};
+    const auto sdk = fs::absolute(request.sdkRoot, error).lexically_normal();
+    if (request.sdkRoot.empty() || error || !fs::is_regular_file(sdk / "lib/cmake/TinyEngine/TinyEngineConfig.cmake"))
+        return {false, {}, "未找到项目开发 SDK，请使用完整安装目录中的 TinyEngine 编辑器。"};
+    const auto templateRoot = sdk / "share/tinyengine/templates/ProjectModule";
+    std::vector<fs::path> assets = {"assets/player.mesh", "assets/default.mat", "assets/default.ppm",
+        "assets/default.input", "assets/shaders/default.vert", "assets/shaders/default.frag"};
+    for (const auto &asset : assets)
+        if (!fs::is_regular_file(templateRoot / asset)) return {false, {}, "SDK 基础素材缺失：" + asset.generic_string()};
+    // 默认着色器还引用 material/ 下的公共代码，必须保留目录结构。
+    for (fs::recursive_directory_iterator it(templateRoot/"assets/shaders", error), end; it != end && !error; it.increment(error))
+    {
+        if (!it->is_regular_file() || it->path().extension() == ".meta") continue;
+        const auto relative = it->path().lexically_relative(templateRoot);
+        if (relative != "assets/shaders/default.vert" && relative != "assets/shaders/default.frag") assets.push_back(relative);
+    }
+    if (error) return {false, {}, "无法读取 SDK 着色器素材。"};
+    if (!fs::create_directory(root, error) || error) return {false, {}, "无法创建项目目录，请检查写入权限。"};
 
     bool complete = false;
     do
     {
-        fs::create_directories(root / "assets" / "shaders", error);
-        if (error)
-            break;
-        fs::create_directory(root / "src", error);
-        if (error)
-            break;
-        for (const auto &asset : starterAssets)
-            if (!CopyStarterAsset(engineRoot, root, asset))
-            {
-                error = std::make_error_code(std::errc::io_error);
-                break;
-            }
-        if (error)
-            break;
-
+        fs::create_directories(root / "assets/shaders", error);
+        if (error) break;
+        fs::create_directory(root / "Source", error);
+        if (error) break;
+        for (const auto &asset : assets)
+        {
+            fs::create_directories((root/asset).parent_path(), error);
+            if (error || !fs::copy_file(templateRoot / asset, root / asset, fs::copy_options::none, error)) break;
+        }
+        if (error) break;
         World world;
         const auto player = world.CreateEntity("Player");
         world.GetComponent<TransformComponent>(player)->position = {0.0f, 0.5f, 0.0f};
@@ -291,32 +172,33 @@ ProjectOperationResult ProjectScaffolder::Create(const ProjectCreateRequest &req
         const auto camera = world.CreateEntity("MainCamera");
         world.GetComponent<TransformComponent>(camera)->position = {0.0f, 2.0f, 6.0f};
         world.AddComponent(camera, CameraComponent{});
-        const auto sun = world.CreateEntity("Sun");
-        world.AddComponent(sun, LightComponent{});
-        if (!SceneSerializer::Save(world, root / "assets" / "Startup.scene"))
-            break;
-
+        world.AddComponent(world.CreateEntity("Sun"), LightComponent{});
+        if (!SceneSerializer::Save(world, root / "assets/Startup.scene")) break;
         ProjectSettings settings;
         settings.name = request.name;
+        settings.projectId = NewProjectId();
+        settings.codeModule = request.name + ".game";
+        settings.codeRequired = true;
+        settings.codeManifest = "Binaries/Windows-x64/Project.modules";
         settings.assetDirectory = "assets";
         settings.startupScene = "assets/Startup.scene";
         settings.inputBindings = "assets/default.input";
-        const auto projectFile = root / (request.name + ".tinyproject");
-        if (!settings.Save(projectFile) || !WriteText(root / "src" / "Game.hpp", GameHeader()) ||
-            !WriteText(root / "src" / "Game.cpp", GameSource()) ||
-            !WriteText(root / "src" / "main.cpp", MainSource()) ||
-            !WriteText(root / "CMakeLists.txt", CmakeSource(request.name, engineRoot)) ||
-            !WriteText(root / "README.md", ReadmeSource(request.name)) ||
-            !WriteText(root / ".gitignore", "/build/\n/Saved/\n/Logs/\n/Dist/\n"))
-            break;
+        const std::string readme = "# " + request.name + "\n\n在 TinyEngine 编辑器中打开 " + request.name +
+            ".tinyproject，点击运行，Player 会旋转；停止后恢复编辑场景。\n\n"
+            "项目代码在 Source/Game.cpp。修改代码后保存场景、关闭编辑器，在 build/" + request.name +
+            ".sln 中重新生成项目，再打开编辑器。当前不支持运行中换库。\n";
+        if (!settings.Save(root/(request.name+".tinyproject")) ||
+            !WriteText(root/"Source/Game.cpp", GameSource()) ||
+            !WriteText(root/"CMakeLists.txt", CmakeSource(request.name, settings.projectId, settings.codeModule)) ||
+            !WriteText(root/"README.md", readme) ||
+            !WriteText(root/".gitignore", "/build/\n/Binaries/\n/Library/\n/Saved/\n/Logs/\n/Dist/\n")) break;
         complete = true;
     } while (false);
-
     if (!complete)
     {
         fs::remove_all(root, error);
         return {false, {}, "项目文件生成失败，请检查磁盘空间或目录权限。"};
     }
-    return {true, root / (request.name + ".tinyproject"), {}};
+    return {true, root/(request.name+".tinyproject"), {}};
 }
-} // 结束 MiniEngine 命名空间
+} // namespace MiniEngine

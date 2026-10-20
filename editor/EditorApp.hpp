@@ -62,6 +62,9 @@ class EditorApp
     /// @brief 绘制 `MenuBar`。
     void DrawMenuBar();
     void DrawProjectLauncher();
+    void StartProjectCreation();
+    void StartCreatedProjectBuild();
+    void PollProjectCreation();
     void DrawSolutionStatus();
     void DrawPackagingStatus();
     void StartSolutionGeneration();
@@ -293,6 +296,10 @@ class EditorApp
     std::array<char, 1024> m_newProjectParent{};
     std::array<char, 1024> m_existingProjectPath{};
     std::string m_projectLauncherError;
+    std::filesystem::path m_createdProject;
+    std::filesystem::path m_creationSDKRoot;
+    std::future<SolutionResult> m_projectCreationFuture;
+    std::string m_projectCreationOutput;
     std::future<SolutionResult> m_solutionFuture;
     std::string m_solutionStatus;
     std::future<PackageResult> m_packageFuture;

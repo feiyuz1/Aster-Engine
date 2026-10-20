@@ -58,6 +58,17 @@ namespace MiniEngine
 {
 namespace
 {
+std::filesystem::path FindEditorSDK()
+{
+    char *base = SDL_GetBasePath();
+    auto sdk = ProjectScaffolder::FindSDKRoot(base ? std::filesystem::u8path(base) : std::filesystem::current_path());
+    SDL_free(base);
+#ifdef TINYENGINE_DEVELOPMENT_SDK_ROOT
+    if (sdk.empty()) sdk = ProjectScaffolder::FindSDKRoot(std::filesystem::u8path(TINYENGINE_DEVELOPMENT_SDK_ROOT));
+#endif
+    return sdk;
+}
+
 Vec3 TransformPoint(const Mat4 &matrix, const Vec3 &point)
 {
     return {matrix.At(0, 0) * point.x + matrix.At(0, 1) * point.y + matrix.At(0, 2) * point.z + matrix.At(0, 3),
@@ -701,6 +712,8 @@ void EditorApp::Shutdown()
         Autosave();
     if (m_solutionFuture.valid())
         m_solutionFuture.wait();
+    if (m_projectCreationFuture.valid())
+        m_projectCreationFuture.wait();
     m_engine.GetContext().renderer->SetOverlayCallback({});
     m_device->SetEventCallback({});
     m_device->SetCloseRequestCallback({});
@@ -891,8 +904,54 @@ void EditorApp::DrawAssetPreview()
     ImGui::End();
 }
 
+void EditorApp::StartProjectCreation()
+{
+    if (m_projectCreationFuture.valid() || !m_createdProject.empty()) return;
+    m_creationSDKRoot = FindEditorSDK();
+    const auto result = ProjectScaffolder::Create(
+        {m_newProjectName.data(), std::filesystem::u8path(m_newProjectParent.data()), m_creationSDKRoot});
+    m_projectLauncherError = result.error;
+    if (!result.success) return;
+    m_createdProject = result.projectFile;
+    StartCreatedProjectBuild();
+}
+
+void EditorApp::StartCreatedProjectBuild()
+{
+    if (m_projectCreationFuture.valid() || m_createdProject.empty()) return;
+    m_projectLauncherError.clear();
+    m_projectCreationOutput.clear();
+    const auto directory = m_createdProject.parent_path();
+    const auto sdk = m_creationSDKRoot;
+    m_projectCreationFuture = std::async(std::launch::async, [directory, sdk] {
+#ifdef NDEBUG
+        return SolutionGenerator::Build(directory, sdk, "Release");
+#else
+        return SolutionGenerator::Build(directory, sdk, "Debug");
+#endif
+    });
+}
+
+void EditorApp::PollProjectCreation()
+{
+    if (!m_projectCreationFuture.valid() ||
+        m_projectCreationFuture.wait_for(std::chrono::seconds(0)) != std::future_status::ready) return;
+    const auto result = m_projectCreationFuture.get();
+    m_projectCreationOutput = result.output;
+    if (result.success)
+    {
+        m_requestedProject = m_createdProject;
+        m_engine.RequestExit();
+    }
+    else m_projectLauncherError = Localize(
+        "Project files are ready, but code compilation failed. Fix the error below, then retry.",
+        "项目文件已保留，代码编译失败。请查看下方错误，修复后点击重新编译。");
+}
+
 void EditorApp::DrawProjectLauncher()
 {
+    PollProjectCreation();
+    const bool building = m_projectCreationFuture.valid();
     const ImGuiViewport *viewport = ImGui::GetMainViewport();
     ImGui::SetNextWindowPos(viewport->WorkPos);
     ImGui::SetNextWindowSize(viewport->WorkSize);
@@ -914,6 +973,7 @@ void EditorApp::DrawProjectLauncher()
     ImGui::Dummy({0, 18});
 
     ImGui::SeparatorText(Localize("Create Project", "新建项目"));
+    ImGui::BeginDisabled(building || !m_createdProject.empty());
     ImGui::TextUnformatted(Localize("Project Name", "项目名称"));
     ImGui::SetNextItemWidth(-1);
     ImGui::InputText("##ProjectName", m_newProjectName.data(), m_newProjectName.size());
@@ -957,24 +1017,31 @@ void EditorApp::DrawProjectLauncher()
                                            "此目录需已存在；项目文件夹会自动建在其中。"));
     if (ImGui::Button(Localize("Create and Open", "创建并打开")))
     {
-#ifdef TINYENGINE_SOURCE_ROOT
-        const std::filesystem::path engineRoot = std::filesystem::u8path(TINYENGINE_SOURCE_ROOT);
-#else
-        const std::filesystem::path engineRoot = std::filesystem::current_path();
-#endif
-        const auto result = ProjectScaffolder::Create(
-            {m_newProjectName.data(), std::filesystem::u8path(m_newProjectParent.data()), engineRoot});
-        if (result.success)
+        StartProjectCreation();
+    }
+    ImGui::EndDisabled();
+    if (m_projectCreationFuture.valid())
+    {
+        ImGui::TextWrapped("%s", Localize("Preparing project code. The editor will open automatically when ready.",
+            "正在准备项目代码，完成后将自动打开。首次编译可能需要稍等。"));
+        ImGui::ProgressBar(-static_cast<float>(ImGui::GetTime()), {-1, 0}, "");
+    }
+    else if (!m_createdProject.empty() && !m_projectLauncherError.empty())
+    {
+        ImGui::TextWrapped("%s", m_createdProject.u8string().c_str());
+        if (ImGui::Button(Localize("Retry Build", "重新编译"))) StartCreatedProjectBuild();
+        ImGui::SameLine();
+        if (ImGui::Button(Localize("Create Another Project", "创建其他项目")))
         {
-            m_requestedProject = result.projectFile;
-            m_engine.RequestExit();
+            m_createdProject.clear();
+            m_projectCreationOutput.clear();
+            m_projectLauncherError.clear();
         }
-        else
-            m_projectLauncherError = result.error;
     }
 
     ImGui::Dummy({0, 18});
     ImGui::SeparatorText(Localize("Open Project", "打开项目"));
+    ImGui::BeginDisabled(m_projectCreationFuture.valid());
     ImGui::TextUnformatted(Localize("Project File", "项目文件"));
     ImGui::SetNextItemWidth(-1);
     ImGui::InputText("##ExistingProject", m_existingProjectPath.data(), m_existingProjectPath.size());
@@ -1002,10 +1069,19 @@ void EditorApp::DrawProjectLauncher()
         else
             m_projectLauncherError = result.error;
     }
+    ImGui::EndDisabled();
     if (!m_projectLauncherError.empty())
     {
         ImGui::Dummy({0, 10});
         ImGui::TextColored({1.0f, 0.45f, 0.4f, 1.0f}, "%s", m_projectLauncherError.c_str());
+        if (!m_projectCreationOutput.empty())
+        {
+            ImGui::TextUnformatted(Localize("Build details (also saved to Saved/ProjectBuild.log)",
+                "编译详情（同时保存到 Saved/ProjectBuild.log）"));
+            ImGui::BeginChild("ProjectBuildOutput", {0, 180}, ImGuiChildFlags_Borders, ImGuiWindowFlags_HorizontalScrollbar);
+            ImGui::TextUnformatted(m_projectCreationOutput.c_str());
+            ImGui::EndChild();
+        }
     }
     ImGui::EndChild();
     ImGui::End();
@@ -1021,7 +1097,8 @@ void EditorApp::StartSolutionGeneration()
     }
     const auto directory = projectFile.parent_path();
     m_solutionStatus = Localize("Generating Visual Studio solution...", "正在生成 Visual Studio 解决方案...");
-    m_solutionFuture = std::async(std::launch::async, [directory]() { return SolutionGenerator::Generate(directory); });
+    const auto sdk = FindEditorSDK();
+    m_solutionFuture = std::async(std::launch::async, [directory, sdk]() { return SolutionGenerator::Generate(directory, "cmake", sdk); });
 }
 
 void EditorApp::DrawSolutionStatus()

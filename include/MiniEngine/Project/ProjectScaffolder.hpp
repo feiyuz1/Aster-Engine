@@ -9,7 +9,7 @@ struct ProjectCreateRequest
 {
     std::string name;
     std::filesystem::path parentDirectory;
-    std::filesystem::path engineRoot;
+    std::filesystem::path sdkRoot;
 };
 
 struct ProjectOperationResult
@@ -25,5 +25,7 @@ class ProjectScaffolder
   public:
     static ProjectOperationResult Create(const ProjectCreateRequest &request);
     static ProjectOperationResult ValidateExisting(const std::filesystem::path &projectFile);
+    // 从安装版编辑器的位置向上查找 SDK，不依赖源码目录或当前工作目录。
+    static std::filesystem::path FindSDKRoot(std::filesystem::path directory);
 };
 } // 结束 MiniEngine 命名空间

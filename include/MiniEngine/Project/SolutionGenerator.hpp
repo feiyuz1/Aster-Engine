@@ -17,6 +17,11 @@ class SolutionGenerator
 {
   public:
     static SolutionResult Generate(const std::filesystem::path &projectDirectory,
-                                   const std::filesystem::path &cmakeExecutable = "cmake");
+                                   const std::filesystem::path &cmakeExecutable = "cmake",
+                                   const std::filesystem::path &sdkRoot = {});
+    static SolutionResult Build(const std::filesystem::path &projectDirectory,
+                                const std::filesystem::path &sdkRoot,
+                                const std::string &configuration,
+                                const std::filesystem::path &cmakeExecutable = "cmake");
 };
 } // 结束 MiniEngine 命名空间
