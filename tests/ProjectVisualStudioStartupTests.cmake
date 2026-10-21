@@ -1,0 +1,32 @@
+cmake_minimum_required(VERSION 3.21)
+# Visual Studio chooses the first solution target on its initial open.
+file(STRINGS "${SOLUTION_FILE}" first_project LIMIT_COUNT 1 REGEX "^Project\\(")
+string(FIND "${first_project}" "= \"${STARTUP_PROJECT}\"," startup_position)
+if(startup_position LESS 0)
+    message(FATAL_ERROR "Expected default startup project ${STARTUP_PROJECT}, got: ${first_project}")
+endif()
+message(STATUS "Default Visual Studio startup project: ${STARTUP_PROJECT}")
+if(MODULE_TARGET)
+    get_filename_component(solution_directory "${SOLUTION_FILE}" DIRECTORY)
+    file(TO_CMAKE_PATH "${SDK_ROOT}" sdk)
+    file(TO_CMAKE_PATH "${PROJECT_FILE}" project)
+    get_filename_component(project_directory "${project}" DIRECTORY)
+    foreach(kind Editor Game)
+        string(TOLOWER "${kind}" host)
+        file(READ "${solution_directory}/${MODULE_TARGET}${kind}.vcxproj" launch)
+        foreach(config Debug Release)
+            set(condition "Condition=\"'$(Configuration)|$(Platform)'=='${config}|x64'\"")
+            foreach(expected IN ITEMS
+                "<LocalDebuggerCommand ${condition}>${sdk}/bin/${config}/tinyengine_${host}.exe</LocalDebuggerCommand>"
+                "<LocalDebuggerCommandArguments ${condition}>\"${project}\"</LocalDebuggerCommandArguments>"
+                "<LocalDebuggerWorkingDirectory ${condition}>${project_directory}</LocalDebuggerWorkingDirectory>"
+                "<Name>${MODULE_TARGET}</Name>")
+                string(FIND "${launch}" "${expected}" position)
+                if(position LESS 0)
+                    message(FATAL_ERROR "${MODULE_TARGET}${kind} is missing debugger/dependency configuration: ${expected}")
+                endif()
+            endforeach()
+        endforeach()
+    endforeach()
+    message(STATUS "Editor/Game launch targets reference their module and configured SDK hosts")
+endif()

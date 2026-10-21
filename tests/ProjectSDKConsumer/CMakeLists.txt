@@ -19,4 +19,5 @@ foreach(path IN LISTS imported_includes)
     endif()
 endforeach()
 endif()
-tinyengine_add_project_module(TARGET RotateGame PROJECT_ID sdk-consumer MODULE_ID game.rotate SOURCES Source/Game.cpp)
+tinyengine_add_project_module(TARGET RotateGame PROJECT_ID sdk-consumer MODULE_ID game.rotate
+    PROJECT_FILE Game.tinyproject SOURCES Source/Game.cpp)

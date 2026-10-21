@@ -2,7 +2,7 @@ include_guard(GLOBAL)
 include("${CMAKE_CURRENT_LIST_DIR}/ProjectInputFingerprint.cmake")
 
 function(tinyengine_add_project_module)
-    cmake_parse_arguments(P "" "TARGET;PROJECT_ID;MODULE_ID" "SOURCES;RUNTIME_DEPENDENCIES" ${ARGN})
+    cmake_parse_arguments(P "" "TARGET;PROJECT_ID;MODULE_ID;PROJECT_FILE" "SOURCES;RUNTIME_DEPENDENCIES" ${ARGN})
     if(P_UNPARSED_ARGUMENTS OR NOT P_TARGET OR NOT P_PROJECT_ID OR NOT P_MODULE_ID OR NOT P_SOURCES)
         message(FATAL_ERROR "tinyengine_add_project_module requires TARGET, PROJECT_ID, MODULE_ID and SOURCES")
     endif()
@@ -38,6 +38,29 @@ function(tinyengine_add_project_module)
         list(APPEND dependencies "${path}")
     endforeach()
     add_library(${P_TARGET} SHARED ${P_SOURCES})
+    # Old projects did not pass PROJECT_FILE. Discover it only when unambiguous.
+    if(NOT P_PROJECT_FILE)
+        file(GLOB project_files CONFIGURE_DEPENDS "${PROJECT_SOURCE_DIR}/*.tinyproject")
+        list(LENGTH project_files project_file_count)
+        if(project_file_count EQUAL 1)
+            list(GET project_files 0 P_PROJECT_FILE)
+        endif()
+    endif()
+    set(default_startup "${P_TARGET}")
+    if(P_PROJECT_FILE)
+        get_filename_component(project_file "${P_PROJECT_FILE}" ABSOLUTE BASE_DIR "${PROJECT_SOURCE_DIR}")
+        file(RELATIVE_PATH relative "${PROJECT_SOURCE_DIR}" "${project_file}")
+        if(relative MATCHES "^\\.\\.(/|$)" OR IS_ABSOLUTE "${relative}" OR
+           NOT EXISTS "${project_file}" OR IS_DIRECTORY "${project_file}" OR NOT project_file MATCHES "\\.tinyproject$")
+            message(FATAL_ERROR "PROJECT_FILE must be an existing .tinyproject inside the project: ${P_PROJECT_FILE}")
+        endif()
+        tinyengine_add_project_launch_targets("${P_TARGET}" "${project_file}" default_startup)
+    endif()
+    # Keep an explicit startup target, or the first registered project module.
+    get_property(startup_project DIRECTORY "${PROJECT_SOURCE_DIR}" PROPERTY VS_STARTUP_PROJECT)
+    if(NOT startup_project)
+        set_property(DIRECTORY "${PROJECT_SOURCE_DIR}" PROPERTY VS_STARTUP_PROJECT "${default_startup}")
+    endif()
     target_link_libraries(${P_TARGET} PRIVATE TinyEngine::ProjectSDK)
     target_compile_features(${P_TARGET} PRIVATE cxx_std_17)
     target_compile_options(${P_TARGET} PRIVATE /utf-8 /FS)
@@ -55,6 +78,34 @@ function(tinyengine_add_project_module)
     # Capture the target's validated identifier now; deferred calls otherwise
     # evaluate a function-local variable after its scope has disappeared.
     cmake_language(EVAL CODE "cmake_language(DEFER CALL tinyengine_finalize_project_module [[${P_TARGET}]])")
+endfunction()
+
+function(tinyengine_add_project_launch_targets target project_file output)
+    get_filename_component(sdk "${TinyEngine_DIR}/../../.." ABSOLUTE)
+    get_filename_component(project_directory "${project_file}" DIRECTORY)
+    foreach(kind Editor Game)
+        string(TOLOWER "${kind}" host_name)
+        set(host "${sdk}/bin/$<CONFIG>/tinyengine_${host_name}.exe")
+        add_custom_target(${target}${kind}
+            COMMAND "${CMAKE_COMMAND}" "-DHOST=${host}" "-DCONFIGURATION=$<CONFIG>"
+                -P "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/CheckProjectHost.cmake"
+            COMMENT "Checking the ${kind} debugging host" VERBATIM)
+        add_dependencies(${target}${kind} ${target})
+        set_target_properties(${target}${kind} PROPERTIES
+            VS_DEBUGGER_COMMAND "${host}"
+            VS_DEBUGGER_COMMAND_ARGUMENTS "\"${project_file}\""
+            VS_DEBUGGER_WORKING_DIRECTORY "${project_directory}")
+    endforeach()
+    # Keep debugging the DLL target itself useful for older solutions, too.
+    set_target_properties(${target} PROPERTIES
+        VS_DEBUGGER_COMMAND "${sdk}/bin/$<CONFIG>/tinyengine_game.exe"
+        VS_DEBUGGER_COMMAND_ARGUMENTS "\"${project_file}\""
+        VS_DEBUGGER_WORKING_DIRECTORY "${project_directory}")
+    if(EXISTS "${sdk}/bin/Debug/tinyengine_editor.exe" OR EXISTS "${sdk}/bin/Release/tinyengine_editor.exe")
+        set(${output} "${target}Editor" PARENT_SCOPE)
+    else()
+        set(${output} "${target}Game" PARENT_SCOPE)
+    endif()
 endfunction()
 
 function(tinyengine_finalize_project_module target)

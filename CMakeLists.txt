@@ -291,6 +291,8 @@ if(TINYENGINE_BUILD_EDITOR)
     add_custom_command(TARGET tinyengine_editor POST_BUILD
         COMMAND "${CMAKE_COMMAND}" --install "${CMAKE_BINARY_DIR}" --config $<CONFIG>
             --component ProjectSDK --prefix "${CMAKE_CURRENT_BINARY_DIR}/ProjectSDK"
+        COMMAND "${CMAKE_COMMAND}" --install "${CMAKE_BINARY_DIR}" --config $<CONFIG>
+            --component EditorRuntime --prefix "${CMAKE_CURRENT_BINARY_DIR}/ProjectSDK"
         COMMENT "Preparing the SDK for editor project creation" VERBATIM)
     if(TARGET tinyengine_project_tool)
         add_dependencies(tinyengine_editor tinyengine_project_tool)

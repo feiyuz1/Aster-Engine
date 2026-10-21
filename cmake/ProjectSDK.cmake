@@ -56,6 +56,7 @@ write_basic_package_version_file("${_tiny_sdk_cmake}/TinyEngineConfigVersion.cma
 install(FILES "${_tiny_sdk_cmake}/TinyEngineConfig.cmake" "${_tiny_sdk_cmake}/TinyEngineConfigVersion.cmake"
     DESTINATION "${CMAKE_INSTALL_LIBDIR}/cmake/TinyEngine" COMPONENT ProjectSDK)
 install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/cmake/TinyEngineProject.cmake"
+    "${CMAKE_CURRENT_SOURCE_DIR}/cmake/CheckProjectHost.cmake"
     "${CMAKE_CURRENT_SOURCE_DIR}/cmake/ProjectInputFingerprint.cmake"
     "${CMAKE_CURRENT_SOURCE_DIR}/cmake/WriteProjectModuleManifest.cmake"
     DESTINATION "${CMAKE_INSTALL_LIBDIR}/cmake/TinyEngine" COMPONENT ProjectSDK)

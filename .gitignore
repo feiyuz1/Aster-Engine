@@ -99,6 +99,7 @@
 !/tests/ProjectToolDiscoveryTests.cpp
 !/Programs/
 !/tests/ProjectToolTests.cmake
+!/tests/ProjectVisualStudioStartupTests.cmake
 !/tests/ProjectShellMenuTests.cpp
 
 # Repository maintenance scripts

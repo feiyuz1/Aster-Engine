@@ -1,0 +1,7 @@
+cmake_minimum_required(VERSION 3.21)
+if(NOT CONFIGURATION MATCHES "^(Debug|Release)$")
+    message(FATAL_ERROR "Project debugging supports Debug and Release. Select Debug or Release in Visual Studio.")
+endif()
+if(NOT EXISTS "${HOST}" OR IS_DIRECTORY "${HOST}")
+    message(FATAL_ERROR "Missing ${CONFIGURATION} debugging host: ${HOST}\nInstall the matching EditorRuntime or ProjectRuntime SDK component, or select an installed configuration.")
+endif()

@@ -30,6 +30,18 @@ file(COPY "${sdk}/share/tinyengine/templates/ProjectModule/" DESTINATION "${cons
 file(WRITE "${consumer}/Game.tinyproject" "project.name=RotateGame\nproject.id=sdk-consumer\ncode.module=game.rotate\ncode.required=true\ncode.manifest=Binaries/Windows-x64/Project.modules\nproject.startupScene=Start.scene\n")
 run("${CMAKE_COMMAND}" -S "${consumer}" -B "${consumer}/build" -G "${GENERATOR}" -A x64
     "-DCMAKE_PREFIX_PATH=${sdk}" "-DEXPECTED_SDK_PREFIX=${sdk}")
+if(GENERATOR MATCHES "^Visual Studio")
+    run("${CMAKE_COMMAND}" "-DSOLUTION_FILE=${consumer}/build/TinySDKConsumer.sln" -DSTARTUP_PROJECT=RotateGameGame
+        -DMODULE_TARGET=RotateGame "-DSDK_ROOT=${sdk}" "-DPROJECT_FILE=${consumer}/Game.tinyproject"
+        -P "${CMAKE_CURRENT_LIST_DIR}/ProjectVisualStudioStartupTests.cmake")
+    # A project-only SDK must diagnose the missing editor instead of launching
+    # a nonexistent executable. Building this entry also builds the DLL first.
+    execute_process(COMMAND "${CMAKE_COMMAND}" --build "${consumer}/build" --config Debug --target RotateGameEditor
+        RESULT_VARIABLE missing_editor OUTPUT_VARIABLE missing_output ERROR_VARIABLE missing_errors)
+    if(missing_editor EQUAL 0 OR NOT "${missing_output}\n${missing_errors}" MATCHES "Missing Debug debugging host")
+        message(FATAL_ERROR "Missing editor host was not diagnosed: ${missing_output}\n${missing_errors}")
+    endif()
+endif()
 foreach(config Debug Release)
     run("${CMAKE_COMMAND}" --build "${consumer}/build" --config "${config}" --parallel 4)
 endforeach()

@@ -84,12 +84,7 @@ std::string CmakeSource(const std::string &name, const std::string &id, const st
     return "cmake_minimum_required(VERSION 3.21)\nproject(" + name + " LANGUAGES CXX)\n"
            "find_package(TinyEngine CONFIG REQUIRED)\n"
            "tinyengine_add_project_module(\n    TARGET " + name + "\n    PROJECT_ID " + id +
-           "\n    MODULE_ID " + module + "\n    SOURCES Source/Game.cpp)\n"
-           "get_filename_component(_sdk \"${TinyEngine_DIR}/../../..\" ABSOLUTE)\n"
-           "set_target_properties(" + name + " PROPERTIES\n"
-           "    VS_DEBUGGER_COMMAND \"${_sdk}/bin/$<CONFIG>/tinyengine_game.exe\"\n"
-           "    VS_DEBUGGER_COMMAND_ARGUMENTS \"\\\"${CMAKE_CURRENT_SOURCE_DIR}/" + name + ".tinyproject\\\"\"\n"
-           "    VS_DEBUGGER_WORKING_DIRECTORY \"${CMAKE_CURRENT_SOURCE_DIR}\")\n";
+           "\n    MODULE_ID " + module + "\n    PROJECT_FILE " + name + ".tinyproject\n    SOURCES Source/Game.cpp)\n";
 }
 } // namespace
 
