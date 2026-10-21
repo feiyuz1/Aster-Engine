@@ -1,5 +1,5 @@
-PROJECT_NAME           = TinyEngine
-PROJECT_BRIEF          = "TinyEngine 中文 C++ 接口文档"
+PROJECT_NAME           = Aster-Engine
+PROJECT_BRIEF          = "Aster-Engine 中文 C++ 接口文档"
 OUTPUT_DIRECTORY       = Intermediate/Documentation/doxygen
 INPUT                  = include editor/EditorApp.hpp
 RECURSIVE              = YES

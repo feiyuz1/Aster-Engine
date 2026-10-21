@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.21)
 if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
-    project(TinyEngineProjectTool LANGUAGES CXX)
+    project(Aster-Engine-ProjectTool LANGUAGES CXX)
     include(CTest)
 endif()
 if(NOT WIN32)

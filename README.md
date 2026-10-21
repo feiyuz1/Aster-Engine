@@ -1,6 +1,6 @@
-# TinyEngine
+# Aster-Engine
 
-TinyEngine 是参考 Unreal Engine 5.3.2 模块职责、以 C++17 实现的轻量 3D 引擎。目标不是复制 UE 的 UObject/UHT、完整 RHI 或大型编辑器，而是形成“项目—资产—场景—运行时—渲染—打包—编辑器”的最小可用闭环。
+Aster-Engine 是参考 Unreal Engine 5.3.2 模块职责、以 C++17 实现的轻量 3D 引擎。目标不是复制 UE 的 UObject/UHT、完整 RHI 或大型编辑器，而是形成“项目—资产—场景—运行时—渲染—打包—编辑器”的最小可用闭环。
 
 当前版本：0.27.0（完成 Render Graph、GPU HZB、Motion Vector TAA、独立 Bloom/GTAO、Forward+ Clustered Lighting 与 GPU Driven Indirect Draw）。
 
@@ -23,6 +23,8 @@ TinyEngine 是参考 Unreal Engine 5.3.2 模块职责、以 C++17 实现的轻�
 
 ## 快速开始
 
+对外项目名为 Aster-Engine；现有构建目标 `tinyengine_*`、SDK 包名 `TinyEngine` 和 `.tinyproject` 文件格式继续沿用，已有项目无需迁移。
+
 需要 CMake 3.21+、C++17 编译器、OpenGL 4.3 驱动。可选模型导入功能需要本地 Assimp 源码。Dear ImGui 使用固定 docking 版本；SDL2 和 stb 在本机不可用时由 CMake 获取；完整依赖与离线构建方式见[构建指南](docs/Guides/构建指南.md)。
 
 ```powershell
@@ -37,8 +39,8 @@ cmake --build --preset editor-debug
 
 ```powershell
 cmake --build --preset editor-release --target package_game
-.\Intermediate\Build\Editor\Package\TinyEngineDemo\TinyEngineDemo.exe `
-  .\Intermediate\Build\Editor\Package\TinyEngineDemo\TinyEngineDemo.tinyproject
+.\Intermediate\Build\Editor\Package\Aster-Engine\Aster-Engine.exe `
+  .\Intermediate\Build\Editor\Package\Aster-Engine\Aster-Engine.tinyproject
 ```
 
 无头校验和平台 Cook：
@@ -47,7 +49,7 @@ cmake --build --preset editor-release --target package_game
 .\Intermediate\Build\Editor\Release\tinyengine_commandlet.exe ValidateAssets assets
 .\Intermediate\Build\Editor\Release\tinyengine_commandlet.exe ValidateScenes Saved
 .\Intermediate\Build\Editor\Release\tinyengine_commandlet.exe MigrateScenes Saved
-.\Intermediate\Build\Editor\Release\tinyengine_commandlet.exe CookProject TinyEngine.tinyproject Saved\PlatformCook Windows Shipping
+.\Intermediate\Build\Editor\Release\tinyengine_commandlet.exe CookProject Aster-Engine.tinyproject Saved\PlatformCook Windows Shipping
 ```
 
 Scene View 操作：点击视图后使用 WASD/QE 飞行，按住鼠标右键转向，Shift 加速；左键选择、拖动框选、Ctrl 追加；1/2/3 切换移动、旋转、缩放工具，并可选择 Local/World 与 Center/Active/Individual Pivot。F11 放大或还原场景视图。

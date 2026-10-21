@@ -12,7 +12,7 @@
 
 int main(int argc, char **argv)
 {
-    MiniEngine::CrashReporter::Install("TinyEngineDemo");
+    MiniEngine::CrashReporter::Install("Aster-Engine");
     std::uint32_t maxFrames = 0;
     if (argc > 1)
     {

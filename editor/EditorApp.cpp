@@ -328,8 +328,8 @@ std::optional<std::filesystem::path> OpenTinyProjectDialog(const HWND owner)
         DWORD options = 0;
         dialog->GetOptions(&options);
         dialog->SetOptions(options | FOS_FORCEFILESYSTEM | FOS_FILEMUSTEXIST | FOS_PATHMUSTEXIST);
-        dialog->SetTitle(L"选择 TinyEngine 项目");
-        const COMDLG_FILTERSPEC filters[] = {{L"TinyEngine 项目", L"*.tinyproject"}};
+        dialog->SetTitle(L"选择 Aster-Engine 项目");
+        const COMDLG_FILTERSPEC filters[] = {{L"Aster-Engine 项目", L"*.tinyproject"}};
         dialog->SetFileTypes(1, filters);
         if (SUCCEEDED(dialog->Show(owner)))
         {
@@ -658,7 +658,7 @@ bool EditorApp::Initialize(const std::filesystem::path &projectFile)
     // DPI 缩放比例用于把 ImGui 逻辑尺寸换算成场景渲染目标的物理像素，保证视口清晰。
     m_dpiScale = m_device->GetDpiScale();
     m_engine.GetContext().renderer->SetCameraOverride(true, m_editorCameraPosition, m_editorCameraRotation, m_editorCameraFov);
-    SDL_SetWindowTitle(static_cast<SDL_Window *>(m_device->GetNativeWindow()), Localize("TinyEngine Editor", "TinyEngine 编辑器"));
+    SDL_SetWindowTitle(static_cast<SDL_Window *>(m_device->GetNativeWindow()), Localize("Aster-Engine Editor", "Aster-Engine 编辑器"));
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
     ImGuiIO &io = ImGui::GetIO();
@@ -967,7 +967,7 @@ void EditorApp::DrawProjectLauncher()
     ImGui::BeginChild("启动内容", {width, 0}, false);
     ImGui::Dummy({0, 24});
     ImGui::SetWindowFontScale(1.5f);
-    ImGui::TextUnformatted(Localize("TinyEngine Projects", "TinyEngine 项目"));
+    ImGui::TextUnformatted(Localize("Aster-Engine Projects", "Aster-Engine 项目"));
     ImGui::SetWindowFontScale(1.0f);
     ImGui::TextDisabled("%s", Localize("Create a project or open an existing one.", "新建项目，或打开已有项目。"));
     ImGui::Dummy({0, 18});
@@ -1283,7 +1283,7 @@ void EditorApp::DrawExitDialog()
     ImGui::Begin("##ExitDialogHost", nullptr,
                  ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing |
                      ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoBackground);
-    const char *popupName = Localize("Quit TinyEngine Editor?###EditorExitDialog", "确定退出 TinyEngine 编辑器？###EditorExitDialog");
+    const char *popupName = Localize("Quit Aster-Engine Editor?###EditorExitDialog", "确定退出 Aster-Engine 编辑器？###EditorExitDialog");
     if (m_requestExitPopup)
     {
         ImGui::OpenPopup(popupName);
@@ -3789,11 +3789,11 @@ void EditorApp::UpdateWindowTitle()
     if (m_projectLauncherMode)
     {
         SDL_SetWindowTitle(static_cast<SDL_Window *>(m_device->GetNativeWindow()),
-                           Localize("TinyEngine Projects", "TinyEngine 项目"));
+                           Localize("Aster-Engine Projects", "Aster-Engine 项目"));
         m_titleInitialized = true;
         return;
     }
-    const std::string title = std::string(Localize("TinyEngine Editor - ", "TinyEngine 编辑器 - ")) + m_engine.GetProjectSettings().name +
+    const std::string title = std::string(Localize("Aster-Engine Editor - ", "Aster-Engine 编辑器 - ")) + m_engine.GetProjectSettings().name +
                               (m_sceneDirty ? " *" : "");
     SDL_SetWindowTitle(static_cast<SDL_Window *>(m_device->GetNativeWindow()), title.c_str());
     m_lastTitleDirty = m_sceneDirty;

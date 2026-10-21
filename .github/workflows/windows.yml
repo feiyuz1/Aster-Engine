@@ -23,11 +23,11 @@ jobs:
           .\Intermediate\Build\Core\Release\tinyengine_commandlet.exe ValidateAssets assets
           .\Intermediate\Build\Core\Release\tinyengine_commandlet.exe ValidateScenes assets
       - name: Platform cook
-        run: .\Intermediate\Build\Core\Release\tinyengine_commandlet.exe CookProject TinyEngine.tinyproject Intermediate\Build\Core\PlatformCook Windows Shipping
+        run: .\Intermediate\Build\Core\Release\tinyengine_commandlet.exe CookProject Aster-Engine.tinyproject Intermediate\Build\Core\PlatformCook Windows Shipping
       - name: Package
         run: cmake --build --preset core-release --target package_game
       - name: Upload package
         uses: actions/upload-artifact@v4
         with:
-          name: TinyEngineDemo-Windows
-          path: Intermediate/Build/Core/Package/TinyEngineDemo
+          name: Aster-Engine-Windows
+          path: Intermediate/Build/Core/Package/Aster-Engine

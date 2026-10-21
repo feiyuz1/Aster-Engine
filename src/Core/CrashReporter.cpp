@@ -26,7 +26,7 @@ namespace MiniEngine
 {
 namespace
 {
-std::string application = "TinyEngine";
+std::string application = "Aster-Engine";
 std::filesystem::path directory = "Crashes";
 std::string Timestamp()
 {

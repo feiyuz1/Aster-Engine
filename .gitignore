@@ -14,7 +14,7 @@
 !/CMakePresets.json
 !/Doxyfile
 !/README.md
-!/TinyEngine.tinyproject
+!/Aster-Engine.tinyproject
 
 # 引擎、编辑器与工具源码
 !/cmake/

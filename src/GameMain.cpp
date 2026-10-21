@@ -28,7 +28,7 @@ std::filesystem::path FindProject(const std::filesystem::path &executableDirecto
 
 static int RunMain(int argc, char **argv)
 {
-    MiniEngine::CrashReporter::Install("TinyEngineGame");
+    MiniEngine::CrashReporter::Install("Aster-Engine-Game");
     const auto launchDirectory = std::filesystem::current_path();
     const auto executableDirectory = std::filesystem::absolute(std::filesystem::u8path(argv[0])).parent_path().lexically_normal();
     std::filesystem::path projectFile;

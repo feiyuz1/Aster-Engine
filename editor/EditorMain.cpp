@@ -14,7 +14,7 @@
 
 int main(int argc, char **argv)
 {
-    MiniEngine::CrashReporter::Install("TinyEngineEditor");
+    MiniEngine::CrashReporter::Install("Aster-Engine-Editor");
     std::filesystem::path project;
     std::uint32_t maximumFrames = 0;
     for (int index = 1; index < argc; ++index)

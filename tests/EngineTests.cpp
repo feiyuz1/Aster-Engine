@@ -559,7 +559,7 @@ int main()
     CHECK(packedMesh.has_value() && !packedMesh->empty());
     CHECK(PlatformFile::WriteAllBytes("Saved/FakeGame.exe", {0x4d, 0x5a, 0x00, 0x00}));
     CHECK(BuildCompatibility::Save(BuildCompatibility::SidecarPath("Saved/FakeGame.exe"), BuildCompatibility::Current()));
-    const auto package = ProjectPackager::Package({"TinyEngine.tinyproject", "Saved/TestPackage", "Saved/FakeGame.exe"});
+    const auto package = ProjectPackager::Package({"Aster-Engine.tinyproject", "Saved/TestPackage", "Saved/FakeGame.exe"});
     for (const auto &error : package.errors) std::cerr << "Package regression: " << error << '\n';
     CHECK(package.success && std::filesystem::is_regular_file(package.archive) && std::filesystem::is_regular_file(package.projectFile) &&
           std::filesystem::is_regular_file(package.buildInfo));
@@ -569,7 +569,7 @@ int main()
     ++incompatibleBuild.engineAbi;
     CHECK(BuildCompatibility::Save(BuildCompatibility::SidecarPath("Saved/FakeGame.exe"), incompatibleBuild));
     const auto incompatiblePackage =
-        ProjectPackager::Package({"TinyEngine.tinyproject", "Saved/TestPackageRejected", "Saved/FakeGame.exe"});
+        ProjectPackager::Package({"Aster-Engine.tinyproject", "Saved/TestPackageRejected", "Saved/FakeGame.exe"});
     CHECK(!incompatiblePackage.success && !incompatiblePackage.errors.empty());
     AssetRegistry registry;
     registry.Scan("assets");
@@ -647,7 +647,7 @@ int main()
     CHECK(TargetPlatformRegistry::Get().Find("windows") != nullptr);
     CHECK(TargetPlatformCooker::ParseConfiguration("shipping") == BuildConfiguration::Shipping);
     const auto platformCook =
-        TargetPlatformCooker::Cook({"TinyEngine.tinyproject", "Saved/PlatformCookTest", "Windows", BuildConfiguration::Shipping, false});
+        TargetPlatformCooker::Cook({"Aster-Engine.tinyproject", "Saved/PlatformCookTest", "Windows", BuildConfiguration::Shipping, false});
     CHECK(platformCook.success && std::filesystem::is_regular_file(platformCook.archive) && platformCook.shaderVariants >= 2);
     VersionedDocument cookManifest;
     CHECK(VersionedTextArchive::Deserialize(PlatformFile::ReadAllText(platformCook.manifest), cookManifest));

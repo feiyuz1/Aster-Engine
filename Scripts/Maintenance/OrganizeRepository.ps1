@@ -6,10 +6,10 @@
 )
 $ErrorActionPreference = 'Stop'
 $repoRoot = [System.IO.Path]::GetFullPath($RepositoryRoot).TrimEnd('\','/')
-if (!(Test-Path -LiteralPath (Join-Path $repoRoot 'TinyEngine.tinyproject')) -or
+if (!(Test-Path -LiteralPath (Join-Path $repoRoot 'Aster-Engine.tinyproject')) -or
     !(Test-Path -LiteralPath (Join-Path $repoRoot 'CMakeLists.txt')) -or
-    (Get-Content -LiteralPath (Join-Path $repoRoot 'CMakeLists.txt') -Raw) -notmatch 'project\(TinyEngine\b') {
-    throw "Not a TinyEngine repository root: $repoRoot"
+    (Get-Content -LiteralPath (Join-Path $repoRoot 'CMakeLists.txt') -Raw) -notmatch 'project\(Aster-Engine\b') {
+    throw "Not an Aster-Engine repository root: $repoRoot"
 }
 function CheckedPath([string]$path) {
     $full = [System.IO.Path]::GetFullPath($path)

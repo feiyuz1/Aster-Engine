@@ -122,7 +122,7 @@ ProjectOperationResult ProjectScaffolder::Create(const ProjectCreateRequest &req
     error.clear();
     const auto sdk = fs::absolute(request.sdkRoot, error).lexically_normal();
     if (request.sdkRoot.empty() || error || !fs::is_regular_file(sdk / "lib/cmake/TinyEngine/TinyEngineConfig.cmake"))
-        return {false, {}, "未找到项目开发 SDK，请使用完整安装目录中的 TinyEngine 编辑器。"};
+        return {false, {}, "未找到项目开发 SDK，请使用完整安装目录中的 Aster-Engine 编辑器。"};
     const auto templateRoot = sdk / "share/tinyengine/templates/ProjectModule";
     std::vector<fs::path> assets = {"assets/player.mesh", "assets/default.mat", "assets/default.ppm",
         "assets/default.input", "assets/shaders/default.vert", "assets/shaders/default.frag"};
@@ -169,7 +169,7 @@ ProjectOperationResult ProjectScaffolder::Create(const ProjectCreateRequest &req
         settings.assetDirectory = "assets";
         settings.startupScene = "assets/Startup.scene";
         settings.inputBindings = "assets/default.input";
-        const std::string readme = "# " + request.name + "\n\n在 TinyEngine 编辑器中打开 " + request.name +
+        const std::string readme = "# " + request.name + "\n\n在 Aster-Engine 编辑器中打开 " + request.name +
             ".tinyproject，点击运行，Player 会旋转；停止后恢复编辑场景。\n\n"
             "项目代码在 Source/Game.cpp。修改代码后保存场景、关闭编辑器，在 build/" + request.name +
             ".sln 中重新生成项目，再打开编辑器。当前不支持运行中换库。\n";

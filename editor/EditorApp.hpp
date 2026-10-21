@@ -38,7 +38,7 @@ class EditorApp
 {
   public:
     /// @brief 初始化对象及其依赖资源。
-    /// @param projectFile TinyEngine 项目文件路径。
+    /// @param projectFile Aster-Engine 项目文件路径。
     /// @return 操作成功时返回 `true`，否则返回 `false`。
     bool Initialize(const std::filesystem::path &projectFile);
     /// @brief 运行主循环或任务流程。

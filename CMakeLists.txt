@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.21)
-project(TinyEngine VERSION 0.27.0 LANGUAGES C CXX)
+project(Aster-Engine VERSION 0.27.0 LANGUAGES C CXX)
 
 execute_process(COMMAND git rev-parse --short=12 HEAD
     WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
@@ -12,10 +12,10 @@ endif()
 set(TINYENGINE_BUILD_ID "${PROJECT_VERSION}-${TINYENGINE_GIT_REVISION}")
 set(TINYENGINE_COMPILER_ID "${CMAKE_CXX_COMPILER_ID}-${CMAKE_CXX_COMPILER_VERSION}")
 
-option(TINYENGINE_BUILD_TESTS "Build TinyEngine tests" OFF)
-option(TINYENGINE_BUILD_DEMO "Build TinyEngine demo" ON)
-option(TINYENGINE_BUILD_GAME "Build standalone TinyEngine game runtime" ON)
-option(TINYENGINE_BUILD_EDITOR "Build TinyEngine editor" ON)
+option(TINYENGINE_BUILD_TESTS "Build Aster-Engine tests" OFF)
+option(TINYENGINE_BUILD_DEMO "Build Aster-Engine demo" ON)
+option(TINYENGINE_BUILD_GAME "Build standalone Aster-Engine game runtime" ON)
+option(TINYENGINE_BUILD_EDITOR "Build Aster-Engine editor" ON)
 option(TINYENGINE_BUILD_IMPORTERS "Build Assimp based asset importers" ON)
 option(TINYENGINE_ENABLE_JOLT "Enable the optional Jolt Physics backend" OFF)
 
@@ -315,10 +315,10 @@ endif()
 
 if(TINYENGINE_BUILD_GAME)
     add_custom_target(package_game
-        COMMAND $<TARGET_FILE:tinyengine_package_tool> "${CMAKE_CURRENT_SOURCE_DIR}/TinyEngine.tinyproject" "${CMAKE_BINARY_DIR}/Package/TinyEngineDemo" "$<TARGET_FILE:tinyengine_game>"
+        COMMAND $<TARGET_FILE:tinyengine_package_tool> "${CMAKE_CURRENT_SOURCE_DIR}/Aster-Engine.tinyproject" "${CMAKE_BINARY_DIR}/Package/Aster-Engine" "$<TARGET_FILE:tinyengine_game>"
         DEPENDS tinyengine_package_tool tinyengine_game
         WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
-        COMMENT "Packaging standalone TinyEngineDemo"
+        COMMENT "Packaging standalone Aster-Engine"
         VERBATIM
     )
 endif()
@@ -537,7 +537,7 @@ if(TINYENGINE_BUILD_TESTS)
     endif()
 endif()
 
-# 只为 TinyEngine 自有源码启用 UTF-8；不能把该选项全局传给 Assimp、zlib、SDL 或 ImGui。
+# 只为 Aster-Engine 自有源码启用 UTF-8；不能把该选项全局传给 Assimp、zlib、SDL 或 ImGui。
 if(MSVC)
     foreach(TINYENGINE_SOURCE_TARGET IN ITEMS
             tinyengine_project_sdk_abi_tests tinyengine_project_module_tests
@@ -566,9 +566,9 @@ endif()
 if(TINYENGINE_BUILD_EDITOR)
     install(TARGETS tinyengine_editor RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
     tinyengine_install_host_runtime(tinyengine_editor EditorRuntime)
-    file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/generated/editor/$<CONFIG>/TinyEngine.cmd"
+    file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/generated/editor/$<CONFIG>/Aster-Engine.cmd"
         CONTENT "@echo off\r\nstart \"\" \"%~dp0bin\\$<CONFIG>\\tinyengine_editor.exe\" %*\r\n")
-    install(FILES "${CMAKE_CURRENT_BINARY_DIR}/generated/editor/$<CONFIG>/TinyEngine.cmd"
+    install(FILES "${CMAKE_CURRENT_BINARY_DIR}/generated/editor/$<CONFIG>/Aster-Engine.cmd"
         DESTINATION . COMPONENT EditorRuntime)
 endif()
 if(MSVC)
@@ -582,8 +582,8 @@ install(TARGETS tinyengine_package_tool RUNTIME DESTINATION ${CMAKE_INSTALL_BIND
 install(TARGETS tinyengine_commandlet RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 install(DIRECTORY include/ DESTINATION ${CMAKE_INSTALL_INCLUDEDIR} PATTERN "Import" EXCLUDE)
 install(DIRECTORY assets/ DESTINATION ${CMAKE_INSTALL_DATADIR}/tinyengine/assets)
-install(FILES TinyEngine.tinyproject DESTINATION .)
+install(FILES Aster-Engine.tinyproject DESTINATION .)
 
-set(CPACK_PACKAGE_NAME "TinyEngine")
+set(CPACK_PACKAGE_NAME "Aster-Engine")
 set(CPACK_PACKAGE_VERSION ${PROJECT_VERSION})
 include(CPack)

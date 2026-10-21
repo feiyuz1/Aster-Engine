@@ -8,8 +8,8 @@ $testBase = Join-Path ([System.IO.Path]::GetTempPath()) ('TinyEngineLayout-' + [
 $testRoot = Join-Path $testBase 'Engine'
 $outside = Join-Path $testBase 'Other checkout'
 New-Item -ItemType Directory -Path $testRoot,$outside -Force | Out-Null
-Set-Content (Join-Path $testRoot 'CMakeLists.txt') 'project(TinyEngine)'
-Set-Content (Join-Path $testRoot 'TinyEngine.tinyproject') 'project.name=Test'
+Set-Content (Join-Path $testRoot 'CMakeLists.txt') 'project(Aster-Engine)'
+Set-Content (Join-Path $testRoot 'Aster-Engine.tinyproject') 'project.name=Test'
 function Cache([string]$name, [string]$owner) {
     $dir = Join-Path $testRoot $name
     New-Item -ItemType Directory -Path $dir -Force | Out-Null

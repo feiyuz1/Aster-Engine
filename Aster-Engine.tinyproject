@@ -1,4 +1,4 @@
-project.name=TinyEngineDemo
+project.name=Aster-Engine
 project.assets=assets
 project.startupScene=assets/Demo.scene
 render.environment=assets/Environment/Baked/day_sky.env

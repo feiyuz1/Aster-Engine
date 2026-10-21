@@ -94,7 +94,7 @@ bool Engine::Initialize(const std::filesystem::path &projectFile, const bool sta
                                           ? m_projectSettings.environmentTexture.generic_string()
                                           : m_projectSettings.Resolve(m_projectSettings.environmentTexture).generic_string());
     if (!m_renderer.Initialize(
-            std::make_unique<SdlGlRenderDevice>(1280, 720, projectLoaded ? m_projectSettings.name : "TinyEngine SDL2 + OpenGL")))
+            std::make_unique<SdlGlRenderDevice>(1280, 720, projectLoaded ? m_projectSettings.name : "Aster-Engine SDL2 + OpenGL")))
     {
         m_logger.Error("Renderer initialize failed.");
         Shutdown();
@@ -487,7 +487,7 @@ void Engine::SetupDemoScene()
         emitter->SetPosition({0.0f, 0.25f, 0.0f});
     m_uiSystem.AddPanel("demo.hud", {16.0f, 16.0f, 270.0f, 112.0f}, {0.05f, 0.08f, 0.13f, 0.88f});
     m_uiSystem.SetLayout("demo.hud", UILayout::Vertical, 6.0f, 10.0f);
-    m_uiSystem.AddLabel("demo.title", "TinyEngine Runtime UI", {0.0f, 0.0f, 200.0f, 30.0f}).fontSize = 18.0f;
+    m_uiSystem.AddLabel("demo.title", "Aster-Engine Runtime UI", {0.0f, 0.0f, 200.0f, 30.0f}).fontSize = 18.0f;
     m_uiSystem.AddButton("demo.action", "Activate", {0.0f, 0.0f, 150.0f, 40.0f},
                          [this]() { m_logger.Info("Runtime UI button activated."); });
     m_uiSystem.SetParent("demo.title", "demo.hud");

@@ -27,7 +27,7 @@ int Report(bool success, const std::wstring &message, bool quiet)
         WriteFile(handle, output.data(), size - 1, &written, nullptr);
     }
     if (!quiet)
-        MessageBoxW(nullptr, message.c_str(), L"TinyEngine 项目工具", MB_OK | (success ? MB_ICONINFORMATION : MB_ICONERROR));
+        MessageBoxW(nullptr, message.c_str(), L"Aster-Engine 项目工具", MB_OK | (success ? MB_ICONINFORMATION : MB_ICONERROR));
     return success ? 0 : 1;
 }
 int Run(const std::vector<std::wstring> &args, const fs::path &executable)
@@ -68,7 +68,7 @@ int Run(const std::vector<std::wstring> &args, const fs::path &executable)
     {
         const auto answer = MessageBoxW(
             nullptr, L"注册 .tinyproject 的“生成 Visual Studio 工程”右键菜单？\n\n是：注册或更新\n否：移除本安装的菜单\n取消：退出",
-            L"TinyEngine 项目工具", MB_YESNOCANCEL | MB_ICONQUESTION);
+            L"Aster-Engine 项目工具", MB_YESNOCANCEL | MB_ICONQUESTION);
         if (answer == IDCANCEL)
             return 0;
         action = answer == IDYES ? L"--register" : L"--unregister";

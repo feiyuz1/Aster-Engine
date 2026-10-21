@@ -20,7 +20,7 @@ class SdlGlRenderDevice final : public RenderDevice
     /// @param width 目标宽度。
     /// @param height 目标高度。
     /// @param title 接口所需的输入参数。
-    SdlGlRenderDevice(int width = 1280, int height = 720, std::string title = "TinyEngine SDL2 + OpenGL");
+    SdlGlRenderDevice(int width = 1280, int height = 720, std::string title = "Aster-Engine SDL2 + OpenGL");
     /// @brief 析构 `SdlGlRenderDevice` 对象并释放其持有资源。
     ~SdlGlRenderDevice() override;
 

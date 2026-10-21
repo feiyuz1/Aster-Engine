@@ -39,7 +39,7 @@ std::string CommandletRegistry::GetHelp() const
     for (const auto &pair : m_commandlets)
         names.push_back(pair.first);
     std::sort(names.begin(), names.end());
-    std::string result = "TinyEngine commandlets:\n";
+    std::string result = "Aster-Engine commandlets:\n";
     for (const auto &name : names)
         result += "  " + name + " - " + m_commandlets.at(name).description + "\n";
     return result;

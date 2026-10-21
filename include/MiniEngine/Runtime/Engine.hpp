@@ -67,7 +67,7 @@ class Engine : private WorldListener
 {
   public:
     /// @brief 初始化对象及其依赖资源。
-    /// @param projectFile TinyEngine 项目文件路径。
+    /// @param projectFile Aster-Engine 项目文件路径。
     /// @param startInPlayMode 目标状态、模式或类型。
     /// @return 操作成功时返回 `true`，否则返回 `false`。
     bool Initialize(const std::filesystem::path &projectFile = {}, bool startInPlayMode = true);
