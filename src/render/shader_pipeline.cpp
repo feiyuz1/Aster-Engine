@@ -1,0 +1,277 @@
+﻿// 文件：src/render/shader_pipeline.cpp
+// 作用：管理着色器源码、参数反射、编译诊断以及热重载流程。
+// 约定：GPU 对象只应在拥有图形上下文的线程创建、使用和销毁。
+// 类型：实现文件。
+
+#include "tinyengine/render/shader_pipeline.h"
+#include "tinyengine/platform/platform.h"
+#include "tinyengine/render/builtin_material_shaders.h"
+
+#include <algorithm>
+#include <iomanip>
+#include <regex>
+#include <set>
+#include <sstream>
+#include <unordered_set>
+
+namespace tinyengine
+{
+MaterialTemplateSources ShaderPipeline::loadMaterialTemplates(const std::filesystem::path& directory)
+{
+    MaterialTemplateSources sources;
+    for (const auto& entry : BuiltinMaterialShaders::Files)
+    {
+        auto text = PlatformFile::readAllText(directory / fromUtf8Path(entry.name));
+        if (text.empty())
+            text = entry.text;
+        text.erase(std::remove(text.begin(), text.end(), '\r'), text.end());
+        sources.files.emplace(entry.name, std::move(text));
+    }
+    std::error_code error;
+    if (std::filesystem::is_directory(directory, error))
+        for (std::filesystem::recursive_directory_iterator it(directory, error), end; it != end && !error;
+             it.increment(error))
+        {
+            if (!it->is_regular_file())
+                continue;
+            const auto key = toUtf8GenericPath(it->path().lexically_relative(directory));
+            if (sources.files.count(key))
+                continue;
+            auto text = PlatformFile::readAllText(it->path());
+            text.erase(std::remove(text.begin(), text.end(), '\r'), text.end());
+            if (!text.empty())
+                sources.files.emplace(key, std::move(text));
+        }
+    return sources;
+}
+namespace
+{
+std::uint64_t hash(const std::string& text)
+{
+    std::uint64_t value = 1469598103934665603ull;
+    for (const unsigned char character : text)
+    {
+        value ^= character;
+        value *= 1099511628211ull;
+    }
+    return value;
+}
+
+// include 展开使用当前递归栈检测环，而 dependencies 单独记录热重载需要监听的完整文件集合。
+bool expand(const std::filesystem::path& path, std::set<std::string>& stack,
+            std::vector<std::filesystem::path>& dependencies, std::string& output, std::string& error, const bool root)
+{
+    const auto normalized = path.lexically_normal();
+    const std::string key = normalized.generic_string();
+    if (!stack.insert(key).second)
+    {
+        error = "Cyclic shader include: " + key;
+        return false;
+    }
+    const std::string text = PlatformFile::readAllText(normalized);
+    if (text.empty())
+    {
+        error = "Shader source is empty or missing: " + key;
+        stack.erase(key);
+        return false;
+    }
+    dependencies.push_back(normalized);
+    std::istringstream input(text);
+    std::string line;
+    std::size_t lineNumber = 0;
+    while (std::getline(input, line))
+    {
+        ++lineNumber;
+        const auto include = line.find("#include");
+        if (include != std::string::npos)
+        {
+            const auto first = line.find('"', include),
+                       last = first == std::string::npos ? std::string::npos : line.find('"', first + 1);
+            if (first == std::string::npos || last == std::string::npos)
+            {
+                error = key + ":" + std::to_string(lineNumber) + ": malformed #include";
+                stack.erase(key);
+                return false;
+            }
+            const auto includedPath = normalized.parent_path() / line.substr(first + 1, last - first - 1);
+            output += "\n#line 1\n";
+            if (!expand(includedPath, stack, dependencies, output, error, false))
+            {
+                stack.erase(key);
+                return false;
+            }
+            output += "\n#line " + std::to_string(lineNumber + 1) + "\n";
+        }
+        else if (line.find("#pragma variant") == std::string::npos &&
+                 (!root || line.find("#version") == std::string::npos))
+            output += line + '\n';
+    }
+    stack.erase(key);
+    return true;
+}
+} // namespace
+
+ShaderPreprocessResult ShaderPipeline::preprocess(const std::filesystem::path& path,
+                                                  const std::unordered_map<std::string, std::string>& defines)
+{
+    ShaderPreprocessResult result;
+    result.defines = defines;
+    const std::string root = PlatformFile::readAllText(path);
+    if (root.empty())
+    {
+        result.error = "Shader source is empty or missing: " + path.generic_string();
+        return result;
+    }
+    std::string version = "#version 330 core";
+    std::istringstream rootStream(root);
+    std::string line;
+    while (std::getline(rootStream, line))
+        if (line.find("#version") != std::string::npos)
+        {
+            version = line;
+            break;
+        }
+    result.source = version + '\n';
+    std::vector<std::pair<std::string, std::string>> ordered(defines.begin(), defines.end());
+    std::sort(ordered.begin(), ordered.end());
+    for (const auto& define : ordered)
+        result.source += "#define " + define.first + ' ' + define.second + '\n';
+    std::set<std::string> stack;
+    result.success = expand(path, stack, result.dependencies, result.source, result.error, true);
+    if (result.success)
+        result.hash = hash(result.source);
+    return result;
+}
+
+std::vector<ShaderPreprocessResult> ShaderPipeline::BuildVariants(const std::filesystem::path& path,
+                                                                  const std::size_t maximumVariants)
+{
+    std::vector<std::pair<std::string, std::vector<std::string>>> declarations;
+    std::istringstream input(PlatformFile::readAllText(path));
+    std::string line;
+    while (std::getline(input, line))
+    {
+        const auto pragma = line.find("#pragma variant");
+        if (pragma == std::string::npos)
+            continue;
+        std::istringstream values(line.substr(pragma + 15));
+        std::string name, value;
+        values >> name;
+        std::vector<std::string> options;
+        while (values >> value)
+            options.push_back(value);
+        if (!name.empty() && !options.empty())
+            declarations.push_back({name, std::move(options)});
+    }
+    std::vector<std::unordered_map<std::string, std::string>> combinations(1);
+    for (const auto& declaration : declarations)
+    {
+        std::vector<std::unordered_map<std::string, std::string>> expanded;
+        for (const auto& combination : combinations)
+            for (const auto& value : declaration.second)
+            {
+                auto candidate = combination;
+                candidate[declaration.first] = value;
+                expanded.push_back(std::move(candidate));
+                if (expanded.size() >= maximumVariants)
+                    break;
+            }
+        combinations = std::move(expanded);
+        if (combinations.size() >= maximumVariants)
+            break;
+    }
+    std::vector<ShaderPreprocessResult> results;
+    if (combinations.empty())
+        combinations.emplace_back();
+    for (const auto& combination : combinations)
+        results.push_back(preprocess(path, combination));
+    return results;
+}
+
+bool ShaderPipeline::writeCache(const ShaderPreprocessResult& result, const std::filesystem::path& cacheDirectory)
+{
+    if (!result.success)
+        return false;
+    std::ostringstream name;
+    name << std::hex << std::setfill('0') << std::setw(16) << result.hash << ".glsl";
+    return PlatformFile::writeAllText(cacheDirectory / name.str(), result.source);
+}
+
+// 反射结果只暴露编辑器可编辑参数，内部矩阵和引擎保留 uniform 不进入 Inspector。
+std::vector<ShaderParameterInfo> ShaderPipeline::ReflectParameters(const std::filesystem::path& path)
+{
+    const auto preprocessed = preprocess(path);
+    if (!preprocessed.success)
+        return {};
+    static const std::unordered_set<std::string> kEngineUniforms = {"uBones",
+                                                                    "uMvp",
+                                                                    "uModel",
+                                                                    "uView",
+                                                                    "uViewProjection",
+                                                                    "uShadowViewProjections",
+                                                                    "uShadowCascadeSplits",
+                                                                    "uInstanced",
+                                                                    "uCameraPosition",
+                                                                    "uLightCount",
+                                                                    "uLightDirections",
+                                                                    "uLightColors",
+                                                                    "uLightIntensities",
+                                                                    "uTexture",
+                                                                    "uHasTexture",
+                                                                    "uNormalTexture",
+                                                                    "uHasNormalTexture",
+                                                                    "uMetallicTexture",
+                                                                    "uHasMetallicTexture",
+                                                                    "uRoughnessTexture",
+                                                                    "uHasRoughnessTexture",
+                                                                    "uAoTexture",
+                                                                    "uHasAoTexture",
+                                                                    "uEmissiveTexture",
+                                                                    "uHasEmissiveTexture",
+                                                                    "uShadowMaps",
+                                                                    "uEnvironmentIrradiance",
+                                                                    "uEnvironmentPrefilter",
+                                                                    "uEnvironmentBrdfLut",
+                                                                    "uHasEnvironment",
+                                                                    "uBaseColor",
+                                                                    "uMetallic",
+                                                                    "uRoughness",
+                                                                    "uEmissive",
+                                                                    "uPackedTexture",
+                                                                    "uHasPackedTexture",
+                                                                    "uPackedLayoutRma"};
+    const std::regex uniformPattern(R"(^\s*uniform\s+(float|vec2|vec3|vec4|sampler2D)\s+([A-Za-z_][A-Za-z0-9_]*)\s*;)");
+    const std::regex rangePattern(R"(//@range\s+([-+0-9.eE]+)\s+([-+0-9.eE]+))");
+    const std::regex defaultPattern(
+        R"(//@default\s+([-+0-9.eE]+)(?:\s+([-+0-9.eE]+))?(?:\s+([-+0-9.eE]+))?(?:\s+([-+0-9.eE]+))?)");
+    std::vector<ShaderParameterInfo> result;
+    std::istringstream input(preprocessed.source);
+    std::string line;
+    while (std::getline(input, line))
+    {
+        std::smatch match;
+        if (!std::regex_search(line, match, uniformPattern) || kEngineUniforms.count(match[2].str()))
+            continue;
+        ShaderParameterInfo parameter;
+        parameter.name = match[2].str();
+        const std::string type = match[1].str();
+        parameter.type = type == "vec2"        ? ShaderParameterType::Vec2
+                         : type == "vec3"      ? ShaderParameterType::Vec3
+                         : type == "vec4"      ? ShaderParameterType::Vec4
+                         : type == "sampler2D" ? ShaderParameterType::Texture
+                                               : ShaderParameterType::Float;
+        if (std::regex_search(line, match, rangePattern))
+        {
+            parameter.minimum = std::stof(match[1].str());
+            parameter.maximum = std::stof(match[2].str());
+            parameter.hasRange = true;
+        }
+        if (std::regex_search(line, match, defaultPattern))
+            for (std::size_t index = 1; index < match.size() && index <= 4; ++index)
+                if (match[index].matched)
+                    parameter.defaultValue[index - 1] = std::stof(match[index].str());
+        result.push_back(std::move(parameter));
+    }
+    return result;
+}
+} // namespace tinyengine

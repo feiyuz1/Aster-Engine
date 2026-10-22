@@ -19,7 +19,7 @@ function(tinyengine_expand_shader input_path output_variable include_stack)
 endfunction()
 
 function(tinyengine_embed_material_shaders source_directory output_path)
-    set(shader_header "#pragma once\nnamespace MiniEngine::BuiltinMaterialShaders {\n")
+    set(shader_header "#pragma once\nnamespace tinyengine::BuiltinMaterialShaders {\n")
     file(GLOB_RECURSE shader_names CONFIGURE_DEPENDS RELATIVE "${source_directory}" "${source_directory}/*.glsl" "${source_directory}/*.vert" "${source_directory}/*.frag")
     set(shader_entries "")
     set(shader_index 0)

@@ -1,7 +1,7 @@
 PROJECT_NAME           = Aster-Engine
 PROJECT_BRIEF          = "Aster-Engine 中文 C++ 接口文档"
-OUTPUT_DIRECTORY       = Intermediate/Documentation/doxygen
-INPUT                  = include editor/EditorApp.hpp
+OUTPUT_DIRECTORY       = intermediate/Documentation/doxygen
+INPUT                  = include editor/editor_app.h
 RECURSIVE              = YES
 FILE_PATTERNS          = *.h *.hpp
 INPUT_ENCODING         = UTF-8
@@ -17,4 +17,4 @@ QUIET                  = YES
 WARNINGS               = YES
 WARN_IF_UNDOCUMENTED   = YES
 WARN_NO_PARAMDOC       = YES
-WARN_LOGFILE           = Intermediate/Documentation/doxygen-warnings.txt
+WARN_LOGFILE           = intermediate/Documentation/doxygen-warnings.txt

@@ -2,6 +2,6 @@ project.name=Aster-Engine
 project.assets=assets
 project.startupScene=assets/Demo.scene
 render.environment=assets/Environment/Baked/day_sky.env
-project.cooked=Saved/Cooked
+project.cooked=saved/Cooked
 input.bindings=assets/default.input
 physics.fixedStep=0.016666667

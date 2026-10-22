@@ -8,7 +8,7 @@
       "generator": "Visual Studio 17 2022",
       "architecture": "x64",
       "cacheVariables": {
-        "FETCHCONTENT_BASE_DIR": "${sourceDir}/Intermediate/Dependencies",
+        "FETCHCONTENT_BASE_DIR": "${sourceDir}/intermediate/Dependencies",
         "TINYENGINE_BUILD_IMPORTERS": "OFF"
       }
     },
@@ -16,14 +16,14 @@
       "name": "editor",
       "displayName": "Windows editor and regression tests",
       "inherits": "windows-base",
-      "binaryDir": "${sourceDir}/Intermediate/Build/Editor",
+      "binaryDir": "${sourceDir}/intermediate/Build/Editor",
       "cacheVariables": { "TINYENGINE_BUILD_EDITOR": "ON", "TINYENGINE_BUILD_TESTS": "ON" }
     },
     {
       "name": "core",
       "displayName": "Windows command line and game runtime",
       "inherits": "windows-base",
-      "binaryDir": "${sourceDir}/Intermediate/Build/Core",
+      "binaryDir": "${sourceDir}/intermediate/Build/Core",
       "cacheVariables": { "TINYENGINE_BUILD_EDITOR": "OFF", "TINYENGINE_BUILD_TESTS": "OFF" }
     }
   ],

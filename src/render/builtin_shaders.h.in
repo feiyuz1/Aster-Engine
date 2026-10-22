@@ -1,0 +1,7 @@
+#pragma once
+
+namespace tinyengine::BuiltinRenderShaders
+{
+inline constexpr const char *Vertex = R"TINY_GLSL(@TINYENGINE_DEFAULT_VERTEX_SHADER@)TINY_GLSL";
+inline constexpr const char *Fragment = R"TINY_GLSL(@TINYENGINE_DEFAULT_FRAGMENT_SHADER@)TINY_GLSL";
+}

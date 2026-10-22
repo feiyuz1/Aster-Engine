@@ -5,6 +5,8 @@
 !/.gitignore
 !/.gitattributes
 !/.clang-format
+!/.clang-tidy
+!/.editorconfig
 !/.github/
 /.github/*
 !/.github/workflows/
@@ -26,16 +28,16 @@
 # 相机移动与渲染稳定性的回归测试。
 !/tests/
 /tests/*
-!/tests/RenderStabilityTests.cpp
-!/tests/MaterialSystemTests.cpp
-!/tests/MaterialRenderTests.cpp
-!/tests/EngineTests.cpp
+!/tests/render_stability_test.cpp
+!/tests/material_system_test.cpp
+!/tests/material_render_test.cpp
+!/tests/engine_test.cpp
 
 # 文档只跟踪使用指南和参考资料，其余保留在本地。
 !/docs/
 /docs/*
-!/docs/Guides/
-!/docs/Reference/
+!/docs/guides/
+!/docs/reference/
 
 # 引擎基础素材
 !/assets/
@@ -67,8 +69,8 @@
 !/assets/shaders/material/BasePass.frag
 !/assets/shaders/material/ShadowPass.vert
 !/assets/shaders/material/ShadowPass.frag
-!/tests/EditorInteractionTests.cpp
-!/tests/ExtendedRegressionTests.cpp
+!/tests/editor_interaction_test.cpp
+!/tests/extended_regression_test.cpp
 !/assets/Materials/
 /assets/Materials/*
 !/assets/Materials/M_Paint.matgraph
@@ -78,41 +80,41 @@
 !/assets/Materials/MI_Masked.mat
 !/assets/Materials/T_Mask.ppm
 
-!/tests/EditorAssetRenameTests.cpp
-!/tests/MaterialEditorTests.cpp
-!/tests/AssetTrashTests.cpp
-!/tests/ProjectSDKAbiC.c
-!/tests/ProjectSDKAbiTests.cpp
-!/tests/ProjectModuleTests.cpp
-!/tests/ProjectRuntimeTests.cpp
-!/tests/ProjectSDKConsumer/
-!/tests/ProjectSDKConsumerTests.cmake
-!/tests/TestProjectModule.cpp
-!/tests/TestProjectMissingEntry.cpp
-!/tests/TestDynamicPlugin.cpp
-!/tests/TestRuntimeDependency.cpp
-!/tests/TestDependentPlugin.cpp
-!/tests/ProjectSDKIdentityTests.cmake
-!/tests/HostRuntimeTests.cmake
-!/tests/ProjectCreationTests.cpp
-!/tests/ProjectCreationTests.cmake
-!/tests/ProjectToolDiscoveryTests.cpp
-!/Programs/
-!/tests/ProjectToolTests.cmake
-!/tests/ProjectVisualStudioStartupTests.cmake
-!/tests/ProjectShellMenuTests.cpp
+!/tests/editor_asset_rename_test.cpp
+!/tests/material_editor_test.cpp
+!/tests/asset_trash_test.cpp
+!/tests/project_sdk_abi_c.c
+!/tests/project_sdk_abi_test.cpp
+!/tests/project_module_test.cpp
+!/tests/project_runtime_test.cpp
+!/tests/project_sdk_consumer/
+!/tests/project_sdk_consumer_test.cmake
+!/tests/test_project_module.cpp
+!/tests/test_project_missing_entry.cpp
+!/tests/test_dynamic_plugin.cpp
+!/tests/test_runtime_dependency.cpp
+!/tests/test_dependent_plugin.cpp
+!/tests/project_sdk_identity_test.cmake
+!/tests/host_runtime_test.cmake
+!/tests/project_creation_test.cpp
+!/tests/project_creation_test.cmake
+!/tests/project_tool_discovery_test.cpp
+!/programs/
+!/tests/project_tool_test.cmake
+!/tests/project_visual_studio_startup_test.cmake
+!/tests/project_shell_menu_test.cpp
 
 # Repository maintenance scripts
-!/Scripts/
-!/tests/SceneSaveTests.cpp
-!/tests/PlatformMountTests.cpp
-!/tests/ScriptLifecycleTests.cpp
+!/scripts/
+!/tests/scene_save_test.cpp
+!/tests/platform_mount_test.cpp
+!/tests/script_lifecycle_test.cpp
 !/tests/fixtures/
 /tests/fixtures/*
-!/tests/fixtures/EditorUI/
-/tests/fixtures/EditorUI/*
-!/tests/fixtures/EditorUI/assets/
-/tests/fixtures/EditorUI/assets/*
-!/tests/fixtures/EditorUI/assets/audio/
-/tests/fixtures/EditorUI/assets/audio/*
-!/tests/fixtures/EditorUI/assets/audio/long_stream.ogg
+!/tests/fixtures/editor_ui/
+/tests/fixtures/editor_ui/*
+!/tests/fixtures/editor_ui/assets/
+/tests/fixtures/editor_ui/assets/*
+!/tests/fixtures/editor_ui/assets/audio/
+/tests/fixtures/editor_ui/assets/audio/*
+!/tests/fixtures/editor_ui/assets/audio/long_stream.ogg

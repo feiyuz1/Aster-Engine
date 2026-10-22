@@ -26,7 +26,7 @@ set(TINYENGINE_STB_DIR "" CACHE PATH "Path to stb single-header libraries")
 
 include(FetchContent)
 
-set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
@@ -111,75 +111,76 @@ if(TINYENGINE_ENABLE_JOLT)
 endif()
 
 add_library(tinyengine STATIC
-    src/Core/Logger.cpp
-    src/Core/CrashReporter.cpp
-    src/Core/Config.cpp
-    src/Core/Module.cpp
-    src/Serialization/Archive.cpp
-    src/Diagnostics/Diagnostics.cpp
-    src/Platform/Platform.cpp
-    src/Memory/Allocators.cpp
-    src/Task/JobSystem.cpp
-    src/Resource/Resource.cpp
-    src/Resource/MaterialDefinitionResource.cpp
-    src/Resource/MaterialAssetReferences.cpp
-    src/Resource/AssetRegistry.cpp
-    src/Resource/AssetCooker.cpp
-    src/Resource/PakArchive.cpp
-    src/Resource/ResourceManager.cpp
-    src/Resource/AssetStreaming.cpp
-    src/Resource/AssetMaintenance.cpp
-    src/ECS/ECS.cpp
-    src/ECS/Reflection.cpp
-    src/ECS/SceneSerializer.cpp
-    src/ECS/Systems.cpp
-    src/AI/BehaviorTree.cpp
-    src/Animation/SkeletalAnimation.cpp
-    src/Cinematic/Sequencer.cpp
-    src/Media/ImageSequence.cpp
-    src/Navigation/Navigation.cpp
-    src/Network/Replication.cpp
-    src/Terrain/HeightField.cpp
-    src/World/WorldPartition.cpp
-    src/VFX/ParticleSystem.cpp
-    src/Localization/Localization.cpp
-    src/Gameplay/Gameplay.cpp
-    src/Project/Project.cpp
-    src/Project/ProjectModuleManifest.cpp
-    src/Project/ProjectModuleHost.cpp
-    src/Project/ProjectHostBridge.cpp
-    src/Platform/DynamicLibrary.cpp
-    src/Project/ProjectScaffolder.cpp
-    src/Project/SolutionGenerator.cpp
-    src/Project/SDKPaths.cpp
-    src/Project/ProjectPackager.cpp
-    src/Plugin/PluginManager.cpp
-    src/Build/TargetPlatform.cpp
-    src/Build/AssetCompiler.cpp
-    src/Build/BuildCompatibility.cpp
-    src/Automation/Automation.cpp
-    src/Render/Renderer.cpp
-    src/Render/RenderGraph.cpp
-    src/Render/ClusteredLighting.cpp
-    src/Render/EnvironmentBaker.cpp
-    src/Render/MaterialGraph.cpp
-    src/Render/MaterialTypes.cpp
-    src/Render/MaterialSystem.cpp
-    src/Render/MaterialCompiler.cpp
-    src/Render/GlMaterialProgramCache.cpp
-    src/Render/ShaderPipeline.cpp
-    src/Render/SdlGlRenderDevice.cpp
-    src/Physics/PhysicsWorld.cpp
-    src/Audio/AudioEngine.cpp
-    src/Audio/StbVorbis.cpp
-    src/Input/InputSystem.cpp
-    src/Script/ScriptEngine.cpp
-    src/UI/UISystem.cpp
-    src/UI/TextLayout.cpp
-    src/Runtime/Engine.cpp
+    src/core/logger.cpp
+    src/core/crash_reporter.cpp
+    src/core/config.cpp
+    src/core/module.cpp
+    src/serialization/archive.cpp
+    src/diagnostics/diagnostics.cpp
+    src/platform/platform.cpp
+    src/memory/allocators.cpp
+    src/task/job_system.cpp
+    src/resource/resource.cpp
+    src/resource/material_definition_resource.cpp
+    src/resource/material_asset_references.cpp
+    src/resource/asset_registry.cpp
+    src/resource/asset_cooker.cpp
+    src/resource/pak_archive.cpp
+    src/resource/resource_manager.cpp
+    src/resource/asset_streaming.cpp
+    src/resource/asset_maintenance.cpp
+    src/ecs/ecs.cpp
+    src/ecs/reflection.cpp
+    src/ecs/scene_serializer.cpp
+    src/ecs/systems.cpp
+    src/ai/behavior_tree.cpp
+    src/animation/skeletal_animation.cpp
+    src/cinematic/sequencer.cpp
+    src/media/image_sequence.cpp
+    src/navigation/navigation.cpp
+    src/network/replication.cpp
+    src/terrain/height_field.cpp
+    src/world/world_partition.cpp
+    src/vfx/particle_system.cpp
+    src/localization/localization.cpp
+    src/gameplay/gameplay.cpp
+    src/project/project.cpp
+    src/project/project_module_manifest.cpp
+    src/project/project_module_host.cpp
+    src/project/project_host_bridge.cpp
+    src/platform/dynamic_library.cpp
+    src/project/project_scaffolder.cpp
+    src/project/solution_generator.cpp
+    src/project/sdk_paths.cpp
+    src/project/project_packager.cpp
+    src/plugin/plugin_manager.cpp
+    src/build/target_platform.cpp
+    src/build/asset_compiler.cpp
+    src/build/build_compatibility.cpp
+    src/automation/automation.cpp
+    src/render/renderer.cpp
+    src/render/render_graph.cpp
+    src/render/clustered_lighting.cpp
+    src/render/environment_baker.cpp
+    src/render/material_graph.cpp
+    src/render/material_types.cpp
+    src/render/material_system.cpp
+    src/render/material_compiler.cpp
+    src/render/gl_material_program_cache.cpp
+    src/render/shader_pipeline.cpp
+    src/render/sdl_gl_render_device.cpp
+    src/physics/physics_world.cpp
+    src/audio/audio_engine.cpp
+    src/audio/stb_vorbis.cpp
+    src/input/input_system.cpp
+    src/script/script_engine.cpp
+    src/ui/ui_system.cpp
+    src/ui/text_layout.cpp
+    src/runtime/engine.cpp
 )
 
 target_include_directories(tinyengine PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include> $<INSTALL_INTERFACE:include>)
+target_compile_features(tinyengine PUBLIC cxx_std_20)
 target_include_directories(tinyengine PRIVATE "${TINYENGINE_STB_DIR}")
 target_link_libraries(tinyengine PRIVATE tinyengine_project_sdk)
 target_compile_definitions(tinyengine PRIVATE TINYENGINE_CMAKE_EXECUTABLE="${CMAKE_COMMAND}")
@@ -189,17 +190,17 @@ target_compile_definitions(tinyengine PRIVATE TINYENGINE_CMAKE_EXECUTABLE="${CMA
 include(cmake/EmbedMaterialShaders.cmake)
 tinyengine_expand_shader("${CMAKE_CURRENT_SOURCE_DIR}/assets/shaders/default.vert" TINYENGINE_DEFAULT_VERTEX_SHADER "")
 tinyengine_expand_shader("${CMAKE_CURRENT_SOURCE_DIR}/assets/shaders/default.frag" TINYENGINE_DEFAULT_FRAGMENT_SHADER "")
-file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/generated/MiniEngine/Render")
+file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/generated/tinyengine/render")
 tinyengine_embed_material_shaders("${CMAKE_CURRENT_SOURCE_DIR}/assets/shaders/material"
-    "${CMAKE_CURRENT_BINARY_DIR}/generated/MiniEngine/Render/BuiltinMaterialShaders.hpp")
+    "${CMAKE_CURRENT_BINARY_DIR}/generated/tinyengine/render/builtin_material_shaders.h")
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/assets/shaders/default.vert"
     "${CMAKE_CURRENT_SOURCE_DIR}/assets/shaders/default.frag")
-configure_file(src/Render/BuiltinShaders.hpp.in
-    "${CMAKE_CURRENT_BINARY_DIR}/generated/MiniEngine/Render/BuiltinShaders.hpp" @ONLY)
+configure_file(src/render/builtin_shaders.h.in
+    "${CMAKE_CURRENT_BINARY_DIR}/generated/tinyengine/render/builtin_shaders.h" @ONLY)
 target_include_directories(tinyengine PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
 target_compile_definitions(tinyengine PRIVATE TINYENGINE_HAS_STB_VORBIS=1)
-set_property(SOURCE src/Build/BuildCompatibility.cpp APPEND PROPERTY COMPILE_DEFINITIONS
+set_property(SOURCE src/build/build_compatibility.cpp APPEND PROPERTY COMPILE_DEFINITIONS
     TINYENGINE_VERSION="${PROJECT_VERSION}"
     TINYENGINE_BUILD_ID="${TINYENGINE_BUILD_ID}"
     TINYENGINE_BUILD_CONFIGURATION="$<CONFIG>"
@@ -227,10 +228,10 @@ endif()
 
 if(MSVC)
     target_compile_options(tinyengine PRIVATE /W4 /permissive-)
-    set_source_files_properties(src/Audio/StbVorbis.cpp PROPERTIES COMPILE_OPTIONS "/w")
+    set_source_files_properties(src/audio/stb_vorbis.cpp PROPERTIES COMPILE_OPTIONS "/w")
 else()
     target_compile_options(tinyengine PRIVATE -Wall -Wextra -Wpedantic)
-    set_source_files_properties(src/Audio/StbVorbis.cpp PROPERTIES COMPILE_OPTIONS "-w")
+    set_source_files_properties(src/audio/stb_vorbis.cpp PROPERTIES COMPILE_OPTIONS "-w")
 endif()
 
 if(TINYENGINE_BUILD_DEMO)
@@ -239,7 +240,7 @@ if(TINYENGINE_BUILD_DEMO)
 endif()
 
 if(TINYENGINE_BUILD_GAME)
-    add_executable(tinyengine_game src/GameMain.cpp)
+    add_executable(tinyengine_game src/game_main.cpp)
     target_link_libraries(tinyengine_game PRIVATE tinyengine)
     target_compile_definitions(tinyengine_game PRIVATE TINYENGINE_SHIPPING=1)
     add_custom_command(TARGET tinyengine_game POST_BUILD
@@ -257,7 +258,7 @@ if(TINYENGINE_BUILD_GAME)
 endif()
 
 if(TINYENGINE_BUILD_IMPORTERS)
-    add_library(tinyengine_importers STATIC src/Import/AssimpImporter.cpp)
+    add_library(tinyengine_importers STATIC src/import/assimp_importer.cpp)
     target_include_directories(tinyengine_importers PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include> $<INSTALL_INTERFACE:include>)
     target_link_libraries(tinyengine_importers PUBLIC tinyengine assimp::assimp)
     if(MSVC)
@@ -268,7 +269,7 @@ if(TINYENGINE_BUILD_IMPORTERS)
 endif()
 
 set_property(GLOBAL PROPERTY USE_FOLDERS ON)
-add_subdirectory(Programs)
+add_subdirectory(programs)
 
 if(TINYENGINE_BUILD_EDITOR)
     add_library(tinyengine_imgui STATIC
@@ -281,7 +282,7 @@ if(TINYENGINE_BUILD_EDITOR)
     )
     target_include_directories(tinyengine_imgui PUBLIC ${TINYENGINE_IMGUI_DIR} ${TINYENGINE_IMGUI_DIR}/backends)
     target_link_libraries(tinyengine_imgui PUBLIC tinyengine)
-    add_executable(tinyengine_editor editor/EditorMain.cpp editor/EditorApp.cpp editor/EditorInspector.cpp editor/EditorWorkspace.cpp editor/EditorAssets.cpp editor/EditorAssetReferences.cpp editor/AssetReferenceGraph.cpp editor/AssetTrash.cpp editor/EditorAssetDeletion.cpp editor/EditorMaterialAssignment.cpp editor/EditorSceneView.cpp editor/MaterialAssetEditor.cpp editor/MaterialGraphEditor.cpp)
+    add_executable(tinyengine_editor editor/editor_main.cpp editor/editor_app.cpp editor/editor_inspector.cpp editor/editor_workspace.cpp editor/editor_assets.cpp editor/editor_asset_references.cpp editor/asset_reference_graph.cpp editor/asset_trash.cpp editor/editor_asset_deletion.cpp editor/editor_material_assignment.cpp editor/editor_scene_view.cpp editor/material_asset_editor.cpp editor/material_graph_editor.cpp)
     if(WIN32)
         target_sources(tinyengine_editor PRIVATE editor/TinyEngine.manifest)
     endif()
@@ -328,15 +329,15 @@ if(TINYENGINE_BUILD_TESTS)
     if(WIN32)
         find_program(TINYENGINE_POWERSHELL NAMES pwsh powershell REQUIRED)
         add_test(NAME tinyengine_repository_layout COMMAND "${TINYENGINE_POWERSHELL}" -NoProfile -ExecutionPolicy Bypass
-            -File "${CMAKE_CURRENT_SOURCE_DIR}/Scripts/Tests/RepositoryLayout.ps1")
+            -File "${CMAKE_CURRENT_SOURCE_DIR}/scripts/tests/repository_layout.ps1")
     endif()
     if(TINYENGINE_BUILD_EDITOR AND WIN32 AND MSVC)
-        add_executable(tinyengine_project_tool_discovery_tests tests/ProjectToolDiscoveryTests.cpp src/Project/SolutionGenerator.cpp)
+        add_executable(tinyengine_project_tool_discovery_tests tests/project_tool_discovery_test.cpp src/project/solution_generator.cpp)
         target_include_directories(tinyengine_project_tool_discovery_tests PRIVATE include)
         target_compile_definitions(tinyengine_project_tool_discovery_tests PRIVATE TINYENGINE_CMAKE_EXECUTABLE="Z:/missing-builder/cmake.exe")
         target_compile_options(tinyengine_project_tool_discovery_tests PRIVATE /utf-8 /FS)
         add_test(NAME tinyengine_project_tool_discovery COMMAND tinyengine_project_tool_discovery_tests)
-        add_executable(tinyengine_project_creation_tests tests/ProjectCreationTests.cpp)
+        add_executable(tinyengine_project_creation_tests tests/project_creation_test.cpp)
         target_link_libraries(tinyengine_project_creation_tests PRIVATE tinyengine)
         target_compile_options(tinyengine_project_creation_tests PRIVATE /utf-8 /FS)
         add_test(NAME tinyengine_project_creation COMMAND ${CMAKE_COMMAND}
@@ -345,50 +346,50 @@ if(TINYENGINE_BUILD_TESTS)
             "-DCREATE_EXE=$<TARGET_FILE:tinyengine_project_creation_tests>"
             "-DRUNTIME_EXE=$<TARGET_FILE:tinyengine_project_runtime_tests>"
             "-DEDITOR_TEST_EXE=$<TARGET_FILE:tinyengine_editor_interaction_tests>"
-            -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/ProjectCreationTests.cmake")
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/project_creation_test.cmake")
     endif()
-    add_executable(tinyengine_project_sdk_abi_tests tests/ProjectSDKAbiTests.cpp tests/ProjectSDKAbiC.c)
+    add_executable(tinyengine_project_sdk_abi_tests tests/project_sdk_abi_test.cpp tests/project_sdk_abi_c.c)
     target_include_directories(tinyengine_project_sdk_abi_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/include")
     target_link_libraries(tinyengine_project_sdk_abi_tests PRIVATE tinyengine_project_sdk)
     add_test(NAME tinyengine_project_sdk_abi COMMAND tinyengine_project_sdk_abi_tests)
-    add_executable(tinyengine_project_module_tests tests/ProjectModuleTests.cpp)
+    add_executable(tinyengine_project_module_tests tests/project_module_test.cpp)
     target_link_libraries(tinyengine_project_module_tests PRIVATE tinyengine tinyengine_project_sdk)
     add_test(NAME tinyengine_project_manifest COMMAND tinyengine_project_module_tests --group manifest)
     add_test(NAME tinyengine_project_loader COMMAND tinyengine_project_module_tests --group loader)
     add_test(NAME tinyengine_project_bridge COMMAND tinyengine_project_module_tests --group bridge)
     add_test(NAME tinyengine_project_session COMMAND tinyengine_project_module_tests --group session)
-    add_executable(tinyengine_project_runtime_tests tests/ProjectRuntimeTests.cpp)
+    add_executable(tinyengine_project_runtime_tests tests/project_runtime_test.cpp)
     target_link_libraries(tinyengine_project_runtime_tests PRIVATE tinyengine tinyengine_project_sdk)
     add_test(NAME tinyengine_project_runtime COMMAND tinyengine_project_runtime_tests --group runtime)
     add_test(NAME tinyengine_project_sdk_consumer COMMAND ${CMAKE_COMMAND}
         "-DENGINE_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}" "-DENGINE_BUILD=${CMAKE_CURRENT_BINARY_DIR}"
         "-DGENERATOR=${CMAKE_GENERATOR}" "-DMODULE_TEST_EXE=$<TARGET_FILE:tinyengine_project_module_tests>"
         "-DQA_POINTER=${CMAKE_CURRENT_BINARY_DIR}/project-sdk-qa.txt"
-        -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/ProjectSDKConsumerTests.cmake")
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/project_sdk_consumer_test.cmake")
     add_test(NAME tinyengine_project_sdk_runtime_consumer COMMAND ${CMAKE_COMMAND}
         "-DENGINE_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}" "-DENGINE_BUILD=${CMAKE_CURRENT_BINARY_DIR}"
         "-DGENERATOR=${CMAKE_GENERATOR}" "-DMODULE_TEST_EXE=$<TARGET_FILE:tinyengine_project_module_tests>"
         "-DRUNTIME_TEST_EXE=$<TARGET_FILE:tinyengine_project_runtime_tests>" -DRUNTIME=ON
         "-DRELEASE_MODULE_TEST_EXE=${CMAKE_CURRENT_BINARY_DIR}/Release/tinyengine_project_module_tests.exe"
         "-DQA_POINTER=${CMAKE_CURRENT_BINARY_DIR}/project-sdk-runtime-qa.txt"
-        -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/ProjectSDKConsumerTests.cmake")
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/project_sdk_consumer_test.cmake")
     foreach(mode header cache)
         add_test(NAME tinyengine_project_fingerprint_${mode} COMMAND ${CMAKE_COMMAND}
             "-DENGINE_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}" "-DENGINE_BUILD=${CMAKE_CURRENT_BINARY_DIR}"
             "-DGENERATOR=${CMAKE_GENERATOR}" "-DMODULE_TEST_EXE=$<TARGET_FILE:tinyengine_project_module_tests>"
             "-DREVIEW_VARIANT=${mode}" "-DQA_POINTER=${CMAKE_CURRENT_BINARY_DIR}/project-sdk-${mode}-qa.txt"
-            -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/ProjectSDKConsumerTests.cmake")
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/project_sdk_consumer_test.cmake")
     endforeach()
     foreach(mode git source)
         add_test(NAME tinyengine_project_identity_${mode} COMMAND ${CMAKE_COMMAND}
             "-DENGINE_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}" "-DGENERATOR=${CMAKE_GENERATOR}" "-DMODE=${mode}"
-            -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/ProjectSDKIdentityTests.cmake")
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/project_sdk_identity_test.cmake")
     endforeach()
     add_test(NAME tinyengine_project_host_runtime COMMAND ${CMAKE_COMMAND}
         "-DENGINE_SOURCE=${CMAKE_CURRENT_SOURCE_DIR}" "-DGENERATOR=${CMAKE_GENERATOR}"
-        -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/HostRuntimeTests.cmake")
-    add_library(tinyengine_test_runtime_dependency SHARED tests/TestRuntimeDependency.cpp)
-    add_library(tinyengine_test_dependent_plugin SHARED tests/TestDependentPlugin.cpp)
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/host_runtime_test.cmake")
+    add_library(tinyengine_test_runtime_dependency SHARED tests/test_runtime_dependency.cpp)
+    add_library(tinyengine_test_dependent_plugin SHARED tests/test_dependent_plugin.cpp)
     target_include_directories(tinyengine_test_dependent_plugin PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/include")
     target_link_libraries(tinyengine_test_dependent_plugin PRIVATE tinyengine_test_runtime_dependency)
     target_compile_definitions(tinyengine_project_module_tests PRIVATE
@@ -416,7 +417,7 @@ if(TINYENGINE_BUILD_TESTS)
         else()
             set(mode 9)
         endif()
-        add_library(tinyengine_test_project_${variant} SHARED tests/TestProjectModule.cpp)
+        add_library(tinyengine_test_project_${variant} SHARED tests/test_project_module.cpp)
         target_link_libraries(tinyengine_test_project_${variant} PRIVATE tinyengine_project_sdk)
         target_compile_definitions(tinyengine_test_project_${variant} PRIVATE
             TINY_TEST_MODE=${mode} TINY_TEST_PROFILE="$<IF:$<CONFIG:Debug>,Development,Shipping>")
@@ -427,16 +428,16 @@ if(TINYENGINE_BUILD_TESTS)
             TINY_TEST_PROJECT_${variant}="$<TARGET_FILE:tinyengine_test_project_${variant}>")
         add_dependencies(tinyengine_project_runtime_tests tinyengine_test_project_${variant})
     endforeach()
-    add_library(tinyengine_test_project_MISSING SHARED tests/TestProjectMissingEntry.cpp)
+    add_library(tinyengine_test_project_MISSING SHARED tests/test_project_missing_entry.cpp)
     target_compile_definitions(tinyengine_project_module_tests PRIVATE
         TINY_TEST_PROJECT_MISSING="$<TARGET_FILE:tinyengine_test_project_MISSING>"
         TINY_TEST_DYNAMIC_PLUGIN="$<TARGET_FILE:tinyengine_test_dynamic_plugin>")
     add_dependencies(tinyengine_project_module_tests tinyengine_test_project_MISSING tinyengine_test_dynamic_plugin)
     # 只有启用测试目标时才开放测试读取接口，正常构建不会带上这些入口。
     target_compile_definitions(tinyengine PUBLIC TINYENGINE_TEST_HOOKS=1)
-    add_executable(tinyengine_material_tests tests/MaterialSystemTests.cpp)
+    add_executable(tinyengine_material_tests tests/material_system_test.cpp)
     target_link_libraries(tinyengine_material_tests PRIVATE tinyengine)
-    add_executable(tinyengine_material_render_tests tests/MaterialRenderTests.cpp)
+    add_executable(tinyengine_material_render_tests tests/material_render_test.cpp)
     target_link_libraries(tinyengine_material_render_tests PRIVATE tinyengine)
     add_test(NAME tinyengine_material_render COMMAND tinyengine_material_render_tests)
     set_tests_properties(tinyengine_material_render PROPERTIES WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
@@ -445,9 +446,9 @@ if(TINYENGINE_BUILD_TESTS)
     set_tests_properties(tinyengine_material_builtin PROPERTIES WORKING_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/MaterialNoShaders")
     add_test(NAME tinyengine_material_cpu COMMAND tinyengine_material_tests)
     set_tests_properties(tinyengine_material_cpu PROPERTIES WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
-    add_executable(tinyengine_tests tests/EngineTests.cpp)
+    add_executable(tinyengine_tests tests/engine_test.cpp)
     target_link_libraries(tinyengine_tests PRIVATE tinyengine)
-    add_executable(tinyengine_render_stability_tests tests/RenderStabilityTests.cpp)
+    add_executable(tinyengine_render_stability_tests tests/render_stability_test.cpp)
     target_link_libraries(tinyengine_render_stability_tests PRIVATE tinyengine)
     add_test(NAME tinyengine_render_stability COMMAND tinyengine_render_stability_tests)
     set_tests_properties(tinyengine_render_stability PROPERTIES WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
@@ -455,15 +456,15 @@ if(TINYENGINE_BUILD_TESTS)
     add_test(NAME tinyengine_render_builtin_shaders COMMAND tinyengine_render_stability_tests)
     set_tests_properties(tinyengine_render_builtin_shaders PROPERTIES
         WORKING_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/RenderStabilityNoAssets")
-    add_executable(tinyengine_scene_save_tests tests/SceneSaveTests.cpp)
+    add_executable(tinyengine_scene_save_tests tests/scene_save_test.cpp)
     target_link_libraries(tinyengine_scene_save_tests PRIVATE tinyengine)
-    add_executable(tinyengine_platform_mount_tests tests/PlatformMountTests.cpp)
+    add_executable(tinyengine_platform_mount_tests tests/platform_mount_test.cpp)
     target_link_libraries(tinyengine_platform_mount_tests PRIVATE tinyengine)
-    add_executable(tinyengine_script_lifecycle_tests tests/ScriptLifecycleTests.cpp)
+    add_executable(tinyengine_script_lifecycle_tests tests/script_lifecycle_test.cpp)
     target_link_libraries(tinyengine_script_lifecycle_tests PRIVATE tinyengine)
-    add_library(tinyengine_test_dynamic_plugin SHARED tests/TestDynamicPlugin.cpp)
+    add_library(tinyengine_test_dynamic_plugin SHARED tests/test_dynamic_plugin.cpp)
     target_include_directories(tinyengine_test_dynamic_plugin PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
-    add_executable(tinyengine_extended_tests tests/ExtendedRegressionTests.cpp)
+    add_executable(tinyengine_extended_tests tests/extended_regression_test.cpp)
     target_link_libraries(tinyengine_extended_tests PRIVATE tinyengine)
     target_compile_definitions(tinyengine_extended_tests PRIVATE
         TINYENGINE_TEST_PLUGIN_PATH="$<TARGET_FILE:tinyengine_test_dynamic_plugin>"
@@ -473,7 +474,7 @@ if(TINYENGINE_BUILD_TESTS)
     if(TINYENGINE_BUILD_IMPORTERS)
         target_link_libraries(tinyengine_tests PRIVATE tinyengine_importers)
         target_compile_definitions(tinyengine_tests PRIVATE TINYENGINE_HAS_ASSIMP=1)
-        add_executable(tinyengine_import_compatibility_tests tests/ImportCompatibilityTests.cpp)
+        add_executable(tinyengine_import_compatibility_tests tests/import_compatibility_test.cpp)
         target_link_libraries(tinyengine_import_compatibility_tests PRIVATE tinyengine_importers)
         target_compile_definitions(tinyengine_import_compatibility_tests PRIVATE
             TINYENGINE_ASSIMP_MODEL_DIR="${TINYENGINE_ASSIMP_DIR}/test/models")
@@ -491,17 +492,17 @@ if(TINYENGINE_BUILD_TESTS)
     add_test(NAME tinyengine_extended COMMAND tinyengine_extended_tests)
     set_tests_properties(tinyengine_extended PROPERTIES WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
     if(TINYENGINE_BUILD_EDITOR)
-        add_executable(tinyengine_asset_trash_tests tests/AssetTrashTests.cpp editor/AssetTrash.cpp)
+        add_executable(tinyengine_asset_trash_tests tests/asset_trash_test.cpp editor/asset_trash.cpp)
         target_include_directories(tinyengine_asset_trash_tests PRIVATE editor)
         target_link_libraries(tinyengine_asset_trash_tests PRIVATE tinyengine)
         add_test(NAME tinyengine_asset_trash COMMAND tinyengine_asset_trash_tests)
         set_tests_properties(tinyengine_asset_trash PROPERTIES WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
-        add_executable(tinyengine_material_editor_tests tests/MaterialEditorTests.cpp editor/MaterialGraphEditor.cpp editor/MaterialAssetEditor.cpp)
+        add_executable(tinyengine_material_editor_tests tests/material_editor_test.cpp editor/material_graph_editor.cpp editor/material_asset_editor.cpp)
         target_include_directories(tinyengine_material_editor_tests PRIVATE editor)
         target_link_libraries(tinyengine_material_editor_tests PRIVATE tinyengine tinyengine_imgui)
         add_test(NAME tinyengine_material_editor COMMAND tinyengine_material_editor_tests)
         set_tests_properties(tinyengine_material_editor PROPERTIES WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
-        add_executable(tinyengine_editor_interaction_tests tests/EditorInteractionTests.cpp editor/EditorApp.cpp editor/EditorInspector.cpp editor/EditorWorkspace.cpp editor/EditorAssets.cpp editor/EditorAssetReferences.cpp editor/AssetReferenceGraph.cpp editor/AssetTrash.cpp editor/EditorAssetDeletion.cpp editor/EditorMaterialAssignment.cpp editor/EditorSceneView.cpp editor/MaterialAssetEditor.cpp editor/MaterialGraphEditor.cpp)
+        add_executable(tinyengine_editor_interaction_tests tests/editor_interaction_test.cpp editor/editor_app.cpp editor/editor_inspector.cpp editor/editor_workspace.cpp editor/editor_assets.cpp editor/editor_asset_references.cpp editor/asset_reference_graph.cpp editor/asset_trash.cpp editor/editor_asset_deletion.cpp editor/editor_material_assignment.cpp editor/editor_scene_view.cpp editor/material_asset_editor.cpp editor/material_graph_editor.cpp)
         target_include_directories(tinyengine_editor_interaction_tests PRIVATE editor)
         target_compile_definitions(tinyengine_editor_interaction_tests PRIVATE
             TINYENGINE_DEVELOPMENT_SDK_ROOT="${CMAKE_CURRENT_BINARY_DIR}/ProjectSDK")
@@ -523,7 +524,7 @@ if(TINYENGINE_BUILD_TESTS)
             add_test(NAME tinyengine_editor_dpi COMMAND tinyengine_editor_interaction_tests --dpi)
             set_tests_properties(tinyengine_editor_dpi PROPERTIES WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
         endif()
-        add_executable(tinyengine_editor_asset_rename_tests tests/EditorAssetRenameTests.cpp editor/EditorApp.cpp editor/EditorInspector.cpp editor/EditorWorkspace.cpp editor/EditorAssets.cpp editor/EditorAssetReferences.cpp editor/AssetReferenceGraph.cpp editor/AssetTrash.cpp editor/EditorAssetDeletion.cpp editor/EditorMaterialAssignment.cpp editor/EditorSceneView.cpp editor/MaterialAssetEditor.cpp editor/MaterialGraphEditor.cpp)
+        add_executable(tinyengine_editor_asset_rename_tests tests/editor_asset_rename_test.cpp editor/editor_app.cpp editor/editor_inspector.cpp editor/editor_workspace.cpp editor/editor_assets.cpp editor/editor_asset_references.cpp editor/asset_reference_graph.cpp editor/asset_trash.cpp editor/editor_asset_deletion.cpp editor/editor_material_assignment.cpp editor/editor_scene_view.cpp editor/material_asset_editor.cpp editor/material_graph_editor.cpp)
         target_include_directories(tinyengine_editor_asset_rename_tests PRIVATE editor)
         target_compile_definitions(tinyengine_editor_asset_rename_tests PRIVATE TINYENGINE_TEST_GAME_PATH="$<TARGET_FILE:tinyengine_game>")
         add_dependencies(tinyengine_editor_asset_rename_tests tinyengine_game)
@@ -580,7 +581,7 @@ install(TARGETS tinyengine_asset_tool RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR
 install(TARGETS tinyengine_scene_tool RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 install(TARGETS tinyengine_package_tool RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 install(TARGETS tinyengine_commandlet RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
-install(DIRECTORY include/ DESTINATION ${CMAKE_INSTALL_INCLUDEDIR} PATTERN "Import" EXCLUDE)
+install(DIRECTORY include/ DESTINATION ${CMAKE_INSTALL_INCLUDEDIR} PATTERN "import" EXCLUDE)
 install(DIRECTORY assets/ DESTINATION ${CMAKE_INSTALL_DATADIR}/tinyengine/assets)
 install(FILES Aster-Engine.tinyproject DESTINATION .)
 

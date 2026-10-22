@@ -1,0 +1,132 @@
+# Aster-Engine 构建指南
+
+## 推荐构建入口
+
+Windows 安装 VS 2022 的 C++ 桌面开发和 CMake 后，在引擎根目录执行：
+
+```powershell
+cmake --preset editor
+cmake --build --preset editor-debug
+ctest --preset editor-debug
+.\intermediate\Build\Editor\Debug\tinyengine_editor.exe
+```
+
+引擎的构建文件位于 `intermediate/Build/Editor`，下载依赖位于 `intermediate/Dependencies`。`core` / `core-release` 用于不带编辑器的构建。Presets 默认关闭可选 Assimp 导入器；需要模型导入时，配置时追加 `-DTINYENGINE_BUILD_IMPORTERS=ON -DTINYENGINE_ASSIMP_DIR=<本机源码目录>`。
+
+本机离线依赖通过配置参数，或未跟踪的 `CMakeUserPresets.json` 指定。例如给 SDL 指定 `FETCHCONTENT_SOURCE_DIR_SDL2`，给 ImGui 指定 `TINYENGINE_IMGUI_DIR`，给 stb 指定 `TINYENGINE_STB_DIR`。不要把本机磁盘路径写进共享 CMake 文件。
+
+旧的手动 `cmake -S . -B ...` 入口仍然有效。历史缓存不能直接改名后继续使用；先完成新目录构建，再运行 `scripts/maintenance/organize_repository.ps1` 预览，确认后加 `-Apply` 归档。脚本保留仍在使用或被其他工作树引用的缓存，并为每次移动保存 `saved/RepositoryMaintenance/*.json`。回退使用 `-RollbackManifest <清单路径>`。游戏项目继续使用自己的 `build/`，本次只整理引擎仓库。
+
+本文对应 Aster-Engine 0.27.0。
+
+## 1. 前置条件
+
+Windows 推荐环境：
+
+- Visual Studio 2022，安装“使用 C++ 的桌面开发”和 Windows SDK。
+- CMake 3.21 或更高版本。
+- 支持 OpenGL 4.3 Core、Compute Shader 和 Shader Storage Buffer 的显卡驱动。
+- 启用模型导入时提供 Assimp 源码目录，例如 `D:/Dependencies/assimp`。
+- 编辑器默认自动获取固定的 Dear ImGui `v1.92.8-docking`；离线构建可提供本地 docking 源码目录。
+
+依赖处理规则：
+
+- SDL2：优先使用系统 CMake Package；没有时由 CMake FetchContent 获取 2.32.10。
+- stb_vorbis：优先使用 `TINYENGINE_STB_DIR`；没有时由 FetchContent 获取 stb。
+- Assimp：Editor/Importer 构建必须提供源码目录，不自动下载。
+- Dear ImGui：Editor 默认通过 FetchContent 获取固定提交的 docking 版本并校验 SHA-256。`TINYENGINE_IMGUI_DIR` 可指定 1.92.8 或更新的 docking 源码；普通 master 或旧版本会回退到项目内固定版本。
+- FreeType：非 Windows 构建必须能被 `find_package(Freetype)` 找到。
+- Jolt：默认关闭；启用时必须提供 `TINYENGINE_JOLT_DIR`。
+
+首次配置可能需要访问网络下载 SDL2、stb 或 Dear ImGui。完全离线构建时，请预先安装 SDL2，将 `TINYENGINE_STB_DIR` 指向包含 `stb_vorbis.c` 的本地目录，并将 `TINYENGINE_IMGUI_DIR` 指向本地 docking 源码。
+
+## 2. 完整开发构建
+
+```powershell
+cmake -S . -B build `
+  -DTINYENGINE_BUILD_EDITOR=ON `
+  -DTINYENGINE_BUILD_IMPORTERS=ON `
+  -DTINYENGINE_ASSIMP_DIR=D:/OpenSourceProject/assimp-master
+
+cmake --build build --config Debug -j 8
+```
+
+Release 构建：
+
+```powershell
+cmake --build build --config Release -j 8
+```
+
+不要同时启动多个针对同一 Visual Studio Build Tree 的构建进程，否则 `.pdb` 或 `.ilk` 可能发生锁冲突。
+
+## 3. 构建选项
+
+| 选项 | 默认值 | 作用 |
+|---|---:|---|
+| `TINYENGINE_BUILD_TESTS` | OFF | 本地有测试源码时可手动启用 |
+| `TINYENGINE_BUILD_DEMO` | ON | 构建开发 Demo |
+| `TINYENGINE_BUILD_GAME` | ON | 构建独立 Shipping Runtime 和 `package_game` |
+| `TINYENGINE_BUILD_EDITOR` | ON | 构建 Dear ImGui 编辑器 |
+| `TINYENGINE_BUILD_IMPORTERS` | ON | 构建 Assimp 导入库和模型导入命令 |
+| `TINYENGINE_ENABLE_JOLT` | OFF | 链接可选 Jolt 后端 |
+| `TINYENGINE_ASSIMP_DIR` | 空，启用时显式指定 | Assimp 源码根目录 |
+| `TINYENGINE_IMGUI_DIR` | 空（自动获取） | 可选 Dear ImGui docking 源码根目录 |
+| `TINYENGINE_JOLT_DIR` | 空，启用时显式指定 | Jolt Physics 源码根目录 |
+| `TINYENGINE_STB_DIR` | 空，自动获取 | 包含 `stb_vorbis.c` 的目录 |
+
+只构建最小 Runtime 时可以关闭 Editor 和 Importer：
+
+```powershell
+cmake -S . -B build-runtime `
+  -DTINYENGINE_BUILD_EDITOR=OFF `
+  -DTINYENGINE_BUILD_IMPORTERS=OFF
+cmake --build build-runtime --config Release -j 8
+```
+
+## 4. 主要目标
+
+| 目标 | 产物/用途 |
+|---|---|
+| `tinyengine` | C++20 静态核心库 |
+| `tinyengine_demo` | 开发场景运行入口；第一个参数可限制帧数 |
+| `tinyengine_game` | 发布包使用的独立运行时；构建后同时生成兼容性 sidecar `.buildinfo` |
+| `tinyengine_editor` | Dear ImGui 场景与资产编辑器 |
+| `tinyengine_asset_tool` | 导入、扫描、Cook、TPAK、环境烘焙和资产维护 |
+| `tinyengine_scene_tool` | 无界面场景查看与基础修改 |
+| `tinyengine_package_tool` | 生成独立游戏目录 |
+| `tinyengine_commandlet` | 资产/场景校验、迁移和平台 Cook |
+
+`tinyengine_game` 的 POST_BUILD 步骤会在 EXE 旁写入 `.buildinfo`，包含 Engine 版本、ABI、场景格式、构建 ID、配置和编译器。`tinyengine_package_tool` 必须同时读到 Game EXE 与该 sidecar，且所有字段与当前工具匹配；旧二进制、缺失 sidecar 或跨配置/工具链混用都会在打包前被拒绝。不要手工修改 `.buildinfo`，应重新构建对应配置。
+
+## 5. 运行冒烟
+
+运行三帧 OpenGL 冒烟：
+
+```powershell
+.\build\Debug\tinyengine_demo.exe 3
+```
+
+也可使用 Commandlet 校验基础素材：
+
+```powershell
+.\build\Debug\tinyengine_commandlet.exe ValidateAssets assets
+```
+
+## 6. 安装与 CPack
+
+```powershell
+cmake --install build --config Release --prefix saved/Install
+cpack --config build/CPackConfig.cmake -C Release
+```
+
+安装内容包括核心库、公开头文件、已启用的可执行目标、示例资产和项目文件。Importer 头文件不作为 Runtime SDK 安装。
+
+## 7. 常见问题
+
+- `Assimp source tree not found`：修正 `TINYENGINE_ASSIMP_DIR`，或关闭 `TINYENGINE_BUILD_IMPORTERS`。
+- `Dear ImGui source tree not found`：修正 `TINYENGINE_IMGUI_DIR`，或关闭 `TINYENGINE_BUILD_EDITOR`。
+- OpenGL 初始化失败：更新显卡驱动，并确认设备支持 OpenGL 4.3 Core；不支持 Compute Shader 的旧设备不在 0.27 默认后端范围内。
+- Windows `.pdb/.ilk` 无法打开：停止重复的 MSBuild、测试或 Demo 进程后串行重建。
+- Package Tool 报构建信息缺失或不兼容：确认 Game EXE 旁存在同名 `.buildinfo`，并用同一源码、配置和编译器重建 `tinyengine_game` 与 `tinyengine_package_tool`。
+- 非 Windows 找不到 FreeType：安装开发包并确保 CMake 可以发现 `Freetype::Freetype`。
+- 离线环境获取 SDL/stb 失败：改用系统 SDL2 Package，并设置本地 `TINYENGINE_STB_DIR`。

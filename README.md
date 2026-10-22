@@ -1,10 +1,10 @@
 # Aster-Engine
 
-Aster-Engine 是参考 Unreal Engine 5.3.2 模块职责、以 C++17 实现的轻量 3D 引擎。目标不是复制 UE 的 UObject/UHT、完整 RHI 或大型编辑器，而是形成“项目—资产—场景—运行时—渲染—打包—编辑器”的最小可用闭环。
+Aster-Engine 是参考 Unreal Engine 5.3.2 模块职责、以 C++20 实现的轻量 3D 引擎。目标不是复制 UE 的 UObject/UHT、完整 RHI 或大型编辑器，而是形成“项目—资产—场景—运行时—渲染—打包—编辑器”的最小可用闭环。
 
 当前版本：0.27.0（完成 Render Graph、GPU HZB、Motion Vector TAA、独立 Bloom/GTAO、Forward+ Clustered Lighting 与 GPU Driven Indirect Draw）。
 
-文档入口：[文档中心](docs/README.md) · [构建指南](docs/Guides/构建指南.md) · [使用指南](docs/Guides/使用指南.md) · [项目工作流](docs/Guides/项目工作流.md) · [技术设计](docs/Architecture/设计.md) · [项目架构](docs/Architecture/项目架构.md) · [工具参考](docs/Reference/工具参考.md)
+文档入口：[文档中心](docs/README.md) · [构建指南](docs/guides/build_guide.md) · [使用指南](docs/guides/user_guide.md) · [项目工作流](docs/guides/project_workflow.md) · [技术设计](docs/Architecture/设计.md) · [项目架构](docs/Architecture/项目架构.md) · [工具参考](docs/reference/tool_reference.md)
 
 本文中的“已实现”表示功能进入可编译、可测试、可运行的代码路径，不等同于 UE 同名系统的商业级规模。具体算法和质量边界记录在对应专题文档中。
 
@@ -25,36 +25,36 @@ Aster-Engine 是参考 Unreal Engine 5.3.2 模块职责、以 C++17 实现的轻
 
 对外项目名为 Aster-Engine；现有构建目标 `tinyengine_*`、SDK 包名 `TinyEngine` 和 `.tinyproject` 文件格式继续沿用，已有项目无需迁移。
 
-需要 CMake 3.21+、C++17 编译器、OpenGL 4.3 驱动。可选模型导入功能需要本地 Assimp 源码。Dear ImGui 使用固定 docking 版本；SDL2 和 stb 在本机不可用时由 CMake 获取；完整依赖与离线构建方式见[构建指南](docs/Guides/构建指南.md)。
+需要 CMake 3.21+、C++20 编译器、OpenGL 4.3 驱动。可选模型导入功能需要本地 Assimp 源码。Dear ImGui 使用固定 docking 版本；SDL2 和 stb 在本机不可用时由 CMake 获取；完整依赖与离线构建方式见[构建指南](docs/guides/build_guide.md)。
 
 ```powershell
 cmake --preset editor
 cmake --build --preset editor-debug
-.\Intermediate\Build\Editor\Debug\tinyengine_editor.exe
+.\intermediate\Build\Editor\Debug\tinyengine_editor.exe
 ```
 
-不带项目参数会打开项目启动页。填写名称和位置，点击“创建并打开”，编辑器会生成场景、基础素材、`Source/Game.cpp`、VS 工程并首次编译项目 DLL；打开后点击运行即可执行项目逻辑。双击 SDK 的 `Programs/ProjectTool/TinyEngineProjectTool.exe` 注册一次菜单，之后也可以右键 `.tinyproject` 生成 `.sln`。详细步骤见[项目代码开发](docs/Guides/项目代码开发.md)。
+不带项目参数会打开项目启动页。填写名称和位置，点击“创建并打开”，编辑器会生成场景、基础素材、`source/game.cpp`、VS 工程并首次编译项目 DLL；打开后点击运行即可执行项目逻辑。双击 SDK 的 `programs/project_tool/TinyEngineProjectTool.exe` 注册一次菜单，之后也可以右键 `.tinyproject` 生成 `.sln`。详细步骤见[项目代码开发](docs/guides/project_code_development.md)。
 
 生成并运行独立游戏包：
 
 ```powershell
 cmake --build --preset editor-release --target package_game
-.\Intermediate\Build\Editor\Package\Aster-Engine\Aster-Engine.exe `
-  .\Intermediate\Build\Editor\Package\Aster-Engine\Aster-Engine.tinyproject
+.\intermediate\Build\Editor\Package\Aster-Engine\Aster-Engine.exe `
+  .\intermediate\Build\Editor\Package\Aster-Engine\Aster-Engine.tinyproject
 ```
 
 无头校验和平台 Cook：
 
 ```powershell
-.\Intermediate\Build\Editor\Release\tinyengine_commandlet.exe ValidateAssets assets
-.\Intermediate\Build\Editor\Release\tinyengine_commandlet.exe ValidateScenes Saved
-.\Intermediate\Build\Editor\Release\tinyengine_commandlet.exe MigrateScenes Saved
-.\Intermediate\Build\Editor\Release\tinyengine_commandlet.exe CookProject Aster-Engine.tinyproject Saved\PlatformCook Windows Shipping
+.\intermediate\Build\Editor\Release\tinyengine_commandlet.exe ValidateAssets assets
+.\intermediate\Build\Editor\Release\tinyengine_commandlet.exe ValidateScenes Saved
+.\intermediate\Build\Editor\Release\tinyengine_commandlet.exe MigrateScenes Saved
+.\intermediate\Build\Editor\Release\tinyengine_commandlet.exe CookProject Aster-Engine.tinyproject saved\PlatformCook Windows Shipping
 ```
 
 Scene View 操作：点击视图后使用 WASD/QE 飞行，按住鼠标右键转向，Shift 加速；左键选择、拖动框选、Ctrl 追加；1/2/3 切换移动、旋转、缩放工具，并可选择 Local/World 与 Center/Active/Individual Pivot。F11 放大或还原场景视图。
 
-资产导入、环境烘焙、VFX/动画/行为树编辑和打包流程见[使用指南](docs/Guides/使用指南.md)；全部 CLI 参数见[工具参考](docs/Reference/工具参考.md)。
+资产导入、环境烘焙、VFX/动画/行为树编辑和打包流程见[使用指南](docs/guides/user_guide.md)；全部 CLI 参数见[工具参考](docs/reference/tool_reference.md)。
 
 ## 当前边界
 

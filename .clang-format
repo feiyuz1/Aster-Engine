@@ -1,6 +1,19 @@
-BasedOnStyle: Microsoft
-Standard: c++17
-UseTab: Never
+# TinyEngine 统一格式基线，见 docs/reference/coding_conventions.md 第 5.1 节。
+# 固定工具版本：clang-format 16.0.5。
+BasedOnStyle: LLVM
+Language: Cpp
+Standard: c++20
+
 IndentWidth: 4
-ColumnLimit: 140
+TabWidth: 4
+UseTab: Never
+ColumnLimit: 120
+
+BreakBeforeBraces: Allman
+DerivePointerAlignment: false
+PointerAlignment: Left
+ReferenceAlignment: Left
+
 SortIncludes: CaseSensitive
+AllowShortFunctionsOnASingleLine: Empty
+AllowShortIfStatementsOnASingleLine: Never

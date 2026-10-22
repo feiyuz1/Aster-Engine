@@ -9,25 +9,49 @@ jobs:
     runs-on: windows-2022
     steps:
       - uses: actions/checkout@v4
+      - name: Install pinned clang-format
+        shell: pwsh
+        run: |
+          $installer = Join-Path $env:RUNNER_TEMP 'LLVM-16.0.5-win64.exe'
+          $llvmDirectory = Join-Path $env:RUNNER_TEMP 'llvm-16.0.5'
+          Invoke-WebRequest 'https://github.com/llvm/llvm-project/releases/download/llvmorg-16.0.5/LLVM-16.0.5-win64.exe' -OutFile $installer
+          $expectedHash = '085ED35D0DA362B961DB2A220B289F24A5A03D8C73F97494A75D471E40DDB0FB'
+          if ((Get-FileHash -Algorithm SHA256 -LiteralPath $installer).Hash -ne $expectedHash) {
+            throw 'LLVM installer checksum mismatch'
+          }
+          $installation = Start-Process -FilePath $installer -ArgumentList @('/S', "/D=$llvmDirectory") -Wait -PassThru -WindowStyle Hidden
+          if ($installation.ExitCode -ne 0) { throw "LLVM installation failed with exit code $($installation.ExitCode)" }
+          Add-Content -Path $env:GITHUB_PATH -Value (Join-Path $llvmDirectory 'bin')
+      - name: Check pinned clang-format
+        shell: pwsh
+        run: |
+          $expected = 'clang-format version 16.0.5'
+          $actual = (clang-format --version)
+          if ($LASTEXITCODE -ne 0) { throw 'Could not run clang-format' }
+          if ($actual -notlike "$expected*") { throw "Expected $expected, found $actual" }
       - name: Check C++ formatting
         shell: pwsh
         run: |
-          $files = git ls-files '*.cpp' '*.hpp'
-          foreach ($file in $files) { clang-format --dry-run --Werror --style=file $file }
+          $files = git ls-files '*.cpp' '*.h' '*.c'
+          if ($LASTEXITCODE -ne 0) { throw 'Could not enumerate formatting inputs' }
+          foreach ($file in $files) {
+            clang-format --dry-run --Werror --style=file $file
+            if ($LASTEXITCODE -ne 0) { throw "Formatting check failed: $file" }
+          }
       - name: Configure core build
         run: cmake --preset core
       - name: Build
         run: cmake --build --preset core-release
       - name: Validate content
         run: |
-          .\Intermediate\Build\Core\Release\tinyengine_commandlet.exe ValidateAssets assets
-          .\Intermediate\Build\Core\Release\tinyengine_commandlet.exe ValidateScenes assets
+          .\intermediate\Build\Core\Release\tinyengine_commandlet.exe ValidateAssets assets
+          .\intermediate\Build\Core\Release\tinyengine_commandlet.exe ValidateScenes assets
       - name: Platform cook
-        run: .\Intermediate\Build\Core\Release\tinyengine_commandlet.exe CookProject Aster-Engine.tinyproject Intermediate\Build\Core\PlatformCook Windows Shipping
+        run: .\intermediate\Build\Core\Release\tinyengine_commandlet.exe CookProject Aster-Engine.tinyproject intermediate\Build\Core\PlatformCook Windows Shipping
       - name: Package
         run: cmake --build --preset core-release --target package_game
       - name: Upload package
         uses: actions/upload-artifact@v4
         with:
           name: Aster-Engine-Windows
-          path: Intermediate/Build/Core/Package/Aster-Engine
+          path: intermediate/Build/Core/Package/Aster-Engine

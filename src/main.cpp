@@ -3,16 +3,16 @@
 // 约定：命令行工具以非交互方式运行，失败时返回非零退出码并输出可定位的错误。
 // 类型：实现文件。
 
-#include "MiniEngine/Core/CrashReporter.hpp"
-#include "MiniEngine/Runtime/Engine.hpp"
+#include "tinyengine/core/crash_reporter.h"
+#include "tinyengine/runtime/engine.h"
 
 #include <cstdint>
 #include <cstdlib>
 #include <limits>
 
-int main(int argc, char **argv)
+int main(int argc, char** argv)
 {
-    MiniEngine::CrashReporter::Install("Aster-Engine");
+    tinyengine::CrashReporter::install("Aster-Engine");
     std::uint32_t maxFrames = 0;
     if (argc > 1)
     {
@@ -23,13 +23,13 @@ int main(int argc, char **argv)
         }
     }
 
-    MiniEngine::Engine engine;
-    if (!engine.Initialize())
+    tinyengine::Engine engine;
+    if (!engine.initialize())
     {
         return 1;
     }
 
     engine.Run(maxFrames);
-    engine.Shutdown();
+    engine.shutdown();
     return 0;
 }

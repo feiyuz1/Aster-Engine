@@ -61,8 +61,8 @@ function(tinyengine_add_project_module)
     if(NOT startup_project)
         set_property(DIRECTORY "${PROJECT_SOURCE_DIR}" PROPERTY VS_STARTUP_PROJECT "${default_startup}")
     endif()
-    target_link_libraries(${P_TARGET} PRIVATE TinyEngine::ProjectSDK)
-    target_compile_features(${P_TARGET} PRIVATE cxx_std_17)
+    target_link_libraries(${P_TARGET} PRIVATE tinyengine::project_sdk)
+    target_compile_features(${P_TARGET} PRIVATE cxx_std_20)
     target_compile_options(${P_TARGET} PRIVATE /utf-8 /FS)
     set(generated "${CMAKE_CURRENT_BINARY_DIR}/TinyEngineProject/${P_TARGET}")
     target_include_directories(${P_TARGET} PRIVATE "${generated}/$<CONFIG>")
@@ -129,14 +129,14 @@ function(tinyengine_finalize_project_module target)
     endforeach()
     set(sdk "$<IF:$<CONFIG:Debug>,${sdk_Debug},${sdk_Release}>")
     set(build "$<IF:$<CONFIG:Debug>,${build_Debug},${build_Release}>")
-    file(GENERATE OUTPUT "${generated}/$<CONFIG>/ProjectModuleBuildInfo.h" CONTENT
+    file(GENERATE OUTPUT "${generated}/$<CONFIG>/project_module_build_info.h" CONTENT
 "#pragma once
-#include <MiniEngine/ProjectSDK/ProjectAPI.h>
+#include <tinyengine/project_sdk/project_api.h>
 #if !defined(TINYENGINE_PROJECT_SDK_DEBUG) && !defined(TINYENGINE_PROJECT_SDK_RELEASE)
 #error ProjectSDK P0 supports only Debug and Release
 #endif
-namespace TinyEngineProject {
-inline const TinyProjectModuleInfo &GetModuleInfo() noexcept {
+namespace tinyengine::project_module {
+inline const TinyProjectModuleInfo &getModuleInfo() noexcept {
     static const TinyProjectModuleInfo info{sizeof(TinyProjectModuleInfo),
         {\"${P_MODULE_ID}\",sizeof(\"${P_MODULE_ID}\")-1}, {\"${P_PROJECT_ID}\",sizeof(\"${P_PROJECT_ID}\")-1},
         {\"${sdk}\",sizeof(\"${sdk}\")-1}, {\"${build}\",sizeof(\"${build}\")-1},
