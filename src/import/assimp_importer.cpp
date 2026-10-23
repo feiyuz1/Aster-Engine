@@ -262,7 +262,7 @@ aiQuaternion sampleRotationKeys(const aiQuatKey* keys, const unsigned int count,
                             ? static_cast<float>((time - leftKey.mTime) / (rightKey.mTime - leftKey.mTime))
                             : 0.0f;
     aiQuaternion::Interpolate(result, leftKey.mValue, rightKey.mValue, alpha);
-    return result.normalize();
+    return result.Normalize();
 }
 
 Vec3 quaternionToEulerDegrees(const aiQuaternion& value)
@@ -387,7 +387,7 @@ ModelImportResult AssimpImporter::importModel(const std::filesystem::path& sourc
             Bone& bone = skeleton.bones[entry.second];
             bone.name = entry.first;
             bone.inverseBind = inverseBinds.count(entry.first) ? inverseBinds.at(entry.first) : Mat4::identity();
-            const aiNode* node = scene->mRootNode->findNode(entry.first.c_str());
+            const aiNode* node = scene->mRootNode->FindNode(entry.first.c_str());
             for (node = node ? node->mParent : nullptr; node; node = node->mParent)
                 if (const auto parent = globalBones.find(node->mName.C_Str()); parent != globalBones.end())
                 {
@@ -427,7 +427,7 @@ ModelImportResult AssimpImporter::importModel(const std::filesystem::path& sourc
                 for (std::size_t boneIndex = 0; boneIndex < importedSkeleton.bones.size(); ++boneIndex)
                 {
                     const Bone& bone = importedSkeleton.bones[boneIndex];
-                    const aiNode* node = scene->mRootNode->findNode(bone.name.c_str());
+                    const aiNode* node = scene->mRootNode->FindNode(bone.name.c_str());
                     aiVector3D scale{1, 1, 1}, position{};
                     aiQuaternion rotation;
                     if (node)

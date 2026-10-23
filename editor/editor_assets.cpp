@@ -274,7 +274,7 @@ NativeFileDialogResult openModelFileDialog(const HWND owner, const std::filesyst
         if (SUCCEEDED(SHCreateItemFromParsingName(initialDirectory.c_str(), nullptr, IID_PPV_ARGS(&folder))) && folder)
         {
             dialog->SetFolder(folder);
-            folder->release();
+            folder->Release();
         }
     }
 
@@ -290,7 +290,7 @@ NativeFileDialogResult openModelFileDialog(const HWND owner, const std::filesyst
                 result.path = std::filesystem::path(selected).lexically_normal();
                 CoTaskMemFree(selected);
             }
-            item->release();
+            item->Release();
         }
         if (!result.path)
             result.error = "Windows returned no model file from the picker.";
@@ -298,7 +298,7 @@ NativeFileDialogResult openModelFileDialog(const HWND owner, const std::filesyst
     else if (status != HRESULT_FROM_WIN32(ERROR_CANCELLED))
         result.error = "The Windows model file picker failed.";
 
-    dialog->release();
+    dialog->Release();
     if (uninitialize)
         CoUninitialize();
     return result;
