@@ -42,6 +42,21 @@ class SdlGlRenderDevice final : public RenderDevice
     /// @brief 获取 `ViewportSize`。
     /// @return 返回接口计算或查询得到的结果。
     Vec2 getViewportSize() const override;
+    /// @brief 切换独占鼠标；开启时隐藏光标并使用 SDL 相对鼠标模式。
+    /// @param captured 是否捕获鼠标。
+    void setMouseCapture(bool captured) override;
+    /// @brief 判断当前是否独占鼠标。
+    /// @return 捕获状态。
+    bool isMouseCaptured() const override;
+    /// @brief 开关复古像素化后处理通道。
+    /// @param enabled 是否启用。
+    /// @param blockSize 像素块边长（像素，夹紧到 1..16）。
+    /// @param colorLevels 每通道色阶数（夹紧到 2..256）。
+    void setRetroPostProcess(bool enabled, float blockSize, float colorLevels) override;
+    /// @brief 判断像素化通道是否可用且已启用。
+    bool isRetroPostProcessEnabled() const override;
+    float getRetroBlockSize() const override;
+    float getRetroColorLevels() const override;
     /// @brief 开始 `ShadowPass`。
     /// @param view 当前帧的相机与光照视图数据。
     /// @param cascadeIndex 目标阴影级联索引。
@@ -174,7 +189,9 @@ class SdlGlRenderDevice final : public RenderDevice
     bool isTaaEnabled() const;
     bool usesTemporalJitter() const override
     {
-        return isTaaEnabled();
+        // Pixel quantization needs a fixed raster grid; subpixel Halton offsets
+        // become whole pixel-block jumps after nearest sampling and quantization.
+        return isTaaEnabled() && !isRetroPostProcessEnabled();
     }
     /// @brief 获取 `LastGpuFrameMilliseconds`。
     /// @return 返回计算得到的数值、数量或索引。

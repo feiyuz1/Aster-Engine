@@ -32,6 +32,8 @@
 !/tests/material_system_test.cpp
 !/tests/material_render_test.cpp
 !/tests/engine_test.cpp
+# Project SDK 玩法扩展（aster.gameplay）的宿主契约测试，由 CMakeLists 引用，必须入库。
+!/tests/project_gameplay_test.cpp
 
 # 文档只跟踪使用指南和参考资料，其余保留在本地。
 !/docs/

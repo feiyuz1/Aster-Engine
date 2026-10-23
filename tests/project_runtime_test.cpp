@@ -4,6 +4,10 @@
 #include "tinyengine/platform/utf8_arguments.h"
 #include "tinyengine/project_sdk/sdk_info.h"
 #include "tinyengine/runtime/engine.h"
+#include "tinyengine/render/sdl_gl_render_device.h"
+#include "tinyengine/ui/ui_system.h"
+#define SDL_MAIN_HANDLED
+#include <SDL.h>
 #include <chrono>
 #include <iostream>
 #include <stdexcept>
@@ -79,6 +83,30 @@ float rotation(Engine& engine)
 {
     return engine.GetContext().world->GetComponent<TransformComponent>(player(engine))->rotation.y;
 }
+std::uint64_t addHostResources(Engine& engine)
+{
+    auto& context = engine.GetContext();
+    context.uiSystem->AddLabel("fixture.host", "Host", {0, 24, 60, 20});
+    ParticleEmitterSettings settings;
+    settings.emissionRate = 0;
+    settings.lifetime = 100;
+    const auto emitter = context.vfxSystem->createEmitter(settings);
+    context.vfxSystem->findEmitter(emitter)->burst(1);
+    context.renderer->setRetroPostProcess(true, 5.0f, 24.0f);
+    return emitter;
+}
+void checkSessionCleanup(Engine& engine, std::uint64_t hostEmitter)
+{
+    const auto& context = engine.GetContext();
+    check(context.vfxSystem->findEmitter(hostEmitter) && context.vfxSystem->BuildParticleList().size() == 1,
+          "play cleanup removes project particles and preserves the host emitter");
+    check(!context.uiSystem->Find("fixture.runtime") && context.uiSystem->Find("fixture.host"),
+          "play cleanup removes project UI and preserves the host widget");
+    check(context.renderer->isRetroPostProcessEnabled() && context.renderer->getRetroBlockSize() == 5.0f &&
+              context.renderer->getRetroColorLevels() == 24.0f,
+          "play cleanup restores the complete pre-project retro settings");
+    check(!context.renderer->isMouseCaptured(), "play cleanup releases project mouse capture");
+}
 void runtimeTests()
 {
     Fixture f;
@@ -86,12 +114,16 @@ void runtimeTests()
     int legacyUpdates = 0;
     engine.setGameInstance(std::make_unique<Legacy>(legacyUpdates));
     check(engine.initialize(f.project, false), "editor initializes registered project module");
+    const auto hostEmitter = addHostResources(engine);
     const auto snapshot = SceneSerializer::serialize(*engine.GetContext().world);
     engine.Run(2);
     check(rotation(engine) == 0, "edit mode skips project updates");
     for (int i = 0; i < 2; ++i)
     {
         check(engine.enterPlayMode(), "editor_play_calls_project_code");
+        check(engine.GetContext().vfxSystem->BuildParticleList().size() == 7 &&
+                  engine.GetContext().uiSystem->Find("fixture.runtime"),
+              "project begin creates particles and UI in the current session");
         engine.Run(3);
         check(rotation(engine) > 0 && legacyUpdates == 0,
               "project updates transform without double updating legacy GameInstance");
@@ -101,6 +133,7 @@ void runtimeTests()
         check(rotation(engine) == paused, "pause_skips_project_updates");
         check(engine.exitPlayMode() && SceneSerializer::serialize(*engine.GetContext().world) == snapshot,
               "stop_restores_snapshot_and_invalidates_handles");
+        checkSessionCleanup(engine, hostEmitter);
     }
     {
         check(engine.enterPlayMode(), "automatic world epoch test begins");
@@ -121,15 +154,33 @@ void runtimeTests()
         check(findOld && findOld() == TINY_PROJECT_NOT_FOUND,
               "empty world reset invalidates world token automatically");
         check(engine.exitPlayMode(), "world epoch test restores scene");
+        checkSessionCleanup(engine, hostEmitter);
         check(alive() == 0, "stop invalidates old project handles automatically");
     }
     engine.shutdown();
     {
         Engine game;
         check(game.initialize(f.project, true) && game.isPlaying(), "standalone_start_calls_same_project_code");
+        SDL_Event escape{};
+        escape.type = SDL_KEYDOWN;
+        escape.key.keysym.scancode = SDL_SCANCODE_ESCAPE;
+        escape.key.keysym.sym = SDLK_ESCAPE;
+        check(SDL_PushEvent(&escape) == 1 && game.GetContext().renderer->pumpEvents(),
+              "standalone project receives Escape without ending the platform loop");
+        check(game.GetContext().renderer->GetInputState().keysPressed[SDL_SCANCODE_ESCAPE],
+              "standalone project retains the Escape press edge");
+        check(game.GetContext().renderer->pumpEvents() &&
+                  !game.GetContext().renderer->GetInputState().keysPressed[SDL_SCANCODE_ESCAPE],
+              "Escape press edge clears on the following frame");
         game.Run(3);
         check(rotation(game) > 0, "standalone rotates same scene object");
+        auto* standaloneUi = game.GetContext().uiSystem;
+        SDL_Event close{};
+        close.type = SDL_QUIT;
+        check(SDL_PushEvent(&close) == 1 && !game.GetContext().renderer->pumpEvents(),
+              "standalone project still exits on a window close event");
         game.shutdown();
+        check(!standaloneUi->Find("fixture.runtime"), "shutdown removes project-owned UI");
         game.shutdown();
     }
     fs::remove(f.root / "Binaries/Game.dll");
@@ -148,12 +199,14 @@ void runtimeTests()
         f.publish(binary);
         Engine failing;
         check(failing.initialize(f.project, false), "fault fixture initializes editor");
+        const auto failureHostEmitter = addHostResources(failing);
         const auto before = SceneSerializer::serialize(*failing.GetContext().world);
         if (failing.enterPlayMode())
             failing.Run(3);
         check(!failing.isPlaying() && SceneSerializer::serialize(*failing.GetContext().world) == before &&
                   !failing.GetProjectCodeError().empty(),
               "project callback failure stops and restores edit snapshot");
+        checkSessionCleanup(failing, failureHostEmitter);
         failing.shutdown();
     }
     Engine absent;

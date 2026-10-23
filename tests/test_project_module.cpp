@@ -1,5 +1,6 @@
 #include "tinyengine/project_sdk/build_info.h"
 #include "tinyengine/project_sdk/project_api.h"
+#include "tinyengine/project_sdk/project_gameplay_api.h"
 #include <cstddef>
 #include <cstring>
 
@@ -62,6 +63,22 @@ TinyProjectResult TINY_PROJECT_CALL Begin(void* p)
         h->find_entity(h->host_context, s->world, text("Player"), &s->player);
     lastHost = h;
     lastPlayer = s->player;
+    // Real runtime fixtures also exercise resources created before a failing begin callback.
+    const void* extension = nullptr;
+    if (h->query_interface && h->query_interface(h->host_context, text(TINY_PROJECT_GAMEPLAY_INTERFACE),
+                                                TINY_PROJECT_GAMEPLAY_VERSION, &extension) == TINY_PROJECT_OK)
+    {
+        const auto* gameplay = static_cast<const TinyProjectGameplayAPI*>(extension);
+        if (TINY_PROJECT_GAMEPLAY_HAS(gameplay, spawn_burst))
+            gameplay->spawn_burst(gameplay->host_context, {0, 0, -3}, {1, 1, 1, 1}, {1, 0, 0, 0}, 0.3f, 10.0f, 6);
+        if (TINY_PROJECT_GAMEPLAY_HAS(gameplay, ui_label))
+            gameplay->ui_label(gameplay->host_context, text("fixture.runtime"), text("Runtime"), {0, 0, 60, 20},
+                               {1, 1, 1, 1}, 18);
+        if (TINY_PROJECT_GAMEPLAY_HAS(gameplay, set_retro_post))
+            gameplay->set_retro_post(gameplay->host_context, 1, 6.0f, 8.0f);
+        if (TINY_PROJECT_GAMEPLAY_HAS(gameplay, set_mouse_capture))
+            gameplay->set_mouse_capture(gameplay->host_context, 1);
+    }
     return TINY_TEST_MODE == 7 ? TINY_PROJECT_FAILED : TINY_PROJECT_OK;
 }
 TinyProjectResult TINY_PROJECT_CALL Update(void* p, float dt)

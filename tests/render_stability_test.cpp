@@ -5,6 +5,7 @@
 #include "tinyengine/render/renderer.h"
 #include "tinyengine/render/sdl_gl_render_device.h"
 #include "tinyengine/resource/resource_manager.h"
+#include "tinyengine/ui/ui_system.h"
 #define SDL_MAIN_HANDLED
 #include <SDL.h>
 #include <SDL_opengl.h>
@@ -614,6 +615,55 @@ int main(int argc, char** argv)
     }
     std::cout << "Sloped history contributions: " << accumulatedSlopePixels << '\n';
     check(accumulatedSlopePixels > 30, "TAA accumulates valid sloped-surface history with real projection jitter");
+    // Pixel-art output uses a fixed sampling grid. Subpixel projection jitter must not
+    // turn a stationary edge into a different three-pixel block on every frame.
+    glDevice->setRetroPostProcess(true, 3.0f, 32.0f);
+    for (int frameIndex = 0; frameIndex < 48; ++frameIndex)
+        gpuRenderer.renderFrame(gpuWorld);
+    std::vector<unsigned char> previousRetro;
+    int unstableRetroPixels = 0;
+    for (int frameIndex = 0; frameIndex < 8; ++frameIndex)
+    {
+        gpuRenderer.renderFrame(gpuWorld);
+        glBindTexture(GL_TEXTURE_2D, static_cast<GLuint>(glDevice->getSceneColorTexture()));
+        glGetTexImage(GL_TEXTURE_2D, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
+        if (!previousRetro.empty())
+            for (std::size_t index = 0; index < pixels.size(); index += 4)
+                unstableRetroPixels += std::abs(int(pixels[index]) - int(previousRetro[index])) > 8;
+        previousRetro = pixels;
+    }
+    int offPaletteChannels = 0;
+    for (std::size_t index = 0; index < pixels.size(); index += 4)
+        for (int channel = 0; channel < 3; ++channel)
+        {
+            // 当前复古风格在色阶量化之后按屏幕行添加扫描线。
+            const int row = static_cast<int>(index / 4 / 256) % 3;
+            const float scanline = row < 1.5f ? 1.0f : 0.86f;
+            const float level = std::round(pixels[index + channel] * 32.0f / (255.0f * scanline));
+            offPaletteChannels +=
+                std::abs(pixels[index + channel] - level * 255.0f * scanline / 32.0f) > 1.0f;
+        }
+    check(offPaletteChannels == 0, "editor scene texture contains the final quantized pixel-art output");
+
+    UISystem overlayUi;
+    overlayUi.AddPanel("render.regression.hud", {10.0f, 10.0f, 20.0f, 20.0f}, {0.4f, 0.2f, 0.6f, 1.0f});
+    gpuRenderer.setUiSystem(&overlayUi);
+    gpuRenderer.renderFrame(gpuWorld);
+    glBindTexture(GL_TEXTURE_2D, static_cast<GLuint>(glDevice->getSceneColorTexture()));
+    glGetTexImage(GL_TEXTURE_2D, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
+    const std::size_t hudPixel = ((144 - 20) * 256 + 20) * 4;
+    check(std::abs(int(pixels[hudPixel]) - 102) < 2 &&
+              std::abs(int(pixels[hudPixel + 1]) - 51) < 2 &&
+              std::abs(int(pixels[hudPixel + 2]) - 153) < 2,
+          "runtime HUD is composited into the editor scene texture after pixelation");
+    gpuRenderer.setUiSystem(nullptr);
+    std::cout << "Stationary pixel-art source changes: " << unstableRetroPixels << '\n';
+    check(unstableRetroPixels == 0, "final pixel-art output stays stable with TAA enabled and a stationary camera");
+    glDevice->setRetroPostProcess(false, 3.0f, 32.0f);
+    gpuRenderer.renderFrame(gpuWorld);
+    const auto restoredJitter = gpuRenderer.GetFrameView().temporalJitter;
+    check(restoredJitter.x != 0.0f || restoredJitter.y != 0.0f,
+          "leaving pixel-art mode restores native TAA projection samples");
     glDevice->setTaaEnabled(false);
     gpuRenderer.setCameraOverride(true, {}, {});
     gpuWorld.clear();

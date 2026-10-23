@@ -7,6 +7,7 @@
 
 #include "tinyengine/math/math.h"
 
+#include <cstdint>
 #include <functional>
 #include <string>
 #include <unordered_map>
@@ -94,6 +95,8 @@ struct UIWidget
     std::function<void(const std::string&)> onTextChanged;
     std::function<void(int)> onSelectionChanged;
     std::function<void(float)> onValueChanged;
+    // Internal session ownership; a host replacement with the same id remains unowned.
+    std::uint64_t ownerToken = 0;
 };
 
 class UISystem

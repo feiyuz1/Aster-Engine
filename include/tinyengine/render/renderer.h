@@ -37,6 +37,7 @@ struct InputState
     float scale = 0.0f;
     float mouseX = 0.0f, mouseY = 0.0f;
     bool primaryAction = false;
+    bool primaryPressed = false;
     bool sprint = false;
     bool jump = false;
     bool quitRequested = false;
@@ -45,6 +46,11 @@ struct InputState
     bool uiBackspace = false;
     std::string textInput;
     float cursorX = 0.0f, cursorY = 0.0f;
+    // 原始键位快照与本帧按下沿。输入映射只覆盖引擎既有动作，游戏需要换弹、暂停这类
+    // 未映射按键时直接读 scancode；默认全为 false，后端不支持按键表时仍可运行。
+    static constexpr std::size_t kMaxScancodes = 512;
+    std::array<bool, kMaxScancodes> keysDown{};
+    std::array<bool, kMaxScancodes> keysPressed{};
 };
 
 enum class ViewportRenderMode
@@ -123,7 +129,9 @@ enum class PostProcessPass
     Gtao,
     Bloom,
     TemporalResolve,
-    ToneMap
+    ToneMap,
+    // 追加在尾部：既有枚举值保持稳定，旧后端即使不实现也不会错位。
+    Pixelate
 };
 
 // 渲染后端边界。所有方法都由渲染/主线程调用，具体后端拥有 GPU 资源和图形上下文。
@@ -153,6 +161,47 @@ class RenderDevice
     /// @brief 获取 `ViewportSize`。
     /// @return 返回接口计算或查询得到的结果。
     virtual Vec2 getViewportSize() const = 0;
+    // 独占鼠标（相对移动模式）由游戏在进入战斗时开启、暂停或退出时关闭。
+    // 默认实现不改变平台状态，无窗口后端因此可以忽略该请求。
+    /// @brief 设置是否独占鼠标。
+    /// @param captured 是否捕获鼠标。
+    virtual void setMouseCapture(bool captured)
+    {
+        (void)captured;
+    }
+    /// @brief 判断当前是否独占鼠标。
+    /// @return 捕获状态；默认实现返回 `false`。
+    virtual bool isMouseCaptured() const
+    {
+        return false;
+    }
+    /// @brief 开关复古像素化后处理通道。
+    /// @param enabled 是否启用。
+    /// @param blockSize 像素块边长（像素）。
+    /// @param colorLevels 每通道色阶数。
+    /// @note 默认实现忽略请求：无窗口后端不需要该通道，调用方应据 isRetroPostProcessEnabled 判断实际状态。
+    virtual void setRetroPostProcess(bool enabled, float blockSize, float colorLevels)
+    {
+        (void)enabled;
+        (void)blockSize;
+        (void)colorLevels;
+    }
+    /// @brief 判断像素化通道是否真的可用。
+    /// @return 默认实现返回 `false`。
+    virtual bool isRetroPostProcessEnabled() const
+    {
+        return false;
+    }
+    /// @brief 获取当前配置的像素块边长，单位为像素。
+    virtual float getRetroBlockSize() const
+    {
+        return 3.0f;
+    }
+    /// @brief 获取每通道色阶数量。
+    virtual float getRetroColorLevels() const
+    {
+        return 32.0f;
+    }
     virtual bool usesTemporalJitter() const
     {
         return false;
@@ -341,6 +390,21 @@ class Renderer
     /// @brief 获取 `Device`。
     /// @return 返回目标对象指针；对象不存在时返回 `nullptr`。
     RenderDevice* getDevice();
+    /// @brief 请求独占鼠标；设备缺失时静默忽略。
+    /// @param captured 是否捕获鼠标。
+    void setMouseCapture(bool captured);
+    /// @brief 判断当前是否独占鼠标。
+    /// @return 捕获状态；无设备时返回 `false`。
+    bool isMouseCaptured() const;
+    /// @brief 开关复古像素化后处理；设备不支持时静默忽略。
+    /// @param enabled 是否启用。
+    /// @param blockSize 像素块边长（像素）。
+    /// @param colorLevels 每通道色阶数。
+    void setRetroPostProcess(bool enabled, float blockSize, float colorLevels);
+    /// @brief 判断像素化通道在当前设备上是否生效。
+    bool isRetroPostProcessEnabled() const;
+    float getRetroBlockSize() const;
+    float getRetroColorLevels() const;
     /// @brief 设置 `OverlayCallback`。
     /// @param callback 满足条件时调用的回调函数。
     void setOverlayCallback(std::function<void()> callback);

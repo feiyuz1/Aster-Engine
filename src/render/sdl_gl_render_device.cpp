@@ -533,6 +533,33 @@ constexpr const char* kPresentFragmentShaderSource = R"GLSL(
             void main() { outColor = texture(uSceneColor, vUv); }
         )GLSL";
 
+// 复古像素化：块状采样 + 色阶量化 + 细扫描线。
+// 刻意只读取 LDR 最终画面，避免与 TAA/Bloom 的 HDR 历史缓冲耦合。
+constexpr const char* kRetroFragmentShaderSource = R"GLSL(
+            #version 330 core
+            in vec2 vUv;
+            uniform sampler2D uSceneColor;
+            uniform vec2 uResolution;
+            uniform float uBlockSize;
+            uniform float uColorLevels;
+            out vec4 outColor;
+            void main()
+            {
+                float block = max(1.0, uBlockSize);
+                // 对齐到块中心采样：块内所有像素取同一个源点，得到硬边像素块。
+                vec2 blocks = max(vec2(1.0), floor(uResolution / block + 0.5));
+                vec2 snapped = (floor(vUv * blocks) + 0.5) / blocks;
+                vec3 color = texture(uSceneColor, snapped).rgb;
+                // 色阶量化：四舍五入而不是截断，避免整体压暗一档。
+                float levels = max(2.0, uColorLevels);
+                color = floor(color * levels + 0.5) / levels;
+                // 扫描线只压暗每个像素块的上半行，保留块状结构不被糊掉。
+                float row = mod(floor(gl_FragCoord.y), block);
+                color *= (row < block * 0.5) ? 1.0 : 0.86;
+                outColor = vec4(color, 1.0);
+            }
+        )GLSL";
+
 constexpr const char* kGpuCullComputeShaderSource = R"GLSL(
             #version 430 core
             layout(local_size_x = 64) in;
@@ -829,7 +856,8 @@ struct SdlGlRenderDevice::Impl
     std::unique_ptr<GlMaterialProgramCache> materialPrograms;
     GLuint program = 0, shadowProgram = 0, skyProgram = 0, toneProgram = 0, presentProgram = 0, hzbProgram = 0,
            gtaoProgram = 0, gtaoFilterProgram = 0, bloomProgram = 0, taaProgram = 0, gpuCullProgram = 0, uiProgram = 0,
-           particleProgram = 0, gpuParticleProgram = 0, fullScreenVao = 0, particleInstanceBuffer = 0;
+           particleProgram = 0, gpuParticleProgram = 0, retroProgram = 0, fullScreenVao = 0,
+           particleInstanceBuffer = 0;
     GLuint uiVao = 0, uiVertexBuffer = 0, uiIndexBuffer = 0, fontAtlas = 0;
     struct Glyph
     {
@@ -844,7 +872,7 @@ struct SdlGlRenderDevice::Impl
 #endif
     GLuint sceneFramebuffer = 0, toneFramebuffer = 0, postFramebuffer = 0, sceneHdrColor = 0, sceneColor = 0,
            sceneDepth = 0, sceneVelocity = 0, sceneAmbient = 0, historyHdrColor = 0, gtaoTexture = 0,
-           gtaoRawTexture = 0;
+           gtaoRawTexture = 0, retroTexture = 0, retroFramebuffer = 0;
     std::vector<GLuint> hzbTextures;
     std::array<GLuint, 5> bloomTextures{};
     std::array<GLuint, 2> taaTextures{};
@@ -856,6 +884,10 @@ struct SdlGlRenderDevice::Impl
     float exposure = 1.0f;
     bool fxaaEnabled = true;
     bool bloomEnabled = true, gtaoEnabled = true, taaEnabled = true, historyValid = false;
+    // 像素化通道默认关闭：只有项目显式请求时才在渲染图里追加该 pass。
+    bool retroEnabled = false;
+    float retroBlockSize = 3.0f;
+    float retroColorLevels = 32.0f;
     bool indirectDrawSupported = false;
     bool computeCullingSupported = false;
     float maximumAnisotropy = 1.0f;
@@ -904,6 +936,7 @@ struct SdlGlRenderDevice::Impl
     std::array<GLint, 5> taaBloomLocations{};
     GLint toneResolvedLocation = -1;
     GLint presentSceneColorLocation = -1;
+    GLint retroSourceLocation = -1, retroResolutionLocation = -1, retroBlockLocation = -1, retroLevelsLocation = -1;
     GLint gpuCullPreviousViewProjectionLocation = -1, gpuCullInputCountLocation = -1, gpuCullHzbValidLocation = -1,
           gpuCullHzbCountLocation = -1;
     std::array<GLint, 12> gpuCullHzbLocations{};
@@ -1085,6 +1118,8 @@ struct SdlGlRenderDevice::Impl
             glDeleteTextures(1, &gtaoTexture);
         if (gtaoRawTexture)
             glDeleteTextures(1, &gtaoRawTexture);
+        if (retroTexture)
+            glDeleteTextures(1, &retroTexture);
         for (const GLuint texture : hzbTextures)
             if (texture)
                 glDeleteTextures(1, &texture);
@@ -1113,8 +1148,10 @@ struct SdlGlRenderDevice::Impl
             DeleteFramebuffers(1, &toneFramebuffer);
         if (postFramebuffer)
             DeleteFramebuffers(1, &postFramebuffer);
+        if (retroFramebuffer)
+            DeleteFramebuffers(1, &retroFramebuffer);
         sceneHdrColor = sceneColor = sceneDepth = sceneVelocity = sceneAmbient = historyHdrColor = gtaoTexture =
-            gtaoRawTexture = sceneFramebuffer = toneFramebuffer = postFramebuffer = 0;
+            gtaoRawTexture = retroTexture = sceneFramebuffer = toneFramebuffer = postFramebuffer = retroFramebuffer = 0;
         historyValid = false;
         temporalTextureIndex = 0;
         sceneWidth = sceneHeight = 0;
@@ -1169,6 +1206,18 @@ struct SdlGlRenderDevice::Impl
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
         FramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, sceneColor, 0);
+        complete = complete && CheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE;
+        // 像素化输出目标：与 sceneColor 同尺寸同格式，present 时按开关二选一。
+        GenFramebuffers(1, &retroFramebuffer);
+        BindFramebuffer(GL_FRAMEBUFFER, retroFramebuffer);
+        glGenTextures(1, &retroTexture);
+        glBindTexture(GL_TEXTURE_2D, retroTexture);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        FramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, retroTexture, 0);
         complete = complete && CheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE;
         GenFramebuffers(1, &postFramebuffer);
         const auto createTexture = [](GLuint& texture, const GLint internalFormat, const int textureWidth,
@@ -1634,6 +1683,7 @@ struct SdlGlRenderDevice::Impl
         skyProgram = createLinkedProgram(kToneVertexShaderSource, kSkyFragmentShaderSource);
         toneProgram = createLinkedProgram(kToneVertexShaderSource, kFinalToneFragmentShaderSource);
         presentProgram = createLinkedProgram(kToneVertexShaderSource, kPresentFragmentShaderSource);
+        retroProgram = createLinkedProgram(kToneVertexShaderSource, kRetroFragmentShaderSource);
         hzbProgram = createLinkedProgram(kToneVertexShaderSource, kHzbFragmentShaderSource);
         gtaoProgram = createLinkedProgram(kToneVertexShaderSource, kGtaoFragmentShaderSource);
         gtaoFilterProgram = createLinkedProgram(kToneVertexShaderSource, kGtaoFilterFragmentShaderSource);
@@ -1661,6 +1711,16 @@ struct SdlGlRenderDevice::Impl
         skyEnvironmentLocation = GetUniformLocation(skyProgram, "uEnvironmentSky");
         toneResolvedLocation = GetUniformLocation(toneProgram, "uResolved");
         presentSceneColorLocation = GetUniformLocation(presentProgram, "uSceneColor");
+        // 像素化程序缺失只禁用该通道，不让整个设备初始化失败。
+        if (retroProgram)
+        {
+            retroSourceLocation = GetUniformLocation(retroProgram, "uSceneColor");
+            retroResolutionLocation = GetUniformLocation(retroProgram, "uResolution");
+            retroBlockLocation = GetUniformLocation(retroProgram, "uBlockSize");
+            retroLevelsLocation = GetUniformLocation(retroProgram, "uColorLevels");
+        }
+        else
+            retroEnabled = false;
         exposureLocation = GetUniformLocation(toneProgram, "uExposure");
         inverseResolutionLocation = GetUniformLocation(toneProgram, "uInverseResolution");
         fxaaEnabledLocation = GetUniformLocation(toneProgram, "uFxaaEnabled");
@@ -2259,6 +2319,8 @@ bool SdlGlRenderDevice::pumpEvents()
     m_impl->input.uiBackspace = false;
     bool mousePressed = false;
     std::array<bool, SDL_NUM_SCANCODES> pressedThisFrame{};
+    // 按下沿单独记录并过滤系统按键重复，避免按住换弹/暂停键每帧反复触发。
+    std::array<bool, SDL_NUM_SCANCODES> pressedEdges{};
     int pressX = 0, pressY = 0;
     SDL_Event event{};
     while (SDL_PollEvent(&event))
@@ -2297,7 +2359,11 @@ bool SdlGlRenderDevice::pumpEvents()
             m_impl->input.textInput += event.text.text;
         if (event.type == SDL_KEYDOWN && event.key.keysym.scancode >= 0 &&
             event.key.keysym.scancode < SDL_NUM_SCANCODES)
+        {
             pressedThisFrame[static_cast<std::size_t>(event.key.keysym.scancode)] = true;
+            if (event.key.repeat == 0)
+                pressedEdges[static_cast<std::size_t>(event.key.keysym.scancode)] = true;
+        }
         if (event.type == SDL_KEYDOWN && event.key.keysym.scancode == SDL_SCANCODE_BACKSPACE && event.key.repeat == 0)
             m_impl->input.uiBackspace = true;
         if (event.type == SDL_CONTROLLERDEVICEADDED && !m_impl->controller)
@@ -2313,6 +2379,13 @@ bool SdlGlRenderDevice::pumpEvents()
     // 同一帧内按下又松开的短按也要交给游戏处理，持续按住仍以 SDL 当前状态为准。
     const auto down = [keys, &pressedThisFrame](SDL_Scancode code)
     { return keys[code] != 0 || pressedThisFrame[static_cast<std::size_t>(code)]; };
+    // 逐键快照供游戏读取未映射按键；容量不足时只填充前缀，其余保持 false。
+    const auto packedScancodes = std::min<std::size_t>(InputState::kMaxScancodes, SDL_NUM_SCANCODES);
+    for (std::size_t index = 0; index < packedScancodes; ++index)
+    {
+        m_impl->input.keysDown[index] = keys[index] != 0;
+        m_impl->input.keysPressed[index] = pressedEdges[index];
+    }
     const auto axis = [&down](SDL_Scancode negative, SDL_Scancode positive)
     { return (down(positive) ? 1.0f : 0.0f) - (down(negative) ? 1.0f : 0.0f); };
     m_impl->input.moveX = axis(SDL_SCANCODE_A, SDL_SCANCODE_D);
@@ -2326,6 +2399,7 @@ bool SdlGlRenderDevice::pumpEvents()
     m_impl->input.jump = down(SDL_SCANCODE_SPACE);
     m_impl->input.primaryAction =
         mousePressed || (SDL_GetMouseState(nullptr, nullptr) & SDL_BUTTON(SDL_BUTTON_LEFT)) != 0;
+    m_impl->input.primaryPressed = mousePressed;
     int cursorX = 0, cursorY = 0;
     SDL_GetMouseState(&cursorX, &cursorY);
     if (mousePressed)
@@ -2408,9 +2482,47 @@ void SdlGlRenderDevice::setEscapeQuits(const bool enabled)
 {
     m_escapeQuits = enabled;
 }
+// 相对鼠标模式只在有窗口时生效；SDL 会把光标锁在窗口内并持续给出 xrel/yrel。
+void SdlGlRenderDevice::setMouseCapture(const bool captured)
+{
+    if (!m_impl || !m_impl->window)
+        return;
+    if (SDL_SetRelativeMouseMode(captured ? SDL_TRUE : SDL_FALSE) != 0)
+        return;
+    SDL_ShowCursor(captured ? SDL_DISABLE : SDL_ENABLE);
+}
+bool SdlGlRenderDevice::isMouseCaptured() const
+{
+    return m_impl && m_impl->window && SDL_GetRelativeMouseMode() == SDL_TRUE;
+}
+void SdlGlRenderDevice::setRetroPostProcess(const bool enabled, const float blockSize, const float colorLevels)
+{
+    if (!m_impl)
+        return;
+    // 参数在这里夹紧而不是信任调用方：块尺寸 0 会退化成逐像素采样，色阶 0 会全黑。
+    m_impl->retroBlockSize = std::clamp(blockSize, 1.0f, 16.0f);
+    m_impl->retroColorLevels = std::clamp(colorLevels, 2.0f, 256.0f);
+    const bool retroEnabled = enabled && m_impl->retroProgram != 0;
+    if (retroEnabled != m_impl->retroEnabled)
+        m_impl->historyValid = false;
+    m_impl->retroEnabled = retroEnabled;
+}
+bool SdlGlRenderDevice::isRetroPostProcessEnabled() const
+{
+    return m_impl && m_impl->retroEnabled && m_impl->retroProgram != 0;
+}
 float SdlGlRenderDevice::getDpiScale() const
 {
     return m_dpiScale;
+}
+
+float SdlGlRenderDevice::getRetroBlockSize() const
+{
+    return m_impl ? m_impl->retroBlockSize : 3.0f;
+}
+float SdlGlRenderDevice::getRetroColorLevels() const
+{
+    return m_impl ? m_impl->retroColorLevels : 32.0f;
 }
 
 void SdlGlRenderDevice::beginShadowPass(const FrameView& view, const std::size_t cascadeIndex)
@@ -3211,6 +3323,20 @@ void SdlGlRenderDevice::executePostProcess(const PostProcessPass pass)
         m_impl->Uniform1i(m_impl->fxaaEnabledLocation, m_impl->fxaaEnabled ? 1 : 0);
         glDrawArrays(GL_TRIANGLES, 0, 3);
     }
+    else if (pass == PostProcessPass::Pixelate)
+    {
+        // 独立通道：读 ToneMap 结果写 retroTexture，present 时按开关选源。
+        if (!m_impl->retroProgram || !m_impl->retroFramebuffer || !m_impl->retroTexture)
+            return;
+        attach(m_impl->retroTexture, m_impl->sceneWidth, m_impl->sceneHeight, m_impl->retroFramebuffer);
+        m_impl->UseProgram(m_impl->retroProgram);
+        bindTexture(0, m_impl->sceneColor, m_impl->retroSourceLocation);
+        m_impl->Uniform2f(m_impl->retroResolutionLocation, static_cast<float>(m_impl->sceneWidth),
+                          static_cast<float>(m_impl->sceneHeight));
+        m_impl->Uniform1f(m_impl->retroBlockLocation, m_impl->retroBlockSize);
+        m_impl->Uniform1f(m_impl->retroLevelsLocation, m_impl->retroColorLevels);
+        glDrawArrays(GL_TRIANGLES, 0, 3);
+    }
     m_impl->BindVertexArray(0);
     m_impl->ActiveTexture(GL_TEXTURE0);
     glEnable(GL_CULL_FACE);
@@ -3242,7 +3368,9 @@ void SdlGlRenderDevice::endFrame()
         glDisable(GL_CULL_FACE);
         m_impl->UseProgram(m_impl->presentProgram);
         m_impl->ActiveTexture(GL_TEXTURE0);
-        glBindTexture(GL_TEXTURE_2D, m_impl->sceneColor);
+        // 与编辑器读取相同的最终输出，UI 已在后处理之后合成。
+        glBindTexture(GL_TEXTURE_2D,
+                      m_impl->retroEnabled && m_impl->retroTexture ? m_impl->retroTexture : m_impl->sceneColor);
         m_impl->Uniform1i(m_impl->presentSceneColorLocation, 0);
         m_impl->BindVertexArray(m_impl->fullScreenVao);
         glDrawArrays(GL_TRIANGLES, 0, 3);
@@ -3260,9 +3388,16 @@ void SdlGlRenderDevice::drawUi(const std::vector<UIDrawCommand>& commands)
     {
         width = m_impl->sceneWidth;
         height = m_impl->sceneHeight;
+        const GLuint target = m_impl->retroEnabled && m_impl->retroTexture
+                                  ? m_impl->retroFramebuffer : m_impl->toneFramebuffer;
+        m_impl->BindFramebuffer(GL_FRAMEBUFFER, target);
     }
     else
+    {
+        m_impl->BindFramebuffer(GL_FRAMEBUFFER, 0);
         SDL_GL_GetDrawableSize(m_impl->window, &width, &height);
+    }
+    glViewport(0, 0, width, height);
     glDisable(GL_DEPTH_TEST);
     // UI 坐标向下递增，三角形朝向与 3D 剔除约定相反，因此绘制时关闭背面剔除。
     glDisable(GL_CULL_FACE);
@@ -3421,7 +3556,10 @@ bool SdlGlRenderDevice::resizeSceneRenderTarget(const int width, const int heigh
 }
 std::uintptr_t SdlGlRenderDevice::getSceneColorTexture() const
 {
-    return m_impl ? static_cast<std::uintptr_t>(m_impl->sceneColor) : 0;
+    if (!m_impl)
+        return 0;
+    return static_cast<std::uintptr_t>(m_impl->retroEnabled && m_impl->retroTexture
+                                          ? m_impl->retroTexture : m_impl->sceneColor);
 }
 std::uintptr_t SdlGlRenderDevice::getUiTexture(const std::string& path)
 {

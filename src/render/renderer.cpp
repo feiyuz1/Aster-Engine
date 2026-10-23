@@ -582,6 +582,16 @@ void Renderer::renderFrame(World& world)
                            }});
     m_renderGraph.addPass(
         {"Tone Map", {resolved}, {output}, [&] { m_device->executePostProcess(PostProcessPass::ToneMap); }, true});
+    // 复古像素化作为独立通道追加在 ToneMap 之后：只影响最终 LDR 画面，
+    // 不参与 TAA/Bloom 的历史缓冲，因此可以在运行时任意开关而不产生重影。
+    if (m_device->isRetroPostProcessEnabled())
+    {
+        const auto retroOutput = m_renderGraph.importResource({RenderGraphResourceType::Texture, "RetroOutput",
+                                                               static_cast<std::uint32_t>(viewport.x),
+                                                               static_cast<std::uint32_t>(viewport.y), 1, 7});
+        m_renderGraph.addPass({"Retro Pixelate", {output}, {retroOutput},
+                               [&] { m_device->executePostProcess(PostProcessPass::Pixelate); }, true});
+    }
     const auto drawRuntimeUi = [&]
     {
         if (m_uiSystem)
@@ -597,16 +607,17 @@ void Renderer::renderFrame(World& world)
             m_logger->error(graphError);
         // 失败帧也必须完成 ImGui 帧和 Present：跳过会让按键/点击的边沿状态跨帧丢失，出现丢键与粘滞。
         // EndFrame 会把目标切回窗口默认帧缓冲并清屏，编辑器 overlay 在其上绘制控制台错误信息。
-        m_device->endFrame();
         drawRuntimeUi();
+        m_device->endFrame();
         if (m_overlayCallback)
             m_overlayCallback();
         m_device->present();
         return;
     }
     const auto shadowEnd = std::chrono::steady_clock::now();
-    m_device->endFrame();
+    // 将运行时 UI 叠加到最终场景纹理，随后统一呈现给独立窗口或编辑器。
     drawRuntimeUi();
+    m_device->endFrame();
     if (m_overlayCallback)
         m_overlayCallback();
     m_device->present();
@@ -637,6 +648,32 @@ const FrameView& Renderer::GetFrameView() const
 RenderDevice* Renderer::getDevice()
 {
     return m_device.get();
+}
+void Renderer::setMouseCapture(const bool captured)
+{
+    if (m_device)
+        m_device->setMouseCapture(captured);
+}
+bool Renderer::isMouseCaptured() const
+{
+    return m_device && m_device->isMouseCaptured();
+}
+void Renderer::setRetroPostProcess(const bool enabled, const float blockSize, const float colorLevels)
+{
+    if (m_device)
+        m_device->setRetroPostProcess(enabled, blockSize, colorLevels);
+}
+bool Renderer::isRetroPostProcessEnabled() const
+{
+    return m_device && m_device->isRetroPostProcessEnabled();
+}
+float Renderer::getRetroBlockSize() const
+{
+    return m_device ? m_device->getRetroBlockSize() : 3.0f;
+}
+float Renderer::getRetroColorLevels() const
+{
+    return m_device ? m_device->getRetroColorLevels() : 32.0f;
 }
 void Renderer::setOverlayCallback(std::function<void()> callback)
 {

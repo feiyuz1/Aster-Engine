@@ -96,6 +96,8 @@ bool Engine::initialize(const std::filesystem::path& projectFile, const bool sta
     m_world.addListener(this);
     m_world.initialize();
     m_gameplay.initialize(&m_world, &m_inputSystem, &m_physicsWorld);
+    // 玩法扩展表在 bridge 构造时已经生成，这里只注入它需要的运行时服务。
+    m_projectBridge.setServices(&m_physicsWorld, &m_uiSystem, &m_vfxSystem, &m_audioEngine, &m_renderer);
     m_renderer.setLogger(&m_logger);
     m_renderer.setResourceManager(&m_resourceManager);
     m_renderer.setUiSystem(&m_uiSystem);
@@ -112,8 +114,12 @@ bool Engine::initialize(const std::filesystem::path& projectFile, const bool sta
         return false;
     }
     if (auto* device = dynamic_cast<SdlGlRenderDevice*>(m_renderer.getDevice()))
+    {
+        // Project code owns gameplay keys such as Escape; SDL_QUIT still closes the standalone host.
+        device->setEscapeQuits(!m_useProjectCode);
         m_inputSystem.setHapticCallback([device](const float low, const float high, const std::uint32_t milliseconds)
                                         { return device->rumbleController(low, high, milliseconds); });
+    }
     m_audioEngine.initialize(&m_logger);
     m_scriptEngine.initialize(&m_logger);
     auto& console = m_diagnostics.GetConsole();
@@ -269,6 +275,7 @@ void Engine::shutdown()
     m_gameplay.shutdown();
     m_vfxSystem.clear();
     m_audioEngine.shutdown();
+    m_renderer.setMouseCapture(false);
     m_renderer.shutdown();
     m_physicsWorld.clear();
     m_world.shutdown();
@@ -363,6 +370,8 @@ bool Engine::exitPlayMode()
 {
     if (!m_initialized || !m_playing)
         return false;
+    // 退出运行态必须松开鼠标捕获，否则编辑器与独立游戏都会停在无光标状态。
+    m_renderer.setMouseCapture(false);
     if (m_useProjectCode)
         m_projectModuleHost->endPlay();
     m_scriptEngine.clearInstances();
@@ -454,6 +463,7 @@ void Engine::Tick(const float rawDeltaTime)
             m_gameInstance->onUpdate(deltaTime);
         m_world.Update(deltaTime);
         m_vfxSystem.Update(deltaTime);
+        m_projectBridge.update(deltaTime);
         const float fixedStep = m_projectSettings.fixedStep;
         m_fixedAccumulator = std::min(m_fixedAccumulator + deltaTime, 0.25f);
         while (m_fixedAccumulator >= fixedStep)
