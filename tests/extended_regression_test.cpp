@@ -690,11 +690,14 @@ int main()
                                                    PostProcessPass::Bloom, PostProcessPass::TemporalResolve,
                                                    PostProcessPass::ToneMap}));
     report.check("Rendering", "Runtime UI draw list reaches render backend", probePointer->uiCommands == 1);
-    report.check("Rendering", "runtime UI is drawn after final scene presentation",
+    // Runtime UI is composited into the final scene texture: after the post chain (so bloom/TAA never
+    // touch it) and before EndFrame (so the standalone window and the editor viewport read the same
+    // texture and both show the HUD).
+    report.check("Rendering", "runtime UI is composited after post-processing and before presentation",
                  probePointer->events.size() >= 3 &&
                      probePointer->events[probePointer->events.size() - 3] == "postprocess" &&
-                     probePointer->events[probePointer->events.size() - 2] == "end-frame" &&
-                     probePointer->events[probePointer->events.size() - 1] == "ui");
+                     probePointer->events[probePointer->events.size() - 2] == "ui" &&
+                     probePointer->events[probePointer->events.size() - 1] == "end-frame");
     report.check("Rendering", "Forward+ cluster grid is populated",
                  probePointer->lastView.clusteredLights.getClusterCount() == 16 * 9 * 24 &&
                      !probePointer->lastView.clusteredLights.lightIndices.empty());
