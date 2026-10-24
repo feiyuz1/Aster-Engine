@@ -73,7 +73,11 @@ struct Fixture
                   "Development.sdkBuildId=" + project_sdk::getSdkBuildId() + "\n" +
                   "Development.library=Binaries/Development/Game.dll\nDevelopment.pdb=\n" +
                   "Development.buildId=build-1\nDevelopment.sourceFingerprint=source-1\n" +
-                  "Development.schemaHash=none\nDevelopment.dependencies.count=0\n" + extra);
+                  "Development.schemaHash=none\nDevelopment.dependencies.count=0\n" +
+                  "Shipping.sdkBuildId=" + project_sdk::getSdkBuildId() + "\n" +
+                  "Shipping.library=Binaries/Development/Game.dll\nShipping.pdb=\n" +
+                  "Shipping.buildId=build-1\nShipping.sourceFingerprint=source-1\n" +
+                  "Shipping.schemaHash=none\nShipping.dependencies.count=0\n" + extra);
     }
     ProjectSettings settings() const
     {
@@ -213,6 +217,13 @@ void TINY_PROJECT_CALL RecordEvent(void* context, uint32_t, TinyProjectString te
 {
     static_cast<std::vector<std::string>*>(context)->emplace_back(text.data, static_cast<size_t>(text.size));
 }
+constexpr ProjectCodeProfile kBinaryProfile =
+#ifdef NDEBUG
+    ProjectCodeProfile::Shipping;
+#else
+    ProjectCodeProfile::Development;
+#endif
+
 void loaderTests()
 {
     Fixture f;
@@ -224,8 +235,7 @@ void loaderTests()
     api.log = &RecordEvent;
     ProjectModuleSelection selection;
     std::string error;
-    check(loadProjectModuleSelection(f.settings(), ProjectCodeProfile::Development, selection, &error),
-          "loader fixture manifest");
+    check(loadProjectModuleSelection(f.settings(), kBinaryProfile, selection, &error), "loader fixture manifest");
     const auto put = [&](const fs::path& source)
     { fs::copy_file(source, selection.libraryPath, fs::copy_options::overwrite_existing); };
     put(fromUtf8Path(TINY_TEST_PROJECT_VALID));
@@ -294,8 +304,7 @@ void sessionTests()
     Fixture f;
     ProjectModuleSelection selection;
     std::string error;
-    check(loadProjectModuleSelection(f.settings(), ProjectCodeProfile::Development, selection, &error),
-          "session fixture manifest");
+    check(loadProjectModuleSelection(f.settings(), kBinaryProfile, selection, &error), "session fixture manifest");
     std::vector<std::string> events;
     TinyProjectHostAPI api{};
     api.abi_version = 1;

@@ -209,12 +209,16 @@ std::shared_ptr<const MaterialRenderProxy> MaterialSystem::BuildProxy(const std:
             }
         }
     }
-    if (resolved->definition->sourcePath == "builtin:PBR")
+    {
         for (const auto& entry : std::map<std::string, std::string>{{"PackedEnabled", "PackedMap"},
                                                                     {"MetallicMapEnabled", "MetallicMap"},
                                                                     {"RoughnessMapEnabled", "RoughnessMap"},
                                                                     {"AOMapEnabled", "AOMap"}})
-            values[entry.first] = std::get<std::string>(values.at(entry.second)).empty() ? 0.f : 1.f;
+            if (values.count(entry.first) && values.count(entry.second) &&
+                std::holds_alternative<float>(values.at(entry.first)) &&
+                std::holds_alternative<std::string>(values.at(entry.second)))
+                values[entry.first] = std::get<std::string>(values.at(entry.second)).empty() ? 0.f : 1.f;
+    }
     std::ostringstream identity;
     identity << std::setprecision(std::numeric_limits<float>::max_digits10);
     identity << compiled->canonicalProgramContent << '\n'
@@ -283,7 +287,7 @@ MaterialSystem::LoadDefinition(const std::string& path, std::vector<MaterialDiag
         {
             definition = std::make_shared<MaterialDefinitionData>();
             std::string error;
-            if (!definition->graph.parse(source->second, &error) || !definition->graph.upgradeLegacy())
+            if (!definition->graph.parse(source->second, &error))
             {
                 appendMaterialError(diagnostics, path, error);
                 return {};
@@ -311,7 +315,20 @@ std::shared_ptr<ResolvedMaterial> MaterialSystem::ResolveRecursive(const std::st
                                                                    std::vector<MaterialDiagnostic>& diagnostics)
 {
     m_resolutionTrace.push_back(path);
-    if (path == "builtin:PBR" || fromUtf8Path(path).extension() == ".matgraph")
+    MaterialAssetData data;
+    if (path != "builtin:PBR")
+    {
+        const auto draft = m_candidateSources.find(path);
+        const auto source =
+            draft == m_candidateSources.end() ? PlatformFile::readAllText(fromUtf8Path(path)) : draft->second;
+        std::string error;
+        if (fromUtf8Path(path).extension() != ".mat" || !parseMaterialAsset(source, data, error))
+        {
+            appendMaterialError(diagnostics, path, error.empty() ? "Material requires a .mat file" : error);
+            return {};
+        }
+    }
+    if (path == "builtin:PBR" || data.graph)
     {
         auto definition = LoadDefinition(path, diagnostics);
         if (!definition)
@@ -347,135 +364,7 @@ std::shared_ptr<ResolvedMaterial> MaterialSystem::ResolveRecursive(const std::st
             chain.pop_back();
         }
     } pop{chain};
-    const auto draft = m_candidateSources.find(path);
-    const auto source =
-        draft == m_candidateSources.end() ? PlatformFile::readAllText(fromUtf8Path(path)) : draft->second;
-    if (source.empty())
-    {
-        appendMaterialError(diagnostics, path, "Material file not found: " + path);
-        return {};
-    }
-    std::istringstream headerStream(source);
-    std::string header;
-    headerStream >> header;
-    if (header != "TINY_MAT")
-    {
-        MaterialResource legacy;
-        if (!legacy.loadWithResolver(
-                path,
-                [this](const auto& reference, const auto& owner)
-                { return m_resources.resolveAssetPath(reference, owner); },
-                33 - chain.size(),
-                [this](const auto& p)
-                {
-                    const auto found = m_candidateSources.find(p);
-                    return found == m_candidateSources.end() ? PlatformFile::readAllText(fromUtf8Path(p))
-                                                             : found->second;
-                }))
-        {
-            appendMaterialError(diagnostics, path, legacy.getError());
-            return {};
-        }
-        auto definition = std::make_shared<MaterialDefinitionData>(*LoadDefinition("builtin:PBR", diagnostics));
-        const auto& old = legacy.GetMaterialData().legacyData;
-        definition->renderState.blendMode = old.transparent ? MaterialBlendMode::Alpha : MaterialBlendMode::Opaque;
-        definition->graph.GetRenderState() = definition->renderState;
-        auto resolved = std::make_shared<ResolvedMaterial>();
-        resolved->definition = definition;
-        std::map<std::string, MaterialParameterValue> values = {
-            {"BaseColor", old.baseColor},
-            {"Metallic", old.metallic},
-            {"Roughness", old.roughness},
-            {"Emissive", old.emissive},
-            {"BaseMap", old.texturePath},
-            {"NormalMap", old.normalTexturePath},
-            {"MetallicMap", old.metallicTexturePath},
-            {"RoughnessMap", old.roughnessTexturePath},
-            {"AOMap", old.aoTexturePath},
-            {"EmissiveMap", old.emissiveTexturePath},
-            {"PackedMap", old.packedTexturePath},
-            {"PackedEnabled", old.packedTexturePath.empty() ? 0.f : 1.f},
-            {"MetallicMapEnabled", old.metallicTexturePath.empty() ? 0.f : 1.f},
-            {"RoughnessMapEnabled", old.roughnessTexturePath.empty() ? 0.f : 1.f},
-            {"AOMapEnabled", old.aoTexturePath.empty() ? 0.f : 1.f},
-            {"PackedLayout", old.packedTextureLayout == "RMA" ? 1.f : 0.f}};
-        for (const auto& p : definition->parameters)
-        {
-            const auto found = values.find(p.name);
-            resolved->values.push_back(found == values.end() ? p.defaultValue : found->second);
-        }
-        if (!legacy.GetParentPath().empty())
-        {
-            const auto parentPath = m_resources.resolveAssetPath(legacy.GetParentPath(), path);
-            auto parent = ResolveRecursive(parentPath, chain, diagnostics);
-            if (!parent)
-                return {};
-            *resolved = *parent;
-            resolved->dependencies.push_back(parentPath);
-            std::unordered_set<std::string> written;
-            std::istringstream lines(source);
-            std::string line;
-            while (std::getline(lines, line))
-            {
-                std::istringstream fields(line);
-                std::string field;
-                if (fields >> field)
-                    written.insert(field);
-            }
-            const auto enabled = [&](const std::string& field)
-            {
-                const auto flag = old.overrideFlags.find(field);
-                return written.count(field) && (flag == old.overrideFlags.end() || flag->second);
-            };
-            const std::map<std::string, std::string> fields = {{"BaseColor", "color"},
-                                                               {"Metallic", "metallic"},
-                                                               {"Roughness", "roughness"},
-                                                               {"Emissive", "emissive"},
-                                                               {"BaseMap", "texture"},
-                                                               {"NormalMap", "normalTexture"},
-                                                               {"MetallicMap", "metallicTexture"},
-                                                               {"RoughnessMap", "roughnessTexture"},
-                                                               {"AOMap", "aoTexture"},
-                                                               {"EmissiveMap", "emissiveTexture"},
-                                                               {"PackedMap", "packedTexture"},
-                                                               {"PackedLayout", "packedLayout"}};
-            for (std::size_t i = 0; i < resolved->definition->parameters.size(); ++i)
-            {
-                const auto& declaration = resolved->definition->parameters[i];
-                const auto field = fields.find(declaration.name);
-                const auto value = values.find(declaration.name);
-                if (field != fields.end() && value != values.end() && enabled(field->second) &&
-                    declaration.type == getMaterialParameterType(value->second))
-                    resolved->values[i] = value->second;
-            }
-            if (enabled("shader"))
-                resolved->legacyShaderPath = old.shaderPath;
-            for (const auto& entry : old.parameters)
-                resolved->legacyParameters[entry.first] = entry.second;
-            if (enabled("blend") || (enabled("color") && old.baseColor.w < 1))
-            {
-                auto adjusted = std::make_shared<MaterialDefinitionData>(*resolved->definition);
-                adjusted->renderState.blendMode =
-                    old.transparent ? MaterialBlendMode::Alpha : MaterialBlendMode::Opaque;
-                adjusted->graph.GetRenderState() = adjusted->renderState;
-                resolved->definition = adjusted;
-            }
-        }
-        else
-        {
-            resolved->legacyShaderPath = old.shaderPath;
-            resolved->legacyParameters = old.parameters;
-        }
-        return resolved;
-    }
-    MaterialAssetData data;
-    std::string error;
-    if (!parseMaterialAsset(source, data, error))
-    {
-        appendMaterialError(diagnostics, path, error);
-        return {};
-    }
-    const auto reference = !data.parentPath.empty() ? data.parentPath : data.definitionPath;
+    const auto& reference = data.parentPath;
     const auto parentPath = m_resources.resolveAssetPath(reference, path);
     auto parent = ResolveRecursive(parentPath, chain, diagnostics);
     if (!parent)
@@ -553,7 +442,7 @@ MaterialReloadResult MaterialSystem::publishCandidate(const std::string& path, c
         expanded = false;
         for (const auto& asset : registered)
         {
-            if (asset.type != "Material" && asset.type != "MaterialGraph")
+            if (asset.type != "Material")
                 continue;
             const auto dependent = m_resources.resolveAssetPath(asset.path);
             if (closure.count(identity(dependent)))

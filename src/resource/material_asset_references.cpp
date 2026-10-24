@@ -27,77 +27,37 @@ std::string resolveMaterialReference(const std::string& reference, const std::fi
 }
 namespace
 {
-bool legacyReferenceField(const std::string& key)
+template <class Visitor> bool visitReferences(std::string& source, Visitor visitor, bool write)
 {
-    return key == "parent" || key == "shader" || key == "texture" || key == "normalTexture" ||
-           key == "metallicTexture" || key == "roughnessTexture" || key == "aoTexture" || key == "emissiveTexture" ||
-           key == "packedTexture";
-}
-template <class Visitor> bool visitReferences(std::string& source, bool graph, Visitor visitor, bool write)
-{
-    if (graph)
-    {
-        MaterialGraph parsed;
-        if (!parsed.parse(source))
-            return false;
-        bool changed = false;
-        for (auto& p : parsed.GetParameters())
-            if (auto* path = std::get_if<std::string>(&p.defaultValue))
-                changed = visitor(*path) || changed;
-        for (auto& n : parsed.GetNodes())
-            if (n.type == MaterialNodeType::Texture)
-                changed = visitor(n.texturePath) || changed;
-        if (changed && write)
-            source = parsed.serialize();
-        return changed;
-    }
-    std::istringstream header(source);
-    std::string first;
-    header >> first;
-    if (first == "TINY_MAT")
-    {
-        MaterialAssetData parsed;
-        std::string error;
-        if (!parseMaterialAsset(source, parsed, error))
-            return false;
-        bool changed = visitor(parsed.parentPath);
-        changed = visitor(parsed.definitionPath) || changed;
-        for (auto& p : parsed.overrides)
-            if (auto* path = std::get_if<std::string>(&p.second))
-                changed = visitor(*path) || changed;
-        if (changed && write)
-            source = serializeMaterialAsset(parsed);
-        return changed;
-    }
-    std::istringstream input(source);
-    std::ostringstream output;
-    std::string line;
+    MaterialAssetData parsed;
+    std::string error;
+    if (!parseMaterialAsset(source, parsed, error))
+        return false;
     bool changed = false;
-    while (std::getline(input, line))
+    if (parsed.graph)
     {
-        std::istringstream fields(line);
-        std::string key, reference;
-        fields >> key;
-        if (legacyReferenceField(key) && (fields >> std::quoted(reference)) && visitor(reference))
-        {
-            std::ostringstream replacement;
-            replacement << key << ' ' << std::quoted(reference);
-            line = replacement.str();
-            changed = true;
-        }
-        output << line << '\n';
+        for (auto& parameter : parsed.graph->GetParameters())
+            if (auto* path = std::get_if<std::string>(&parameter.defaultValue))
+                changed = visitor(*path) || changed;
+    }
+    else
+    {
+        changed = visitor(parsed.parentPath);
+        for (auto& entry : parsed.overrides)
+            if (auto* path = std::get_if<std::string>(&entry.second))
+                changed = visitor(*path) || changed;
     }
     if (changed && write)
-        source = output.str();
+        source = serializeMaterialAsset(parsed);
     return changed;
 }
 } // namespace
-std::vector<std::string> CollectMaterialReferences(const std::string& source, bool graph)
+std::vector<std::string> CollectMaterialReferences(const std::string& source)
 {
     std::string copy = source;
     std::vector<std::string> references;
     visitReferences(
-        copy, graph,
+        copy,
         [&](std::string& path)
         {
             if (!path.empty() && path != "builtin:PBR" &&
@@ -108,28 +68,17 @@ std::vector<std::string> CollectMaterialReferences(const std::string& source, bo
         false);
     return references;
 }
-bool rewriteMaterialReferences(std::string& source, bool graph, const std::filesystem::path& owner,
+bool rewriteMaterialReferences(std::string& source, const std::filesystem::path& owner,
                                const std::filesystem::path& newOwner, const std::filesystem::path& assetRoot,
                                const std::string& oldPath, const std::string& newPath)
 {
-    std::istringstream header(source);
-    std::string first;
-    header >> first;
-    const bool legacy = !graph && first != "TINY_MAT";
     return visitReferences(
-        source, graph,
+        source,
         [&](std::string& path)
         {
             if (path.empty() || path == "builtin:PBR")
                 return false;
             auto resolved = resolveMaterialReference(path, owner, assetRoot);
-            const bool directLegacy = legacy && std::filesystem::absolute(fromUtf8Path(path)).lexically_normal() ==
-                                                    std::filesystem::absolute(fromUtf8Path(oldPath)).lexically_normal();
-            if (directLegacy)
-            {
-                path = newPath;
-                return true;
-            }
             if (std::filesystem::absolute(fromUtf8Path(resolved)).lexically_normal() ==
                 std::filesystem::absolute(fromUtf8Path(oldPath)).lexically_normal())
                 resolved = newPath;

@@ -83,9 +83,9 @@ bool MaterialGraph::parse(const std::string& source, std::string* error)
         return false;
     };
     std::istringstream input(source);
-    std::string signature;
+    std::string signature, kind;
     int version = 0;
-    if (!(input >> signature >> version) || signature != "TINY_MATGRAPH" || (version != 1 && version != 2))
+    if (!(input >> signature >> version >> kind) || signature != "TINY_MAT" || version != 3 || kind != "graph")
         return fail("Unsupported material graph version");
     MaterialGraph candidate;
     candidate.m_formatVersion = version;
@@ -110,7 +110,7 @@ bool MaterialGraph::parse(const std::string& source, std::string* error)
         if (!(fields >> token) || token[0] == '#')
             continue;
         bool valid = true;
-        if (token == "settings" && version == 2)
+        if (token == "settings" && version == 3)
         {
             std::string shading, blend;
             int sided = 0;
@@ -128,7 +128,7 @@ bool MaterialGraph::parse(const std::string& source, std::string* error)
             candidate.m_renderState.twoSided = sided != 0;
             haveSettings = true;
         }
-        else if (token == "parameter" && version == 2)
+        else if (token == "parameter" && version == 3)
         {
             MaterialParameterDecl declaration;
             std::string type, sampling;
@@ -145,7 +145,7 @@ bool MaterialGraph::parse(const std::string& source, std::string* error)
             if (valid)
                 candidate.m_parameters.push_back(std::move(declaration));
         }
-        else if (token == "parameter_meta" && version == 2)
+        else if (token == "parameter_meta" && version == 3)
         {
             std::string name;
             Meta meta;
@@ -162,26 +162,13 @@ bool MaterialGraph::parse(const std::string& source, std::string* error)
         else if (token == "node")
         {
             MaterialNode node;
-            if (version == 1)
-            {
-                int type = 0;
-                valid = static_cast<bool>(fields >> node.id >> type >> std::quoted(node.name) >> node.position.x >>
-                                          node.position.y >> node.value.x >> node.value.y >> node.value.z >>
-                                          node.value.w >> std::quoted(node.texturePath)) &&
-                        type >= 0 && type <= 4;
-                node.type = static_cast<MaterialNodeType>(type);
-            }
-            else
-            {
-                std::string type, constantType;
-                valid = static_cast<bool>(fields >> node.id >> type >> std::quoted(node.name) >> node.position.x >>
-                                          node.position.y >> constantType >> node.value.x >> node.value.y >>
-                                          node.value.z >> node.value.w >> std::quoted(node.parameterName) >>
-                                          std::quoted(node.channelMask)) &&
-                        parseMaterialNodeType(type, node.type) &&
-                        parseMaterialParameterType(constantType, node.constantType) &&
-                        node.constantType != MaterialParameterType::Texture2D && node.type != MaterialNodeType::Texture;
-            }
+            std::string type, constantType;
+            valid =
+                static_cast<bool>(fields >> node.id >> type >> std::quoted(node.name) >> node.position.x >>
+                                  node.position.y >> constantType >> node.value.x >> node.value.y >> node.value.z >>
+                                  node.value.w >> std::quoted(node.parameterName) >> std::quoted(node.channelMask)) &&
+                parseMaterialNodeType(type, node.type) && parseMaterialParameterType(constantType, node.constantType) &&
+                node.constantType != MaterialParameterType::Texture2D && node.type != MaterialNodeType::Texture;
             valid = valid && node.id != 0 && node.id != std::numeric_limits<std::uint32_t>::max() &&
                     std::isfinite(node.position.x) && std::isfinite(node.position.y) &&
                     isFiniteMaterialValue(node.value);
@@ -192,10 +179,7 @@ bool MaterialGraph::parse(const std::string& source, std::string* error)
         else if (token == "link")
         {
             MaterialLink link;
-            if (version == 1)
-                valid = static_cast<bool>(fields >> link.fromNode >> link.toNode >> link.toInput);
-            else
-                valid = static_cast<bool>(fields >> link.fromNode >> link.fromOutput >> link.toNode >> link.toInput);
+            valid = static_cast<bool>(fields >> link.fromNode >> link.fromOutput >> link.toNode >> link.toInput);
             if (valid)
                 candidate.m_links.push_back(link);
         }
@@ -205,7 +189,7 @@ bool MaterialGraph::parse(const std::string& source, std::string* error)
         if (!valid || ((fields >> extra) && extra[0] != '#'))
             return fail("Invalid graph record at line " + std::to_string(number));
     }
-    if (version == 2 && !haveSettings)
+    if (version == 3 && !haveSettings)
         return fail("Graph requires exactly one settings record");
     for (const auto& entry : metadata)
     {
@@ -225,145 +209,42 @@ bool MaterialGraph::parse(const std::string& source, std::string* error)
 std::string MaterialGraph::serialize() const
 {
     std::ostringstream output;
-    output << std::setprecision(std::numeric_limits<float>::max_digits10) << "TINY_MATGRAPH " << m_formatVersion
-           << '\n';
-    if (m_formatVersion == 2)
+    output << std::setprecision(std::numeric_limits<float>::max_digits10) << "TINY_MAT 3 graph\n";
+    output << "settings " << (m_renderState.shadingModel == MaterialShadingModel::Unlit ? "Unlit" : "Lit") << ' '
+           << (m_renderState.blendMode == MaterialBlendMode::Masked  ? "Masked"
+               : m_renderState.blendMode == MaterialBlendMode::Alpha ? "Alpha"
+                                                                     : "Opaque")
+           << ' ' << m_renderState.twoSided << ' ' << m_renderState.maskCutoff << '\n';
+    for (const auto& p : m_parameters)
     {
-        output << "settings " << (m_renderState.shadingModel == MaterialShadingModel::Unlit ? "Unlit" : "Lit") << ' '
-               << (m_renderState.blendMode == MaterialBlendMode::Masked  ? "Masked"
-                   : m_renderState.blendMode == MaterialBlendMode::Alpha ? "Alpha"
-                                                                         : "Opaque")
-               << ' ' << (m_renderState.twoSided ? 1 : 0) << ' ' << m_renderState.maskCutoff << '\n';
-        for (const auto& p : m_parameters)
-        {
-            output << "parameter " << std::quoted(p.name) << ' ' << materialParameterTypeName(p.type) << ' '
-                   << (p.sampling == TextureSampling::SRgb     ? "SRgb"
-                       : p.sampling == TextureSampling::Normal ? "Normal"
-                                                               : "Linear")
-                   << ' ';
-            writeMaterialValue(output, p.defaultValue);
-            output << "\nparameter_meta " << std::quoted(p.name) << ' ' << std::quoted(p.displayName) << ' '
-                   << std::quoted(p.group) << ' ' << (p.range ? 1 : 0) << ' ' << (p.range ? p.range->x : 0) << ' '
-                   << (p.range ? p.range->y : 1) << '\n';
-        }
+        output << "parameter " << std::quoted(p.name) << ' ' << materialParameterTypeName(p.type) << ' '
+               << (p.sampling == TextureSampling::SRgb     ? "SRgb"
+                   : p.sampling == TextureSampling::Normal ? "Normal"
+                                                           : "Linear")
+               << ' ';
+        writeMaterialValue(output, p.defaultValue);
+        output << "\nparameter_meta " << std::quoted(p.name) << ' ' << std::quoted(p.displayName) << ' '
+               << std::quoted(p.group) << ' ' << (p.range ? 1 : 0) << ' ' << (p.range ? p.range->x : 0) << ' '
+               << (p.range ? p.range->y : 1) << '\n';
     }
     for (const auto& node : m_nodes)
     {
-        output << "node " << node.id << ' ';
-        if (m_formatVersion == 1)
-            output << static_cast<int>(node.type);
-        else
-            output << materialNodeTypeName(node.type);
-        output << ' ' << std::quoted(node.name) << ' ' << node.position.x << ' ' << node.position.y << ' ';
-        if (m_formatVersion == 2)
-            output << materialParameterTypeName(node.type == MaterialNodeType::Constant ? node.constantType
-                                                                                        : MaterialParameterType::Float)
-                   << ' ';
-        const Vec4 value = m_formatVersion == 1 || node.type == MaterialNodeType::Constant ? node.value : Vec4{};
-        output << value.x << ' ' << value.y << ' ' << value.z << ' ' << value.w << ' ';
-        if (m_formatVersion == 1)
-            output << std::quoted(node.texturePath);
-        else
-            output << std::quoted(node.parameterName) << ' ' << std::quoted(node.channelMask);
-        output << '\n';
+        const auto value = node.type == MaterialNodeType::Constant ? node.value : Vec4{};
+        output << "node " << node.id << ' ' << materialNodeTypeName(node.type) << ' ' << std::quoted(node.name) << ' '
+               << node.position.x << ' ' << node.position.y << ' '
+               << materialParameterTypeName(node.type == MaterialNodeType::Constant ? node.constantType
+                                                                                    : MaterialParameterType::Float)
+               << ' ' << value.x << ' ' << value.y << ' ' << value.z << ' ' << value.w << ' '
+               << std::quoted(node.parameterName) << ' ' << std::quoted(node.channelMask) << '\n';
     }
     for (const auto& link : m_links)
-    {
-        output << "link " << link.fromNode << ' ';
-        if (m_formatVersion == 2)
-            output << link.fromOutput << ' ';
-        output << link.toNode << ' ' << link.toInput << '\n';
-    }
+        output << "link " << link.fromNode << ' ' << link.fromOutput << ' ' << link.toNode << ' ' << link.toInput
+               << '\n';
     return output.str();
 }
 bool MaterialGraph::Save(const std::filesystem::path& path) const
 {
-    auto graph = *this;
-    if (!graph.upgradeLegacy())
-        return false;
-    return PlatformFile::writeAllText(path, graph.serialize());
-}
-bool MaterialGraph::upgradeLegacy()
-{
-    if (m_formatVersion == 2)
-        return true;
-    if (m_formatVersion != 1)
-        return false;
-    for (const auto& node : m_nodes)
-        m_nextId = std::max(m_nextId, node.id + 1);
-    for (auto& node : m_nodes)
-    {
-        if (node.type == MaterialNodeType::PbrOutput)
-            node.type = MaterialNodeType::SurfaceOutput;
-        if (node.type == MaterialNodeType::Constant)
-            node.constantType = MaterialParameterType::Vec4;
-    }
-    const auto oldNodes = m_nodes;
-    for (const auto& node : oldNodes)
-        if (node.type == MaterialNodeType::Add || node.type == MaterialNodeType::Multiply)
-        {
-            std::uint32_t zero = 0;
-            for (std::uint32_t port = 0; port < 2; ++port)
-                if (std::none_of(m_links.begin(), m_links.end(),
-                                 [&](const auto& link) { return link.toNode == node.id && link.toInput == port; }))
-                {
-                    if (!zero)
-                    {
-                        zero = addNode(MaterialNodeType::Constant, "Legacy zero");
-                        m_nodes.back().value = {};
-                    }
-                    m_links.push_back({zero, node.id, port, 0});
-                }
-        }
-    for (const auto& node : oldNodes)
-        if (node.type == MaterialNodeType::Texture)
-        {
-            auto name = "LegacyTexture_" + std::to_string(node.id);
-            while (std::any_of(m_parameters.begin(), m_parameters.end(), [&](const auto& p) { return p.name == name; }))
-                name += '_';
-            MaterialParameterDecl p;
-            p.name = p.displayName = name;
-            p.type = MaterialParameterType::Texture2D;
-            p.defaultValue = node.texturePath;
-            p.sampling = TextureSampling::SRgb;
-            m_parameters.push_back(std::move(p));
-            const auto parameterId = addNode(MaterialNodeType::TextureParameter, name, node.position);
-            m_nodes.back().parameterName = name;
-            for (auto& n : m_nodes)
-                if (n.id == node.id)
-                {
-                    n.type = MaterialNodeType::TextureSample;
-                    n.texturePath.clear();
-                }
-            m_links.push_back({parameterId, node.id, 0, 0});
-        }
-    const auto oldLinks = m_links;
-    m_links.clear();
-    for (const auto& link : oldLinks)
-    {
-        const auto target =
-            std::find_if(m_nodes.begin(), m_nodes.end(), [&](const auto& n) { return n.id == link.toNode; });
-        if (target == m_nodes.end() || target->type != MaterialNodeType::SurfaceOutput)
-        {
-            m_links.push_back(link);
-            continue;
-        }
-        if (link.toInput >= 4)
-            return false;
-        const auto mask = addNode(MaterialNodeType::ComponentMask, "Legacy channel");
-        m_nodes.back().channelMask = link.toInput == 0 || link.toInput == 3 ? "xyz" : "x";
-        m_links.push_back({link.fromNode, mask, 0, link.fromOutput});
-        m_links.push_back({mask, link.toNode, link.toInput == 3 ? 5u : link.toInput, 0});
-        if (link.toInput == 0)
-        {
-            const auto alpha = addNode(MaterialNodeType::ComponentMask, "Legacy alpha");
-            m_nodes.back().channelMask = "w";
-            m_links.push_back({link.fromNode, alpha, 0, link.fromOutput});
-            m_links.push_back({alpha, link.toNode, 6, 0});
-        }
-    }
-    m_formatVersion = 2;
-    return true;
+    return m_formatVersion == 3 && PlatformFile::writeAllText(path, serialize());
 }
 // 从输出节点反向遍历依赖并检测环；只有可达节点参与生成，孤立编辑节点不会污染 Shader。
 std::string MaterialGraph::compile(std::vector<std::string>* errors) const

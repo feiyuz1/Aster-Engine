@@ -522,9 +522,11 @@ int main()
     CHECK(hdrTexture.GetFloatData()[0] > 0.0f && hdrTexture.getByteSize() == 4 * sizeof(float));
     CHECK(PlatformFile::writeAllText(
         "saved/TestPbr.mat",
-        "color 0.2 0.3 0.4 1\nmetallic 0.8\nroughness 0.25\nemissive 0.1 0.2 0.3\ntexture "
-        "saved/Test.png\nnormalTexture saved/Test.png\nmetallicTexture saved/Test.png\nroughnessTexture "
-        "saved/Test.png\naoTexture saved/Test.png\nemissiveTexture saved/Test.png\n"));
+        "TINY_MAT 3 instance\nparent \"builtin:PBR\"\nparameter \"BaseColor\" Vec4 0.2 0.3 0.4 1\nparameter "
+        "\"Metallic\" Float 0.8\nparameter \"Roughness\" Float 0.25\nparameter \"Emissive\" Vec3 0.1 0.2 0.3\ntexture "
+        "\"BaseMap\" \"saved/Test.png\"\ntexture \"NormalMap\" \"saved/Test.png\"\ntexture \"MetallicMap\" "
+        "\"saved/Test.png\"\ntexture \"RoughnessMap\" \"saved/Test.png\"\ntexture \"AOMap\" "
+        "\"saved/Test.png\"\ntexture \"EmissiveMap\" \"saved/Test.png\"\n"));
     MaterialResource pbrMaterial;
     CHECK(pbrMaterial.load("saved/TestPbr.mat"));
     CHECK(std::abs(pbrMaterial.getMetallic() - 0.8f) < 0.001f && std::abs(pbrMaterial.getRoughness() - 0.25f) < 0.001f);
@@ -535,22 +537,22 @@ int main()
           pbrMaterial.GetAoTexturePath() == "saved/Test.png" &&
           pbrMaterial.GetEmissiveTexturePath() == "saved/Test.png");
     CHECK(PlatformFile::writeAllText("saved/TestInstance.mat",
-                                     "parent saved/TestPbr.mat\ncolor 0.9 0.1 0.2 1\nroughness 0.5\n"));
+                                     "TINY_MAT 3 instance\nparent \"TestPbr.mat\"\nparameter \"BaseColor\" Vec4 0.9 "
+                                     "0.1 0.2 1\nparameter \"Roughness\" Float 0.5\n"));
     MaterialResource materialInstance;
     CHECK(materialInstance.load("saved/TestInstance.mat"));
-    CHECK(materialInstance.GetParentPath() == "saved/TestPbr.mat" &&
+    CHECK(materialInstance.GetParentPath() == "TestPbr.mat" &&
           std::abs(materialInstance.getBaseColor().x - 0.9f) < 0.001f &&
           std::abs(materialInstance.getMetallic() - 0.8f) < 0.001f &&
           std::abs(materialInstance.getRoughness() - 0.5f) < 0.001f &&
           materialInstance.GetNormalTexturePath() == "saved/Test.png");
     CHECK(PlatformFile::writeAllText(
         "saved/TestExplicitInstance.mat",
-        "parent saved/TestPbr.mat\noverride color 0\noverride roughness 1\noverride packedTexture 1\n"
-        "color 1 0 0 1\nroughness 0.4\npackedTexture saved/Test.png\npackedLayout RMA\n"
-        "parameter uTint 0.1 0.2 0.3 1\n"));
+        "TINY_MAT 3 instance\nparent \"TestPbr.mat\"\nparameter \"Roughness\" Float 0.4\ntexture \"PackedMap\" "
+        "\"saved/Test.png\"\nparameter \"PackedLayout\" Float 1\nparameter \"uTint\" Vec4 0.1 0.2 0.3 1\n"));
     MaterialResource explicitInstance;
-    CHECK(explicitInstance.load("saved/TestExplicitInstance.mat") && !explicitInstance.isOverridden("color") &&
-          explicitInstance.isOverridden("roughness") && std::abs(explicitInstance.getBaseColor().x - 0.2f) < 0.001f &&
+    CHECK(explicitInstance.load("saved/TestExplicitInstance.mat") && !explicitInstance.isOverridden("BaseColor") &&
+          explicitInstance.isOverridden("Roughness") && std::abs(explicitInstance.getBaseColor().x - 0.2f) < 0.001f &&
           std::abs(explicitInstance.getRoughness() - 0.4f) < 0.001f &&
           explicitInstance.GetPackedTextureLayout() == "RMA" && explicitInstance.GetParameters().count("uTint") == 1);
     CHECK(PlatformFile::writeAllText(
@@ -952,10 +954,11 @@ int main()
 
     MaterialGraph materialGraph;
     const auto constantNode = materialGraph.addNode(MaterialNodeType::Constant, "Albedo");
+    materialGraph.GetNodes().back().constantType = MaterialParameterType::Vec3;
     const auto outputNode = materialGraph.addNode(MaterialNodeType::PbrOutput, "Output");
-    CHECK(materialGraph.connect(constantNode, outputNode, 0) && materialGraph.Save("saved/Test.matgraph"));
+    CHECK(materialGraph.connect(constantNode, outputNode, 0) && materialGraph.Save("saved/Test.mat"));
     MaterialGraph loadedMaterialGraph;
-    CHECK(loadedMaterialGraph.load("saved/Test.matgraph") && loadedMaterialGraph.GetNodes().size() >= 2 &&
+    CHECK(loadedMaterialGraph.load("saved/Test.mat") && loadedMaterialGraph.GetNodes().size() >= 2 &&
           loadedMaterialGraph.compile().find("EvaluateSurface") != std::string::npos);
 
     std::vector<std::uint8_t> chunkSource(230000);

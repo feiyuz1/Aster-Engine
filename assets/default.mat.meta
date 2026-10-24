@@ -1,4 +1,6 @@
 asset.id=b4c74412bf1cd6f8dd9a41ef698a201d
+asset.schemaVersion=2
 asset.type=Material
+dependencies.0=D:/project/tinyengine/assets/default.ppm
 asset.importedStamp=0
-dependencies.count=0
+dependencies.count=1

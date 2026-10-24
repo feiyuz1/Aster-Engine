@@ -1,2 +1,2 @@
-TINY_MAT 2
-definition "M_Masked.matgraph"
+TINY_MAT 3 instance
+parent "M_Masked.mat"

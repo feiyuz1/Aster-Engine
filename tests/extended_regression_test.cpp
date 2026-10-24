@@ -410,12 +410,13 @@ int main()
     std::filesystem::remove_all(root, fileError);
     std::filesystem::create_directories(root, fileError);
 
-    const auto assetRoot = root / "AssetLifecycle";
+    const auto assetRoot = std::filesystem::absolute(root / "AssetLifecycle");
     const auto owner = assetRoot / "owner.mat";
     const auto missing = assetRoot / "missing" / "shared.ppm";
     const auto replacement = assetRoot / "replacement" / "shared.ppm";
     const auto moved = assetRoot / "moved" / "renamed.ppm";
-    PlatformFile::writeAllText(owner, "texture " + missing.generic_string() + "\n");
+    PlatformFile::writeAllText(owner, "TINY_MAT 3 instance\nparent \"builtin:PBR\"\ntexture \"BaseMap\" \"" +
+                                          missing.generic_string() + "\"\n");
     PlatformFile::writeAllText(replacement, "P3\n1 1\n255\n255 128 64\n");
     AssetRegistry assetRegistry;
     assetRegistry.scan(assetRoot, true);
@@ -436,10 +437,14 @@ int main()
         assetRegistry.markImported(owner.generic_string()) && !assetRegistry.needsReimport(owner.generic_string());
     const auto replacementInfo = assetRegistry.Find(replacement.generic_string());
     const bool movedAsset = AssetMaintenance::moveAsset(assetRegistry, replacement, moved, &maintenanceError);
+    ResourceManager movedResources;
+    movedResources.initialize(nullptr, assetRoot);
+    const auto movedMaterial = movedResources.load<MaterialResource>(owner.generic_string());
     report.check("Assets", "move/rename updates owner references",
-                 movedAsset && std::filesystem::is_regular_file(moved) &&
-                     PlatformFile::readAllText(owner).find(moved.generic_string()) != std::string::npos,
+                 movedAsset && std::filesystem::is_regular_file(moved) && movedMaterial &&
+                     movedMaterial->GetTexturePath() == moved.generic_string(),
                  maintenanceError);
+    movedResources.shutdown();
     report.check("Assets", "moving between folders preserves unrelated registry entries",
                  replacementInfo && assetRegistry.Find(owner.generic_string()).has_value() &&
                      !assetRegistry.Find(replacement.generic_string()) && assetRegistry.Find(moved.generic_string()) &&
@@ -553,20 +558,27 @@ int main()
                  !truncatedTexture.load((root / "truncated.dds").generic_string()));
 
     MaterialGraph materialGraph;
-    const auto constant = materialGraph.addNode(MaterialNodeType::Constant, "Base");
-    const auto texture = materialGraph.addNode(MaterialNodeType::Texture, "Texture");
-    const auto multiply = materialGraph.addNode(MaterialNodeType::Multiply, "Multiply");
-    const auto output = materialGraph.addNode(MaterialNodeType::PbrOutput, "Output");
-    materialGraph.GetNodes()[1].texturePath = moved.generic_string();
-    materialGraph.connect(constant, multiply, 0);
-    materialGraph.connect(texture, multiply, 1);
-    materialGraph.connect(multiply, output, 0);
+    MaterialParameterDecl textureParameter;
+    textureParameter.name = "BaseMap";
+    textureParameter.type = MaterialParameterType::Texture2D;
+    textureParameter.defaultValue = moved.generic_string();
+    textureParameter.sampling = TextureSampling::SRgb;
+    materialGraph.GetParameters().push_back(textureParameter);
+    const auto handle = materialGraph.addNode(MaterialNodeType::TextureParameter, "BaseMap");
+    materialGraph.GetNodes().back().parameterName = "BaseMap";
+    const auto texture = materialGraph.addNode(MaterialNodeType::TextureSample, "Texture");
+    const auto mask = materialGraph.addNode(MaterialNodeType::ComponentMask, "RGB");
+    materialGraph.GetNodes().back().channelMask = "xyz";
+    const auto output = materialGraph.addNode(MaterialNodeType::SurfaceOutput, "Output");
+    materialGraph.connect(handle, texture, 0);
+    materialGraph.connect(texture, mask, 0);
+    materialGraph.connect(mask, output, 0);
     std::vector<std::string> graphErrors;
     const std::string compiledGraph = materialGraph.compile(&graphErrors);
     report.check("Material Graph", "node connection and shader compilation",
                  graphErrors.empty() && compiledGraph.find("te_texture_") != std::string::npos &&
                      compiledGraph.find("EvaluateSurface") != std::string::npos &&
-                     materialGraph.Save(root / "complete.matgraph"));
+                     materialGraph.Save(root / "complete.mat"));
     report.check("Material Graph", "node deletion removes dependent links",
                  materialGraph.removeNode(texture) &&
                      std::none_of(materialGraph.GetLinks().begin(), materialGraph.GetLinks().end(),
@@ -580,7 +592,7 @@ int main()
     MaterialGraph cyclicGraph;
     const auto cycleA = cyclicGraph.addNode(MaterialNodeType::Add, "A");
     const auto cycleB = cyclicGraph.addNode(MaterialNodeType::Multiply, "B");
-    const auto cycleOutput = cyclicGraph.addNode(MaterialNodeType::PbrOutput, "Output");
+    const auto cycleOutput = cyclicGraph.addNode(MaterialNodeType::SurfaceOutput, "Output");
     cyclicGraph.connect(cycleA, cycleB, 0);
     cyclicGraph.connect(cycleB, cycleA, 0);
     cyclicGraph.connect(cycleA, cycleOutput, 0);
@@ -660,7 +672,10 @@ int main()
         renderWorld.GetComponent<TransformComponent>(entity)->position = {(index - 6) * 0.08f, 0.0f, 0.0f};
         renderWorld.AddComponent(entity, MeshComponent{"assets/player.mesh", "assets/default.mat"});
     }
-    PlatformFile::writeAllText(root / "transparent.mat", "color 1 1 1 0.5\n");
+    auto transparentMaterial = makeEditablePbrDefinition();
+    transparentMaterial.graph.GetRenderState().blendMode = MaterialBlendMode::Alpha;
+    transparentMaterial.graph.GetParameters().front().defaultValue = Vec4{1, 1, 1, .5f};
+    PlatformFile::writeAllText(root / "transparent.mat", transparentMaterial.graph.serialize());
     const Entity transparent = renderWorld.createEntity("Transparent");
     renderWorld.AddComponent(transparent,
                              MeshComponent{"assets/player.mesh", (root / "transparent.mat").generic_string()});

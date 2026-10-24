@@ -498,7 +498,7 @@ void EditorApp::drawSceneView()
                 ImDrawList* draw = ImGui::GetWindowDrawList();
                 const FrameView& view = m_engine.GetContext().renderer->GetFrameView();
                 draw->PushClipRect(imageMinimum, {imageMinimum.x + available.x, imageMinimum.y + available.y}, true);
-                if (asset->type == "Material" || asset->type == "MaterialGraph")
+                if (asset->type == "Material")
                 {
                     const Entity target = pickEntity(normalizedX, normalizedY);
                     auto* mesh = world.isAlive(target) ? world.GetComponent<MeshComponent>(target) : nullptr;

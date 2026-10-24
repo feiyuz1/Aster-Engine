@@ -75,10 +75,12 @@
 !/tests/extended_regression_test.cpp
 !/assets/Materials/
 /assets/Materials/*
-!/assets/Materials/M_Paint.matgraph
+!/assets/Materials/M_Paint.mat
+!/assets/Materials/M_Paint.mat.meta
 !/assets/Materials/MI_PaintRed.mat
 !/assets/Materials/MI_PaintBlue.mat
-!/assets/Materials/M_Masked.matgraph
+!/assets/Materials/M_Masked.mat
+!/assets/Materials/M_Masked.mat.meta
 !/assets/Materials/MI_Masked.mat
 !/assets/Materials/T_Mask.ppm
 
@@ -120,3 +122,9 @@
 !/tests/fixtures/editor_ui/assets/audio/
 /tests/fixtures/editor_ui/assets/audio/*
 !/tests/fixtures/editor_ui/assets/audio/long_stream.ogg
+
+!/tests/animation_editor_test.cpp
+
+!/tests/import_compatibility_test.cpp
+!/tests/material_migration_test.py
+/scripts/**/__pycache__/

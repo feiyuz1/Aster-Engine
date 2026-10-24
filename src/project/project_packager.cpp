@@ -88,7 +88,7 @@ bool copyAssetTree(const std::filesystem::path& sourceRoot, const std::filesyste
         if (error)
             return false;
         const auto extension = iterator->path().extension();
-        if (extension == ".mat" || extension == ".matgraph")
+        if (extension == ".mat")
         {
             const auto compiled =
                 PlatformAssetCompiler::compile(iterator->path(), destinationRoot / relative, sourceRoot);

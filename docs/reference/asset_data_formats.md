@@ -16,7 +16,7 @@ Aster-Engine 将“可编辑源资产”和“运行时轻量资产”分离。F
 | `.animgraph` | `TINY_ANIMGRAPH 1` | 参数、状态、Motion 与转换 |
 | `.vfx` | `TINY_VFX 1` | 发射器、Flipbook 和 CPU/GPU 模式 |
 | `.btgraph` | `TINY_BTGRAPH 1` | 行为树节点、边和编辑器位置 |
-| `.matgraph` | `TINY_MATGRAPH 2`，兼容 1 | 有类型材质参数、节点和端口连线 |
+| `.mat` | `TINY_MAT 3 graph` / `TINY_MAT 3 instance` | 材质节点图，或引用父材质的参数实例；仅接受版本 3 |
 | `.env` | `TINY_ENV 1` | Irradiance、Prefilter 和 BRDF LUT 清单 |
 | `.input` | `TINYINPUT 1` | 逻辑 Axis/Action 映射 |
 | `.loc` | `TINYLOC 1` | Locale/Key 字符串表 |
@@ -46,26 +46,32 @@ Aster-Engine 将“可编辑源资产”和“运行时轻量资产”分离。F
 
 ## 4. 材质与纹理
 
-`.mat` 是稳定文本格式，主要字段包括：
+所有材质使用 `.mat`，在 AssetRegistry 中统一分类为 `Material`。头部区分节点图与实例；旧的无版本 `.mat`、`TINY_MAT 2` 和 `.matgraph` 均不由引擎加载。
+
+普通材质保存完整节点、端口连线、参数声明与渲染设置，例如：
 
 ```text
-parent "materials/Base.mat"
-override baseColor 1
-color 1 1 1 1
-metallic 0
-roughness 0.7
-emissive 0 0 0
-texture "textures/basecolor.png"
-normalTexture "textures/normal.png"
-packedTexture "textures/character_orm.png"
-packedLayout ORM
-blend opaque
-parameter "DetailScale" 2 0 0 0
+TINY_MAT 3 graph
+settings Lit Opaque 0 0.5
+parameter "BaseColor" Vec3 Linear 0.8 0.8 0.8
+node 1 SurfaceOutput "Surface" 420 60 Float 0 0 0 0 "" ""
+node 2 VectorParameter "Base Color" 40 60 Float 0 0 0 0 "BaseColor" ""
+link 2 0 1 0
 ```
 
-- 旧材质有父材质时，字段存在且没有 override 标记会覆盖父值；显式 override=false 继承父值。
-- `packedLayout` 支持 `ORM` 与 `RMA`。
+实例使用同一扩展名，引用一个父材质并覆盖有类型的参数：
+
+```text
+TINY_MAT 3 instance
+parent "Base.mat"
+parameter "Roughness" Float 0.4
+texture "BaseMap" "textures/basecolor.png"
+```
+
+- 图参数声明包括 Float、Vec2、Vec3、Vec4、Texture2D；纹理声明还包含 SRgb、Linear 或 Normal 采样。
+- 实例删除覆盖记录即可继承父值。循环父链和超过 32 个实例的链会被拒绝。
 - 颜色纹理按 sRGB 使用；Normal、Metallic、Roughness、AO 和打包数据保持线性。
+- `scripts/migrate_materials.py <项目目录>` 可预览一次性转换，增加 `--apply` 写入并备份原文件。迁移后重新生成 Cooked 和发布包；迁移器不参与运行时加载。
 - Runtime 可直接上传 DDS/KTX2 中的 BC1–BC7 层级；离线编码器不内置在引擎中。
 
 ## 5. VFX

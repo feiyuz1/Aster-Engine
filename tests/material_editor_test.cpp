@@ -155,7 +155,7 @@ struct Harness
 MaterialDefinitionData definition()
 {
     MaterialDefinitionData data;
-    data.graph.setFormatVersion(2);
+    data.graph.setFormatVersion(3);
     data.graph.addNode(MaterialNodeType::SurfaceOutput, "Surface", {350, 40});
     data.graph.addNode(MaterialNodeType::ComponentMask, "RGB", {40, 40});
     data.graph.GetNodes().back().channelMask = "xyz";
@@ -165,7 +165,7 @@ MaterialDefinitionData definition()
 void PaletteAndLanguage(Harness& h)
 {
     MaterialGraphEditor editor;
-    editor.Open("saved/MaterialEditorTests/palette.matgraph", definition());
+    editor.Open("saved/MaterialEditorTests/palette.mat", definition());
     const auto draw = [&] { editor.draw(); };
     h.frame(draw);
     h.frame(draw);
@@ -194,7 +194,7 @@ void UndoAndFocus(Harness& h)
 {
     MaterialGraphEditor editor;
     auto data = definition();
-    editor.Open("saved/MaterialEditorTests/undo.matgraph", data);
+    editor.Open("saved/MaterialEditorTests/undo.mat", data);
     const auto draw = [&] { editor.draw(); };
     h.frame(draw);
     h.frame(draw);
@@ -274,7 +274,7 @@ void UndoAndFocus(Harness& h)
 void CanvasInteractions(Harness& h)
 {
     MaterialGraphEditor editor;
-    editor.Open("saved/MaterialEditorTests/canvas.matgraph", definition());
+    editor.Open("saved/MaterialEditorTests/canvas.mat", definition());
     const auto draw = [&] { editor.draw(); };
     h.frame(draw);
     h.frame(draw);
@@ -329,7 +329,7 @@ void CompactWindow(Harness& h)
 {
     ImGui::GetIO().DisplaySize = {1280, 720};
     MaterialGraphEditor editor;
-    editor.Open("saved/MaterialEditorTests/compact.matgraph", definition());
+    editor.Open("saved/MaterialEditorTests/compact.mat", definition());
     const auto draw = [&] { editor.draw(); };
     h.frame(draw);
     h.frame(draw);
@@ -344,7 +344,7 @@ void CompactWindow(Harness& h)
 void DisconnectedTypes(Harness& h)
 {
     MaterialGraphEditor editor;
-    editor.Open("saved/MaterialEditorTests/disconnected.matgraph", definition());
+    editor.Open("saved/MaterialEditorTests/disconnected.mat", definition());
     const auto texture = editor.addNode(MaterialNodeType::TextureParameter, "Texture");
     const auto add = editor.addNode(MaterialNodeType::Add, "Unconnected math");
     h.check(!editor.connectPorts(texture, 0, add, 0) && editor.GetDraft().graph.GetLinks().empty() &&
@@ -370,7 +370,7 @@ void DisconnectedTypes(Harness& h)
 void SaveAndApply(Harness& h)
 {
     const auto directory = std::filesystem::absolute("saved/MaterialEditorTests") / fromUtf8Path("中文材质");
-    const auto path = toUtf8GenericPath((directory / "graph.matgraph"));
+    const auto path = toUtf8GenericPath((directory / "graph.mat"));
     MaterialGraphEditor editor;
     auto definitionValue = definition();
     definitionValue.sourcePath = path;
@@ -415,8 +415,8 @@ void SaveAndApply(Harness& h)
     h.frame(draw);
     h.check(!Commands<MaterialGraphEditor>::focused(editor), "hiding a material document releases editor focus");
     MaterialAssetData instance;
-    instance.formatVersion = 2;
-    instance.definitionPath = "builtin:PBR";
+    instance.formatVersion = 3;
+    instance.parentPath = "builtin:PBR";
     MaterialAssetEditor asset;
     asset.Open(toUtf8GenericPath((directory / "child.mat")), instance, makeBuiltinPbrDefinition().parameters);
     Commands<MaterialAssetEditor>::chinese(asset, true);
@@ -450,7 +450,7 @@ void SaveAndApply(Harness& h)
 }
 void FocusedSave(Harness& h)
 {
-    const auto path = toUtf8GenericPath((std::filesystem::absolute("saved/MaterialEditorTests") / "keyboard.matgraph"));
+    const auto path = toUtf8GenericPath((std::filesystem::absolute("saved/MaterialEditorTests") / "keyboard.mat"));
     MaterialGraphEditor editor;
     editor.Open(path, definition());
     editor.setSaveRequest(
@@ -479,7 +479,7 @@ void RetainedDocumentReferences(Harness& h)
     texture.defaultValue = std::string("old.ppm");
     data.parameters.push_back(texture);
     MaterialGraphEditor graph;
-    graph.Open("saved/MaterialEditorTests/references.matgraph", data);
+    graph.Open("saved/MaterialEditorTests/references.mat", data);
     graph.setSaveRequest(
         [](const auto& filename, const auto& draft, auto& diagnostics)
         {
@@ -498,7 +498,7 @@ void RetainedDocumentReferences(Harness& h)
     h.check(graph.undo() && std::get<std::string>(graph.GetDraft().parameters[0].defaultValue) == "old.ppm",
             "graph undo really restores the retained old texture reference");
     MaterialAssetData instance;
-    instance.formatVersion = 2;
+    instance.formatVersion = 3;
     instance.parentPath = "parent.mat";
     instance.overrides["BaseMap"] = std::string("old-instance.ppm");
     MaterialAssetEditor asset;

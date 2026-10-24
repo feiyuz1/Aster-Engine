@@ -1,4 +1,5 @@
 #include "tinyengine/render/material_types.h"
+#include "tinyengine/render/material_graph.h"
 
 #include <cmath>
 #include <iomanip>
@@ -113,14 +114,22 @@ bool parseMaterialAsset(const std::string& source, MaterialAssetData& data, std:
 {
     MaterialAssetData candidate;
     std::istringstream input(source);
-    std::string header;
+    std::string header, kind;
     int version = 0;
-    if (!(input >> header >> version) || header != "TINY_MAT" || version != 2)
+    if (!(input >> header >> version >> kind) || header != "TINY_MAT" || version != 3 ||
+        (kind != "graph" && kind != "instance"))
     {
-        error = "Unsupported material version (expected TINY_MAT 2)";
+        error = "Unsupported material format (expected TINY_MAT 3 graph or instance)";
         return false;
     }
-    candidate.formatVersion = 2;
+    if (kind == "graph")
+    {
+        candidate.graph = std::make_shared<MaterialGraph>();
+        if (!candidate.graph->parse(source, &error))
+            return false;
+        data = std::move(candidate);
+        return true;
+    }
     std::string rest;
     std::getline(input, rest);
     if (rest.find_first_not_of(" \t\r") != std::string::npos)
@@ -138,9 +147,9 @@ bool parseMaterialAsset(const std::string& source, MaterialAssetData& data, std:
         if (!(fields >> key) || key[0] == '#')
             continue;
         bool valid = true;
-        if (key == "definition" || key == "parent")
+        if (key == "parent")
         {
-            auto& path = key == "definition" ? candidate.definitionPath : candidate.parentPath;
+            auto& path = candidate.parentPath;
             valid = path.empty() && static_cast<bool>(fields >> std::quoted(path)) && !path.empty();
         }
         else if (key == "validated_override")
@@ -174,9 +183,9 @@ bool parseMaterialAsset(const std::string& source, MaterialAssetData& data, std:
             return false;
         }
     }
-    if (candidate.definitionPath.empty() == candidate.parentPath.empty())
+    if (candidate.parentPath.empty())
     {
-        error = "Material requires exactly one definition or parent";
+        error = "Material instance requires exactly one parent";
         return false;
     }
     data = std::move(candidate);
@@ -185,12 +194,10 @@ bool parseMaterialAsset(const std::string& source, MaterialAssetData& data, std:
 }
 std::string serializeMaterialAsset(const MaterialAssetData& data)
 {
-    if (data.formatVersion == 1)
-        return data.legacyData.source;
+    if (data.graph)
+        return data.graph->serialize();
     std::ostringstream out;
-    out << std::setprecision(std::numeric_limits<float>::max_digits10) << "TINY_MAT 2\n";
-    if (!data.definitionPath.empty())
-        out << "definition " << std::quoted(data.definitionPath) << '\n';
+    out << std::setprecision(std::numeric_limits<float>::max_digits10) << "TINY_MAT 3 instance\n";
     if (!data.parentPath.empty())
         out << "parent " << std::quoted(data.parentPath) << '\n';
     for (const auto& entry : data.overrides)

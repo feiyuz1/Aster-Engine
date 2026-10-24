@@ -576,10 +576,10 @@ bool AssetMaintenance::moveAsset(AssetRegistry& registry, const std::filesystem:
         originals.push_back({path, previous, true});
         return true;
     };
-    if (source.extension() == ".mat" || source.extension() == ".matgraph")
+    if (source.extension() == ".mat")
     {
         auto text = PlatformFile::readAllText(destination);
-        if (rewriteMaterialReferences(text, source.extension() == ".matgraph", source, destination,
+        if (rewriteMaterialReferences(text, source, destination,
                                       registry.GetRootPath(), oldPath, newPath))
             if (!write(destination, text))
                 return rollback("Could not rewrite moved material references");
@@ -625,8 +625,8 @@ bool AssetMaintenance::moveAsset(AssetRegistry& registry, const std::filesystem:
             continue;
         std::string text = PlatformFile::readAllText(fromUtf8Path(asset.path));
         bool changedText =
-            asset.type == "Material" || asset.type == "MaterialGraph"
-                ? rewriteMaterialReferences(text, asset.type == "MaterialGraph", fromUtf8Path(asset.path),
+            asset.type == "Material"
+                ? rewriteMaterialReferences(text, fromUtf8Path(asset.path),
                                             fromUtf8Path(asset.path), registry.GetRootPath(), oldPath, newPath)
                 : rewriteReferences(text, source, destination, scope, projectRoot);
         if (isShaderSource(fromUtf8Path(asset.path)))

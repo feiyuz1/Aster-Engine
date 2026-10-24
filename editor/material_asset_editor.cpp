@@ -103,9 +103,8 @@ std::vector<std::string> MaterialAssetEditor::GetRetainedAssetReferences() const
     std::set<std::string> references;
     const auto collect = [&](const MaterialAssetData& data)
     {
-        for (const auto& path : {data.parentPath, data.definitionPath})
-            if (!path.empty())
-                references.insert(path);
+        if (!data.parentPath.empty())
+            references.insert(data.parentPath);
         for (const auto& entry : data.overrides)
             if (const auto* path = std::get_if<std::string>(&entry.second); path && !path->empty())
                 references.insert(*path);
@@ -117,16 +116,13 @@ std::vector<std::string> MaterialAssetEditor::GetRetainedAssetReferences() const
 bool MaterialAssetEditor::createInstance(const std::string& path, const std::string& parent, std::string& error)
 {
     MaterialAssetData data;
-    data.formatVersion = 2;
+    data.formatVersion = 3;
     const auto reference =
         parent == "builtin:PBR"
             ? parent
             : toUtf8GenericPath(std::filesystem::relative(std::filesystem::absolute(fromUtf8Path(parent)),
                                                           std::filesystem::absolute(fromUtf8Path(path)).parent_path()));
-    if (parent == "builtin:PBR" || fromUtf8Path(parent).extension() == ".matgraph")
-        data.definitionPath = reference;
-    else
-        data.parentPath = reference;
+    data.parentPath = reference;
     if (!PlatformFile::writeAllText(fromUtf8Path(path), serializeMaterialAsset(data)))
     {
         error = "Unable to create instance";
@@ -144,7 +140,17 @@ void MaterialAssetEditor::draw()
     if (beginDocument(T("Material instance###MaterialAssetEditor", "材质实例###MaterialAssetEditor")))
     {
         ImGui::TextWrapped(T("Parent material: %s", "父材质：%s"),
-                           (m_draft.parentPath.empty() ? m_draft.definitionPath : m_draft.parentPath).c_str());
+                           m_draft.parentPath.c_str());
+        if (m_draft.parentPath == "builtin:PBR")
+            ImGui::TextWrapped("%s", T("Built-in PBR material. Create a material asset to edit a shader graph.",
+                                       "内置 PBR 材质。新建材质资产即可编辑着色器节点图。"));
+        else
+        {
+            ImGui::BeginDisabled(!m_openParent);
+            if (ImGui::Button(T("Open parent###OpenParentMaterial", "打开父材质###OpenParentMaterial")))
+                m_openParent(m_draft.parentPath, m_path);
+            ImGui::EndDisabled();
+        }
         ImGui::TextWrapped("%s",
                            T("Enable an override to replace the inherited value. Clear it to inherit from the parent.",
                              "勾选覆盖以修改继承值；取消勾选即可恢复父材质的数值。"));

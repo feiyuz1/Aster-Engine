@@ -37,51 +37,53 @@ void write(const std::string& name, const std::string& text)
 {
     check(PlatformFile::writeAllText(fromUtf8Path(root + name), text), "write material fixture");
 }
-void testLegacyMaterialCompatibility()
+void testUnifiedMaterialResource()
 {
-    write("parent.mat", "color .9 .2 .1 .8\nmetallic .8\nroughness .4\ntexture white.ppm\npackedTexture "
-                        "channels.ppm\npackedLayout RMA\nblend alpha\n");
-    write("child.mat", "parent parent.mat\noverride color 0\ncolor .1 .1 .1 1\nroughness .6\n");
-    MaterialResource child;
-    check(child.load(root + "child.mat"), "legacy parent loads");
-    check(isClose(child.getBaseColor().x, .9f) && isClose(child.getMetallic(), .8f) &&
-              isClose(child.getRoughness(), .6f),
-          "legacy false override inherits; missing override applies");
-    check(child.GetTexturePath() == "white.ppm" && child.GetPackedTexturePath() == "channels.ppm" &&
-              child.GetPackedTextureLayout() == "RMA" && child.isTransparent(),
-          "legacy texture, packed layout and blend survive");
-    write("implicitAlpha.mat", "color 1 1 1 .5\n");
-    MaterialResource alpha;
-    alpha.load(root + "implicitAlpha.mat");
-    check(alpha.GetMaterialData().legacyData.transparent, "legacy color alpha preserves implicit transparent state");
+    MaterialResource material;
+    write("old.mat", "color 1 0 0 1\n");
+    check(!material.load(root + "old.mat"), "unversioned materials are rejected");
+    write("old.mat", "TINY_MAT 2\nparent \"builtin:PBR\"\n");
+    check(!material.load(root + "old.mat"), "version 2 materials are rejected");
+    auto definition = makeEditablePbrDefinition();
+    definition.parameters[0].defaultValue = Vec4{.9f, .2f, .1f, .8f};
+    definition.graph.GetParameters() = definition.parameters;
+    write("editable.mat", definition.graph.serialize());
+    check(material.load(root + "editable.mat") && material.GetMaterialData().graph &&
+              material.GetMaterialData().graph->GetLinks().size() > 20,
+          "ordinary material contains editable connected PBR graph");
+    check(material.Save(root + "editableSaved.mat"), "save graph via unified material resource");
+    MaterialResource saved;
+    check(saved.load(root + "editableSaved.mat") && saved.GetMaterialData().graph &&
+              isClose(saved.getBaseColor().x, .9f),
+          "unified resource round trips graph declarations and connections");
 }
 void testInvalidMaterialCandidates()
 {
-    write("valid.mat", "color .91 .32 .14 1\nmetallic .75\n");
+    write("valid.mat", "TINY_MAT 3 instance\nparent \"builtin:PBR\"\nparameter \"BaseColor\" Vec4 .91 .32 .14 "
+                       "1\nparameter \"Metallic\" Float .75\n");
     MaterialResource material;
     check(material.load(root + "valid.mat"), "load valid material before failed replacement");
     check(!material.load(root + "missing.mat"), "missing material fails");
     check(material.isReady() && isClose(material.getBaseColor().x, .91f) && isClose(material.getMetallic(), .75f),
           "failed replacement retains previous ready material");
-    write("version.mat", "TINY_MAT 99\ndefinition \"builtin:PBR\"\n");
+    write("version.mat", "TINY_MAT 99\nparent \"builtin:PBR\"\n");
     check(!material.load(root + "version.mat"), "unknown material version is rejected");
-    write("duplicate.mat",
-          "TINY_MAT 2\ndefinition \"builtin:PBR\"\nparameter \"Metallic\" Float .1\nparameter \"Metallic\" Float .2\n");
+    write("duplicate.mat", "TINY_MAT 3 instance\nparent \"builtin:PBR\"\nparameter \"Metallic\" Float .1\nparameter "
+                           "\"Metallic\" Float .2\n");
     check(!material.load(root + "duplicate.mat"), "duplicate typed overrides are rejected");
-    write("ambiguous.mat", "TINY_MAT 2\ndefinition \"builtin:PBR\"\nparent \"parent.mat\"\n");
+    write("ambiguous.mat", "TINY_MAT 3 instance\nparent \"builtin:PBR\"\nparent \"parent.mat\"\n");
     check(!material.load(root + "ambiguous.mat"), "definition and parent cannot coexist");
 }
 void testTypedMaterialRoundTrip()
 {
     write("typed.mat",
-          "TINY_MAT 2\ndefinition \"assets/材质 库/Parent.matgraph\"\n"
+          "TINY_MAT 3 instance\nparent \"assets/材质 库/Parent.mat\"\n"
           "parameter \"Weight\" Float .25\nparameter \"Scale\" Vec2 2 3\nparameter \"Emission\" Vec3 4 5 6\n"
           "parameter \"Tint\" Vec4 .1 .2 .3 .4\ntexture \"BaseMap\" \"assets/贴图 库/图片.png\"\n");
     MaterialResource material;
     check(material.load(root + "typed.mat"), "typed material loads without requiring definition yet");
     const auto& data = material.GetMaterialData();
-    check(data.formatVersion == 2 && data.definitionPath == "assets/材质 库/Parent.matgraph" &&
-              data.overrides.size() == 5,
+    check(data.formatVersion == 3 && data.parentPath == "assets/材质 库/Parent.mat" && data.overrides.size() == 5,
           "typed asset keeps quoted paths and overrides");
     check(std::holds_alternative<float>(data.overrides.at("Weight")) &&
               std::holds_alternative<Vec2>(data.overrides.at("Scale")) &&
@@ -92,14 +94,14 @@ void testTypedMaterialRoundTrip()
           "five distinct parameter types parsed");
     check(material.Save(root + "roundtrip.mat"), "save typed instance");
     MaterialResource reopened;
-    check(reopened.load(root + "roundtrip.mat") && reopened.GetMaterialData().definitionPath == data.definitionPath &&
+    check(reopened.load(root + "roundtrip.mat") && reopened.GetMaterialData().parentPath == data.parentPath &&
               isClose(std::get<Vec4>(reopened.GetMaterialData().overrides.at("Tint")).z, .3f) &&
               std::get<std::string>(reopened.GetMaterialData().overrides.at("BaseMap")) ==
                   std::get<std::string>(data.overrides.at("BaseMap")),
           "typed values and unicode paths survive save and reopen");
-    write("malformed.mat", "TINY_MAT 2\ndefinition \"builtin:PBR\"\nparameter \"te_internal\" Float .4\n");
+    write("malformed.mat", "TINY_MAT 3 instance\nparent \"builtin:PBR\"\nparameter \"te_internal\" Float .4\n");
     check(!reopened.load(root + "malformed.mat"), "reserved parameter prefix rejected");
-    write("truncated.mat", "TINY_MAT 2\ndefinition \"builtin:PBR\"\nparameter \"Tint\" Vec4 1 2\n");
+    write("truncated.mat", "TINY_MAT 3 instance\nparent \"builtin:PBR\"\nparameter \"Tint\" Vec4 1 2\n");
     check(!reopened.load(root + "truncated.mat"), "truncated typed value rejected");
 }
 const MaterialParameterValue& Value(const ResolvedMaterial& material, const std::string& name)
@@ -112,8 +114,8 @@ const MaterialParameterValue& Value(const ResolvedMaterial& material, const std:
 }
 void writeDefinition()
 {
-    write("assets/材质 库/paint.matgraph",
-          "TINY_MATGRAPH 2\nsettings Lit Opaque 0 .5\n"
+    write("assets/材质 库/paint.mat",
+          "TINY_MAT 3 graph\nsettings Lit Opaque 0 .5\n"
           "parameter \"Tint\" Vec3 Linear .8 .7 .6\nparameter_meta \"Tint\" \"颜色\" \"外观\" 0 0 1\n"
           "parameter \"Roughness\" Float Linear .7\nparameter \"BaseMap\" Texture2D SRgb \"../贴图 库/base.ppm\"\n"
           "node 1 SurfaceOutput \"输出\" 100 0 Float 0 0 0 0 \"\" \"\"\n");
@@ -123,9 +125,9 @@ void testThreeLevelInheritance()
 {
     writeDefinition();
     write("assets/parent.mat",
-          "TINY_MAT 2\ndefinition \"assets/材质 库/paint.matgraph\"\nparameter \"Tint\" Vec3 1 .1 .2\n");
-    write("assets/middle.mat", "TINY_MAT 2\nparent \"./parent.mat\"\nparameter \"Roughness\" Float .3\n");
-    write("assets/child.mat", "TINY_MAT 2\nparent \"middle.mat\"\nparameter \"Tint\" Vec3 .1 .2 1\n");
+          "TINY_MAT 3 instance\nparent \"assets/材质 库/paint.mat\"\nparameter \"Tint\" Vec3 1 .1 .2\n");
+    write("assets/middle.mat", "TINY_MAT 3 instance\nparent \"./parent.mat\"\nparameter \"Roughness\" Float .3\n");
+    write("assets/child.mat", "TINY_MAT 3 instance\nparent \"middle.mat\"\nparameter \"Tint\" Vec3 .1 .2 1\n");
     ResourceManager resources;
     resources.initialize(nullptr, root + "assets");
     MaterialSystem system(resources);
@@ -133,27 +135,24 @@ void testThreeLevelInheritance()
     check(child && isClose(std::get<Vec3>(Value(*child, "Tint")).z, 1) &&
               isClose(std::get<float>(Value(*child, "Roughness")), .3f),
           "three level child to parent to definition precedence");
-    write("assets/reset.mat", "TINY_MAT 2\nparent \"middle.mat\"\n");
+    write("assets/reset.mat", "TINY_MAT 3 instance\nparent \"middle.mat\"\n");
     auto reset = system.resolve("assets/reset.mat");
     check(reset && isClose(std::get<Vec3>(Value(*reset, "Tint")).x, 1),
           "absent child override restores inherited value");
     write("assets/unknown.mat",
-          "TINY_MAT 2\ndefinition \"assets/材质 库/paint.matgraph\"\nparameter \"Unknown\" Float 1\n");
+          "TINY_MAT 3 instance\nparent \"assets/材质 库/paint.mat\"\nparameter \"Unknown\" Float 1\n");
     check(!system.resolve("assets/unknown.mat"), "first load rejects unknown parameter");
     write("assets/wrong.mat",
-          "TINY_MAT 2\ndefinition \"assets/材质 库/paint.matgraph\"\nparameter \"Tint\" Vec4 1 1 1 1\n");
+          "TINY_MAT 3 instance\nparent \"assets/材质 库/paint.mat\"\nparameter \"Tint\" Vec4 1 1 1 1\n");
     check(!system.resolve("assets/wrong.mat"), "first load rejects wrong override type");
-    auto legacy = system.resolve(std::filesystem::absolute(root + "child.mat").generic_string());
-    check(legacy && isClose(std::get<Vec4>(Value(*legacy, "BaseColor")).x, .9f),
-          "legacy adapter keeps false override inheritance");
 }
 void testParentCyclesAndDepth()
 {
     ResourceManager resources;
     resources.initialize(nullptr, root + "assets");
     MaterialSystem system(resources);
-    write("assets/a.mat", "TINY_MAT 2\nparent \"./b.mat\"\n");
-    write("assets/b.mat", "TINY_MAT 2\nparent \"../assets/a.mat\"\n");
+    write("assets/a.mat", "TINY_MAT 3 instance\nparent \"./b.mat\"\n");
+    write("assets/b.mat", "TINY_MAT 3 instance\nparent \"../assets/a.mat\"\n");
     check(!system.resolve("assets/a.mat"), "normalized parent cycle rejected");
     const auto& diagnostics = system.GetDiagnostics("assets/a.mat");
     check(!diagnostics.empty() && diagnostics.front().message.find("a.mat") != std::string::npos &&
@@ -161,21 +160,19 @@ void testParentCyclesAndDepth()
           "cycle diagnostic contains complete chain");
     for (int i = 0; i < 33; ++i)
         write("assets/depth" + std::to_string(i) + ".mat",
-              "TINY_MAT 2\n" + (i == 0 ? std::string("definition \"builtin:PBR\"\n")
-                                       : "parent \"depth" + std::to_string(i - 1) + ".mat\"\n"));
+              "TINY_MAT 3 instance\n" + (i == 0 ? std::string("parent \"builtin:PBR\"\n")
+                                                : "parent \"depth" + std::to_string(i - 1) + ".mat\"\n"));
     check(static_cast<bool>(system.resolve("assets/depth31.mat")), "32 instance nodes accepted");
     check(!system.resolve("assets/depth32.mat"), "33 instance nodes rejected even with cached parent");
-    write("assets/legacy0.mat", "color .9 .2 .1 1\n");
-    for (int i = 1; i < 32; ++i)
-        write("assets/legacy" + std::to_string(i) + ".mat", "parent legacy" + std::to_string(i - 1) + ".mat\n");
-    write("assets/mixedDepth.mat", "TINY_MAT 2\nparent \"legacy31.mat\"\n");
-    check(!system.resolve("assets/mixedDepth.mat"), "depth budget includes legacy nodes beneath a typed instance");
 }
 void testAssetRootPaths()
 {
     const auto previous = std::filesystem::current_path();
     ResourceManager resources;
     resources.initialize(nullptr, root + "assets");
+    const auto inherited = resources.load<MaterialResource>("assets/child.mat");
+    check(inherited && PlatformFile::exists(fromUtf8Path(inherited->GetTexturePath())),
+          "resource getter resolves inherited texture relative to the declaring graph");
     std::filesystem::current_path(previous / "build");
     MaterialSystem system(resources);
     auto material = system.resolve("assets/child.mat");
@@ -189,7 +186,7 @@ void testMaterialDependencies()
     AssetRegistry registry;
     registry.scan(assetRoot, false);
     const auto parentPath = (assetRoot / "parent.mat").generic_string();
-    const auto graphPath = toUtf8GenericPath((assetRoot / fromUtf8Path("材质 库/paint.matgraph")));
+    const auto graphPath = toUtf8GenericPath((assetRoot / fromUtf8Path("材质 库/paint.mat")));
     const auto childPath = (assetRoot / "child.mat").generic_string();
     auto parent = registry.Find(parentPath);
     auto graph = registry.Find(graphPath);
@@ -201,7 +198,7 @@ void testMaterialDependencies()
     const auto dependents = registry.GetDependents((assetRoot / "middle.mat").generic_string());
     check(std::find(dependents.begin(), dependents.end(), childPath) != dependents.end(),
           "reverse dependency index finds child instance");
-    const auto moved = assetRoot / fromUtf8Path("材质 库/moved.matgraph");
+    const auto moved = assetRoot / fromUtf8Path("材质 库/moved.mat");
     if (std::filesystem::exists(moved))
         std::filesystem::remove(moved);
     auto movedMeta = moved;
@@ -209,17 +206,17 @@ void testMaterialDependencies()
     if (std::filesystem::exists(movedMeta))
         std::filesystem::remove(movedMeta);
     std::string error;
-    check(AssetMaintenance::moveAsset(registry, fromUtf8Path(graphPath), moved, &error), "move definition asset");
+    check(AssetMaintenance::moveAsset(registry, fromUtf8Path(graphPath), moved, &error),
+          error.empty() ? "move definition asset" : error.c_str());
     MaterialResource reopened;
-    check(reopened.load(parentPath) &&
-              reopened.GetMaterialData().definitionPath.find("moved.matgraph") != std::string::npos,
+    check(reopened.load(parentPath) && reopened.GetMaterialData().parentPath.find("moved.mat") != std::string::npos,
           "asset move rewrites structured logical definition reference");
 }
 MaterialDefinitionData graphDefinition()
 {
     MaterialDefinitionData data;
     data.sourcePath = "test:graph";
-    data.graph.setFormatVersion(2);
+    data.graph.setFormatVersion(3);
     data.graph.addNode(MaterialNodeType::SurfaceOutput, "Surface");
     return data;
 }
@@ -332,35 +329,17 @@ void testGraphTypes()
     input.graph.GetLinks().push_back(input.graph.GetLinks().front());
     check(!compiler.compile(input).Success(), "duplicate input links rejected");
 }
-void testLegacyGraphUpgrade()
+void testGraphFormatRejection()
 {
-    write("legacy.matgraph",
-          "TINY_MATGRAPH 1\nnode 1 0 \"Color\" 0 0 .2 .4 .6 .8 \"\"\n"
-          "node 2 4 \"Output\" 100 0 1 1 1 1 \"\"\nlink 1 2 0\nlink 1 2 1\nlink 1 2 2\nlink 1 2 3\n");
+    write("unsupported.mat", "TINY_MATGRAPH 1\nnode 1 4 \"Output\" 0 0 1 1 1 1 \"\"\n");
     MaterialDefinitionResource resource;
-    check(resource.load(root + "legacy.matgraph"), "load v1 graph definition");
-    const auto result = MaterialCompiler{}.compile(resource.GetData());
-    check(result.Success() && result.material->surfaceSource.find(".xyz") != std::string::npos &&
-              result.material->opacitySource.find(".w") != std::string::npos,
-          "legacy RGB and alpha are explicitly mapped");
-    auto upgraded = resource.GetData().graph;
-    check(upgraded.upgradeLegacy() && upgraded.getFormatVersion() == 2 && upgraded.Save(root + "upgraded.matgraph"),
-          "explicit legacy graph save uses v2");
-    MaterialDefinitionResource reopened;
-    check(reopened.load(root + "upgraded.matgraph") && MaterialCompiler{}.compile(reopened.GetData()).Success(),
-          "upgraded graph reopens and compiles");
-    MaterialDefinitionData emptyLegacy;
-    const auto add = emptyLegacy.graph.addNode(MaterialNodeType::Add, "Unconnected Add");
-    const auto output = emptyLegacy.graph.addNode(MaterialNodeType::PbrOutput, "Output");
-    emptyLegacy.graph.connect(add, output, 0);
-    check(MaterialCompiler{}.compile(emptyLegacy).Success(), "legacy unconnected arithmetic retains Vec4 defaults");
-    write("legacyTexture.matgraph", "TINY_MATGRAPH 1\nnode 1 1 \"Map\" 0 0 1 1 1 1 \"assets/贴图 库/base.ppm\"\n"
-                                    "node 2 4 \"Output\" 100 0 1 1 1 1 \"\"\nlink 1 2 0\n");
-    MaterialDefinitionResource textureDefinition;
-    check(textureDefinition.load(root + "legacyTexture.matgraph") &&
-              textureDefinition.GetData().parameters.size() == 1 &&
-              textureDefinition.GetData().parameters[0].type == MaterialParameterType::Texture2D,
-          "legacy texture nodes expose declarations to the inheritance resolver");
+    check(!resource.load(root + "unsupported.mat"), "v1 graph has no runtime upgrade path");
+    write("unsupported.mat", "TINY_MATGRAPH 2\nsettings Lit Opaque 0 .5\n");
+    check(!resource.load(root + "unsupported.mat"), "old graph header is rejected");
+    auto definition = makeEditablePbrDefinition();
+    write("graphSaved.mat", definition.graph.serialize());
+    check(resource.load(root + "graphSaved.mat") && MaterialCompiler{}.compile(resource.GetData()).Success(),
+          "editable PBR graph saves, reopens and compiles as a material");
 }
 void testReachableCycles()
 {
@@ -473,7 +452,7 @@ void testDynamicIsolation()
     ResourceManager resources;
     resources.initialize(nullptr, root);
     MaterialSystem system(resources);
-    write("dynamic.mat", "TINY_MAT 2\ndefinition \"builtin:PBR\"\n");
+    write("dynamic.mat", "TINY_MAT 3 instance\nparent \"builtin:PBR\"\n");
     auto red = system.CreateDynamicInstance("assets/dynamic.mat"),
          blue = system.CreateDynamicInstance("assets/dynamic.mat");
     check(red && blue, "create dynamic instances from one asset");
@@ -502,8 +481,8 @@ void testDynamicIsolation()
 void testReloadPublication()
 {
     MaterialDefinitionData definition;
-    definition.graph.setFormatVersion(2);
-    definition.sourcePath = root + "reload.matgraph";
+    definition.graph.setFormatVersion(3);
+    definition.sourcePath = root + "reload.mat";
     definition.graph.addNode(MaterialNodeType::SurfaceOutput, "Surface");
     MaterialParameterDecl tint;
     tint.name = "Tint";
@@ -514,24 +493,23 @@ void testReloadPublication()
     definition.graph.GetNodes().back().parameterName = "Tint";
     definition.graph.connect(node, 1, 0);
     definition.graph.GetParameters() = definition.parameters;
-    write("reload.matgraph", definition.graph.serialize());
-    write("reloadA.mat", "TINY_MAT 2\ndefinition \"reload.matgraph\"\n");
-    write("reloadB.mat", "TINY_MAT 2\nparent \"reloadA.mat\"\nparameter \"Tint\" Vec3 0 0 1\n");
-    write("reloadUnloaded.mat", "TINY_MAT 2\ndefinition \"reload.matgraph\"\nparameter \"Tint\" Vec3 0 0 1\n");
+    write("reload.mat", definition.graph.serialize());
+    write("reloadA.mat", "TINY_MAT 3 instance\nparent \"reload.mat\"\n");
+    write("reloadB.mat", "TINY_MAT 3 instance\nparent \"reloadA.mat\"\nparameter \"Tint\" Vec3 0 0 1\n");
+    write("reloadUnloaded.mat", "TINY_MAT 3 instance\nparent \"reload.mat\"\nparameter \"Tint\" Vec3 0 0 1\n");
     ResourceManager resources;
     resources.initialize(nullptr, root);
     MaterialSystem system(resources);
     const auto a = system.BuildProxy("assets/reloadA.mat"), b = system.BuildProxy("assets/reloadB.mat");
-    const auto disk = PlatformFile::readAllText(root + "reload.matgraph");
+    const auto disk = PlatformFile::readAllText(root + "reload.mat");
     definition.parameters[0].defaultValue = Vec3{0, 1, 0};
     const auto reject = [](const auto&, auto& diagnostics)
     {
         diagnostics.push_back({MaterialDiagnosticSeverity::Error, {}, 0, -1, "injected GPU candidate failure"});
         return false;
     };
-    check(!system.applyDefinitionDraft("assets/reload.matgraph", definition, reject).success &&
-              system.BuildProxy("assets/reloadA.mat") == a &&
-              PlatformFile::readAllText(root + "reload.matgraph") == disk,
+    check(!system.applyDefinitionDraft("assets/reload.mat", definition, reject).success &&
+              system.BuildProxy("assets/reloadA.mat") == a && PlatformFile::readAllText(root + "reload.mat") == disk,
           "failed candidate keeps code/layout/values/textures/generation and disk together");
     const auto accept = [](const auto&, auto&) { return true; };
 #ifdef _WIN32
@@ -540,15 +518,14 @@ void testReloadPublication()
     const auto reader = CreateFileW(childFile.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr,
                                     OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
     check(reader != INVALID_HANDLE_VALUE, "lock a dependent while publishing schema provenance");
-    const auto blocked = system.applyDefinitionDraft("assets/reload.matgraph", definition, accept);
+    const auto blocked = system.applyDefinitionDraft("assets/reload.mat", definition, accept);
     if (reader != INVALID_HANDLE_VALUE)
         CloseHandle(reader);
-    check(!blocked.success && PlatformFile::readAllText(root + "reload.matgraph") == disk &&
+    check(!blocked.success && PlatformFile::readAllText(root + "reload.mat") == disk &&
               PlatformFile::readAllText(childFile) == childBefore && system.BuildProxy("assets/reloadA.mat") == a,
           "failed dependent provenance write restores parent/children and live generation together");
 #endif
-    check(system.applyDefinitionDraft("assets/reload.matgraph", definition, accept).success,
-          "valid parent draft publishes");
+    check(system.applyDefinitionDraft("assets/reload.mat", definition, accept).success, "valid parent draft publishes");
     const auto changed = system.BuildProxy("assets/reloadA.mat"), kept = system.BuildProxy("assets/reloadB.mat");
     std::cout << "Reload evidence: " << a->generation << " -> " << changed->generation << " values "
               << changed->numericSlots[0].x << ',' << changed->numericSlots[0].y << ',' << kept->numericSlots[0].z
@@ -559,7 +536,7 @@ void testReloadPublication()
     definition.parameters[0].type = MaterialParameterType::Float;
     definition.parameters[0].defaultValue = .25f;
     definition.graph.GetNodes()[1].type = MaterialNodeType::ScalarParameter;
-    check(system.applyDefinitionDraft("assets/reload.matgraph", definition, accept).success,
+    check(system.applyDefinitionDraft("assets/reload.mat", definition, accept).success,
           "schema change can publish with old effective overrides inactive");
     check(isClose(system.BuildProxy("assets/reloadB.mat")->numericSlots[0].x, .25f) &&
               !system.GetDiagnostics("assets/reloadB.mat").empty(),
@@ -577,14 +554,14 @@ void testReloadPublication()
               "offline packaging accepts persisted inactive overrides after schema change");
         freshResources.shutdown();
     }
-    write("newInvalid.mat", "TINY_MAT 2\ndefinition \"reload.matgraph\"\nparameter \"Unknown\" Float 1\n");
+    write("newInvalid.mat", "TINY_MAT 3 instance\nparent \"reload.mat\"\nparameter \"Unknown\" Float 1\n");
     check(!system.resolve("assets/newInvalid.mat"), "unknown override on first load remains an error");
     auto dynamic = system.CreateDynamicInstance("assets/reloadA.mat");
     dynamic->setParameter("Tint", .8f);
     definition.parameters.clear();
     definition.graph.GetNodes().resize(1);
     definition.graph.GetLinks().clear();
-    check(system.applyDefinitionDraft("assets/reload.matgraph", definition, accept).success &&
+    check(system.applyDefinitionDraft("assets/reload.mat", definition, accept).success &&
               !dynamic->setParameter("Tint", .7f),
           "parameter deletion updates live dynamic schema");
     check(system.BuildProxy("assets/reloadB.mat")->numericSlots.empty() &&
@@ -592,31 +569,32 @@ void testReloadPublication()
               system.BuildProxy("assets/reloadA.mat", dynamic.get())->numericSlots.empty(),
           "deleted declarations deactivate asset and dynamic overrides coherently");
     const auto active = system.BuildProxy("assets/reloadA.mat");
-    write("reload.matgraph", "TINY_MATGRAPH 999\n");
-    check(!system.reload("assets/reload.matgraph", accept).success && system.BuildProxy("assets/reloadA.mat") == active,
+    write("reload.mat", "TINY_MAT 999 graph\n");
+    check(!system.reload("assets/reload.mat", accept).success && system.BuildProxy("assets/reloadA.mat") == active,
           "broken external edit retains prior snapshot");
-    write("transaction.mat", "color .9 .2 .1 1\n");
+    write("transaction.mat", "TINY_MAT 3 instance\nparent \"builtin:PBR\"\nparameter \"BaseColor\" Vec4 .9 .2 .1 1\n");
     auto resource = resources.load<MaterialResource>("assets/transaction.mat");
     write("transaction.mat", "TINY_MAT 999\n");
     check(resource && !resources.reload("assets/transaction.mat") && resource->isReady() &&
               isClose(resource->getBaseColor().x, .9f),
           "generic material reload avoids clearing a valid resource before validation");
-    write("legacyDraft.mat", "color .9 .2 .1 1\n");
-    const auto legacy = system.BuildProxy("assets/legacyDraft.mat");
-    MaterialAssetData oldDraft;
-    oldDraft.legacyData.source = "color .1 .8 .2 1\n";
-    check(!system.applyInstanceDraft("assets/legacyDraft.mat", oldDraft, reject).success &&
-              system.BuildProxy("assets/legacyDraft.mat") == legacy,
-          "legacy editor draft also rolls back before disk write");
-    check(system.applyInstanceDraft("assets/legacyDraft.mat", oldDraft, accept).success &&
-              PlatformFile::readAllText(root + "legacyDraft.mat") == oldDraft.legacyData.source,
-          "legacy editor publishes from memory through the same transaction");
+    write("typedDraft.mat", "TINY_MAT 3 instance\nparent \"builtin:PBR\"\nparameter \"BaseColor\" Vec4 .9 .2 .1 1\n");
+    const auto activeDraft = system.BuildProxy("assets/typedDraft.mat");
+    MaterialAssetData draft;
+    draft.parentPath = "builtin:PBR";
+    draft.overrides["BaseColor"] = Vec4{.1f, .8f, .2f, 1};
+    check(!system.applyInstanceDraft("assets/typedDraft.mat", draft, reject).success &&
+              system.BuildProxy("assets/typedDraft.mat") == activeDraft,
+          "instance editor draft rolls back before disk write");
+    check(system.applyInstanceDraft("assets/typedDraft.mat", draft, accept).success &&
+              PlatformFile::readAllText(root + "typedDraft.mat").find("TINY_MAT 3 instance") == 0,
+          "instance editor publishes from memory through the same transaction");
     resources.shutdown();
 }
 void testCookingAndSourceCache()
 {
-    write("invalidCook.matgraph", "TINY_MATGRAPH 99\n");
-    check(!PlatformAssetCompiler::compile(root + "invalidCook.matgraph", root + "Cooked/invalid.matgraph").success,
+    write("invalidCook.mat", "TINY_MAT 99 graph\n");
+    check(!PlatformAssetCompiler::compile(root + "invalidCook.mat", root + "Cooked/invalid.mat").success,
           "offline cook rejects invalid graph rather than copying it");
     auto graph = makeBuiltinPbrDefinition();
     const auto compiled = MaterialCompiler{}.compile(graph);
@@ -652,7 +630,7 @@ void testMoveReferenceRollback()
     std::filesystem::create_directories(directory);
     const auto source = directory / "old.ppm", destination = directory / "new.ppm", owner = directory / "owner.mat";
     PlatformFile::writeAllText(source, "P3\n1 1\n255\n255 255 255\n");
-    const std::string content = "TINY_MAT 2\ndefinition \"builtin:PBR\"\ntexture \"BaseMap\" \"old.ppm\"\n";
+    const std::string content = "TINY_MAT 3 instance\nparent \"builtin:PBR\"\ntexture \"BaseMap\" \"old.ppm\"\n";
     PlatformFile::writeAllText(owner, content);
     AssetRegistry registry;
     registry.scan(directory);
@@ -688,10 +666,10 @@ void testCustomRootPackage()
 {
     const auto project = std::filesystem::absolute(root + "CustomRootPackage");
     PlatformFile::writeAllText(project / "Content/Materials/child.mat",
-                               "TINY_MAT 2\nparent \"assets/Materials/base.mat\"\n");
+                               "TINY_MAT 3 instance\nparent \"assets/Materials/base.mat\"\n");
     PlatformFile::writeAllText(
         project / "Content/Materials/base.mat",
-        "TINY_MAT 2\ndefinition \"builtin:PBR\"\ntexture \"BaseMap\" \"assets/Textures/white.ppm\"\n");
+        "TINY_MAT 3 instance\nparent \"builtin:PBR\"\ntexture \"BaseMap\" \"assets/Textures/white.ppm\"\n");
     PlatformFile::writeAllText(project / "Content/Textures/white.ppm", "P3\n1 1\n255\n255 255 255\n");
     check(PakArchive::packDirectory(project, project.parent_path() / "custom-root.tpak"),
           "pack non-assets logical asset root");
@@ -711,15 +689,15 @@ void testCustomRootPackage()
 }
 void testFailedParentRepair()
 {
-    write("recover.matgraph", "TINY_MATGRAPH 999\n");
-    write("recoverChild.mat", "TINY_MAT 2\ndefinition \"recover.matgraph\"\n");
+    write("recover.mat", "TINY_MAT 999 graph\n");
+    write("recoverChild.mat", "TINY_MAT 3 instance\nparent \"recover.mat\"\n");
     ResourceManager resources;
     resources.initialize(nullptr, root);
     MaterialSystem system(resources);
     const auto error = system.BuildProxy("assets/recoverChild.mat");
     check(error && error->state.shadingModel == MaterialShadingModel::Unlit,
           "failed first descendant load installs error material");
-    const auto result = system.applyDefinitionDraft("assets/recover.matgraph", makeBuiltinPbrDefinition());
+    const auto result = system.applyDefinitionDraft("assets/recover.mat", makeBuiltinPbrDefinition());
     const auto repaired = system.BuildProxy("assets/recoverChild.mat");
     check(result.success && repaired != error && repaired->state.shadingModel == MaterialShadingModel::Lit,
           "parent-only repair recovers cached failed-first-load descendant");
@@ -732,11 +710,11 @@ void testNestedRootPackage()
     for (auto& p : definition.graph.GetParameters())
         if (p.name == "BaseMap")
             p.defaultValue = std::string("assets/Textures/white.ppm");
-    PlatformFile::writeAllText(project / "Data/Content/Materials/parent.matgraph", definition.graph.serialize());
+    PlatformFile::writeAllText(project / "Data/Content/Materials/parent.mat", definition.graph.serialize());
     PlatformFile::writeAllText(project / "Data/Content/Materials/base.mat",
-                               "TINY_MAT 2\ndefinition \"Data/Content/Materials/parent.matgraph\"\n");
+                               "TINY_MAT 3 instance\nparent \"Data/Content/Materials/parent.mat\"\n");
     PlatformFile::writeAllText(project / "Data/Content/Materials/child.mat",
-                               "TINY_MAT 2\nparent \"assets/Materials/base.mat\"\n");
+                               "TINY_MAT 3 instance\nparent \"assets/Materials/base.mat\"\n");
     PlatformFile::writeAllText(project / "Data/Content/Textures/white.ppm", "P3\n1 1\n255\n255 255 255\n");
     check(PakArchive::packDirectory(project, project.parent_path() / "nested-root.tpak"),
           "pack multi-level logical asset root");
@@ -755,48 +733,41 @@ void testNestedRootPackage()
     resources.shutdown();
     check(loaded, "nested-root package preserves full configured prefix for aliases, parent and texture");
 }
-void testLegacyChildOfTypedParent()
+void testGraphParentInstance()
 {
-    write("typedParent.mat", "TINY_MAT 2\ndefinition \"builtin:PBR\"\nparameter \"BaseColor\" Vec4 1 0 0 1\n");
-    write("legacyTypedChild.mat", "parent typedParent.mat\nroughness .2\noverride color 0\ncolor 0 1 0 1\n");
-    write("mixedGraph.matgraph", makeBuiltinPbrDefinition().graph.serialize());
-    write("legacyGraphChild.mat", "parent mixedGraph.matgraph\nroughness .4\n");
+    auto definition = makeEditablePbrDefinition();
+    definition.graph.GetParameters() = definition.parameters;
+    write("graphParent.mat", definition.graph.serialize());
+    write("graphChild.mat", "TINY_MAT 3 instance\nparent \"graphParent.mat\"\nparameter \"Roughness\" Float .2\n");
     ResourceManager resources;
     resources.initialize(nullptr, root);
     MaterialSystem system(resources);
-    const auto child = system.resolve("assets/legacyTypedChild.mat");
-    const auto value = [&](const char* name)
-    {
-        const auto& p = child->definition->parameters;
-        const auto it = std::find_if(p.begin(), p.end(), [&](const auto& d) { return d.name == name; });
-        return child->values[std::size_t(it - p.begin())];
-    };
-    check(child && std::get<Vec4>(value("BaseColor")).x == 1 && std::get<Vec4>(value("BaseColor")).y == 0 &&
-              isClose(std::get<float>(value("Roughness")), .2f),
-          "legacy child preserves typed parent values and explicit false override");
-    const auto graphChild = system.resolve("assets/legacyGraphChild.mat");
-    check(graphChild && graphChild->definition->sourcePath.find("mixedGraph.matgraph") != std::string::npos,
-          "legacy child retains migrated graph parent definition");
+    const auto child = system.resolve("assets/graphChild.mat");
+    check(child && isClose(std::get<float>(Value(*child, "Roughness")), .2f),
+          "instance inherits a graph material under the same extension");
     resources.shutdown();
 }
 void testCpuGenerationLifetime()
 {
     auto definition = makeBuiltinPbrDefinition();
+    definition.sourcePath = "test:lifetime";
     definition.parameters.clear();
     definition.graph.GetParameters().clear();
     const auto constant = definition.graph.addNode(MaterialNodeType::Constant, "Color");
+    definition.graph.GetNodes().back().constantType = MaterialParameterType::Vec4;
     const auto mask = definition.graph.addNode(MaterialNodeType::ComponentMask, "RGB");
     definition.graph.GetNodes().back().channelMask = "xyz";
     definition.graph.connect(constant, mask, 0);
     definition.graph.connect(mask, 1, 0);
-    write("lifetime.matgraph", definition.graph.serialize());
+    check(MaterialCompiler{}.compile(definition).Success(), "lifetime fixture is a valid typed graph");
+    write("lifetime.mat", definition.graph.serialize());
     ResourceManager resources;
     resources.initialize(nullptr, root);
     MaterialSystem system(resources);
-    auto proxy = system.BuildProxy("assets/lifetime.matgraph");
+    auto proxy = system.BuildProxy("assets/lifetime.mat");
     std::weak_ptr<const CompiledMaterial> old = proxy->compiled;
     definition.graph.GetNodes()[1].value.x = .17f;
-    check(system.applyDefinitionDraft("assets/lifetime.matgraph", definition).success,
+    check(system.applyDefinitionDraft("assets/lifetime.mat", definition).success,
           "publish a distinct constant generation");
     proxy.reset();
     check(old.expired(), "CPU source cache does not retain obsolete generations after snapshots release");
@@ -806,10 +777,24 @@ void testCpuGenerationLifetime()
 int main()
 {
     std::cout.setf(std::ios::unitbuf);
+    {
+        MaterialAssetData material;
+        std::string error;
+        check(parseMaterialAsset("TINY_MAT 3 graph\nsettings Lit Opaque 0 .5\n"
+                                 "node 1 SurfaceOutput \"Surface\" 0 0 Float 0 0 0 0 \"\" \"\"\n",
+                                 material, error),
+              "unified .mat accepts embedded graph");
+        check(parseMaterialAsset("TINY_MAT 3 instance\nparent \"parent.mat\"\n", material, error),
+              "unified .mat accepts parent instance");
+        check(!parseMaterialAsset("TINY_MAT 2\ndefinition \"builtin:PBR\"\n", material, error),
+              "unified .mat rejects old instance format");
+        MaterialGraph graph;
+        check(!graph.parse("TINY_MATGRAPH 2\nsettings Lit Opaque 0 .5\n"), "unified .mat rejects old graph format");
+    }
     try
     {
         std::filesystem::create_directories(root);
-        testLegacyMaterialCompatibility();
+        testUnifiedMaterialResource();
         testInvalidMaterialCandidates();
         testTypedMaterialRoundTrip();
         testThreeLevelInheritance();
@@ -817,7 +802,7 @@ int main()
         testAssetRootPaths();
         testMaterialDependencies();
         testGraphTypes();
-        testLegacyGraphUpgrade();
+        testGraphFormatRejection();
         testReachableCycles();
         testDeterministicCompilation();
         testLimits();
@@ -830,7 +815,7 @@ int main()
         testCustomRootPackage();
         testNestedRootPackage();
         testFailedParentRepair();
-        testLegacyChildOfTypedParent();
+        testGraphParentInstance();
         testCpuGenerationLifetime();
     }
     catch (const std::exception& error)

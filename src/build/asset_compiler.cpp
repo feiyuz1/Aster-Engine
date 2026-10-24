@@ -45,6 +45,11 @@ AssetCompileResult PlatformAssetCompiler::compile(const std::filesystem::path& s
                                                   const std::filesystem::path& materialAssetRoot)
 {
     AssetCompileResult result;
+    if (extension(source) == ".matgraph")
+    {
+        result.error = "Obsolete .matgraph asset; convert to TINY_MAT 3 .mat before cooking";
+        return result;
+    }
     std::error_code error;
     result.sourceBytes = std::filesystem::file_size(source, error);
     if (!destination.parent_path().empty())
@@ -55,7 +60,7 @@ AssetCompileResult PlatformAssetCompiler::compile(const std::filesystem::path& s
         return result;
     }
     BinaryWriter writer;
-    if (extension(source) == ".mat" || extension(source) == ".matgraph")
+    if (extension(source) == ".mat")
     {
         auto assetRoot = materialAssetRoot;
         if (assetRoot.empty())

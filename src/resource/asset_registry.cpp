@@ -59,8 +59,6 @@ std::optional<std::string> AssetType(const std::string& extension)
         return "AnimationGraph";
     if (extension == ".env")
         return "Environment";
-    if (extension == ".matgraph")
-        return "MaterialGraph";
     if (extension == ".input")
         return "Input";
     if (extension == ".vfx")
@@ -80,10 +78,10 @@ std::vector<std::string> InferStructuredDependencies(const std::filesystem::path
                                                      const std::filesystem::path& root)
 {
     std::vector<std::string> dependencies;
-    if (type == "Material" || type == "MaterialGraph")
+    if (type == "Material")
     {
         for (const auto& reference :
-             CollectMaterialReferences(PlatformFile::readAllText(path), type == "MaterialGraph"))
+             CollectMaterialReferences(PlatformFile::readAllText(path)))
         {
             const auto resolved = resolveMaterialReference(reference, path, root);
             if (std::find(dependencies.begin(), dependencies.end(), resolved) == dependencies.end())
@@ -137,7 +135,7 @@ void AssetRegistry::scanAsset(const std::filesystem::directory_entry& entry, con
     auto extension = entry.path().extension().string();
     std::transform(extension.begin(), extension.end(), extension.begin(),
                    [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-    if (extension == ".meta" || extension == ".tmp" || extension == ".bak")
+    if (extension == ".meta" || extension == ".tmp" || extension == ".bak" || extension == ".matgraph")
         return;
     const auto metaPath = toUtf8GenericPath(entry.path().lexically_normal()) + ".meta";
     const auto inferredType = AssetType(extension);
@@ -179,8 +177,7 @@ void AssetRegistry::scanAsset(const std::filesystem::directory_entry& entry, con
             if (pair.first.rfind("import.", 0) == 0)
                 info.importSettings[pair.first.substr(7)] = pair.second;
     }
-    if (info.type == "BlendTree" || info.type == "AnimationGraph" || info.type == "Material" ||
-        info.type == "MaterialGraph")
+    if (info.type == "BlendTree" || info.type == "AnimationGraph" || info.type == "Material")
     {
         auto inferredDependencies = InferStructuredDependencies(fromUtf8Path(info.path), info.type, m_root);
         if (info.dependencies != inferredDependencies)

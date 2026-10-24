@@ -159,6 +159,51 @@ void backendWriteFailureRollback()
 
 struct EditorInteractionTests
 {
+    void animationDocumentRename()
+    {
+        TemporaryProject project;
+        const auto assets = project.root / "assets";
+        const auto source = assets / "Models/Walk.skanim";
+        const auto destination = assets / "Moved/Walk.skanim";
+        const auto rigPath = assets / "Models/Rig.skeleton";
+        Skeleton rig;
+        rig.bones = {{"Root", -1, Mat4::identity()}};
+        SkeletalClip clip;
+        clip.name = "Walk";
+        clip.duration = 1;
+        clip.keyframes = {{0, {BonePose{}}}, {1, {BonePose{}}}};
+        check(saveSkeletonAsset(rig, rigPath) && saveSkeletalClipAsset(clip, source), "animation rename fixture saves");
+        ResourceManager resources;
+        resources.initialize(nullptr, assets);
+        auto& registry = resources.getAssetRegistry();
+        registry.setImportSetting(toUtf8GenericPath(source), "preview.skeleton", registry.Find(toUtf8GenericPath(rigPath))->id);
+        EditorApp app;
+        World world;
+        auto& context = const_cast<EngineContext&>(app.m_engine.GetContext());
+        context.world = &world;
+        context.resourceManager = &resources;
+        app.m_engine.GetSceneManager().setWorld(&world);
+        auto& settings = const_cast<ProjectSettings&>(app.m_engine.getProjectSettings());
+        settings.projectFile = project.root / "Rename.tinyproject";
+        settings.assetDirectory = "assets";
+        app.openAsset(*registry.Find(toUtf8GenericPath(source)));
+        check(app.m_animationAssetEditor.setName("Draft"), "animation draft changes");
+        std::string error;
+        check(!app.moveEditorAsset(toUtf8GenericPath(source), destination, error) && std::filesystem::exists(source),
+              "dirty animation document blocks rename before files change");
+        check(!app.AssetDeletionBlockers({toUtf8GenericPath(source)}).empty(), "dirty animation document blocks deletion");
+        check(app.m_animationAssetEditor.save() && app.moveEditorAsset(toUtf8GenericPath(source), destination, error),
+              "saved animation document can be renamed");
+        check(app.m_animationAssetEditor.path() == toUtf8GenericPath(destination), "renamed animation document saves to its new path");
+        const auto movedRig = assets / "Moved/Rig.skeleton";
+        check(app.moveEditorAsset(toUtf8GenericPath(rigPath), movedRig, error) &&
+                  app.m_animationAssetEditor.skeletonPath() == toUtf8GenericPath(movedRig),
+              "open animation preview follows renamed skeleton GUID");
+        context.world = nullptr;
+        context.resourceManager = nullptr;
+        resources.shutdown();
+    }
+
     void openShaderIncludeRename()
     {
         // A dirty dependent must never be overwritten; a clean editor must receive the rewritten disk baseline.
@@ -223,7 +268,10 @@ struct EditorInteractionTests
         check(SceneSerializer::Save(world, assets / "start.scene"), "write startup scene fixture");
         PlatformFile::writeAllText(assets / "start.input", "bindings fixture\n");
         PlatformFile::writeAllText(assets / "sky.ppm", "P3\n1 1\n255\n128 128 128\n");
-        PlatformFile::writeAllText(assets / "textureOwner.mat", "texture \"assets/sky.ppm\"\n");
+        MaterialAssetData textureOwner;
+        textureOwner.parentPath = "builtin:PBR";
+        textureOwner.overrides["BaseMap"] = std::string("assets/sky.ppm");
+        PlatformFile::writeAllText(assets / "textureOwner.mat", serializeMaterialAsset(textureOwner));
         ResourceManager resources;
         resources.initialize(nullptr, assets);
         EditorApp app;
@@ -393,6 +441,8 @@ int main(int argc, char** argv)
             tinyengine::backendWriteFailureRollback();
 #endif
         }
+        if (mode.empty() || mode == "--animation-editor")
+            tinyengine::EditorInteractionTests{}.animationDocumentRename();
         if (mode.empty() || mode == "--editor")
             tinyengine::EditorInteractionTests{}.portableLiveWorldAndHistories();
         if (mode.empty() || mode == "--project")

@@ -280,7 +280,6 @@ class MaterialResource final : public Resource
 
   private:
     bool loadCandidate(const std::string& path);
-    void captureLegacyData(const std::string& source);
     MaterialAssetData m_materialData;
     ReferenceResolver m_referenceResolver;
     SourceReader m_sourceReader;

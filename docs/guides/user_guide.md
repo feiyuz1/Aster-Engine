@@ -210,7 +210,7 @@ Scene View 常显显示模式、显示菜单、吸附、坐标空间、轴心和
 - `.vfx`：打开特效编辑器。
 - `.btgraph`：打开行为树编辑器。
 - `.vert`、`.frag`：打开着色器源码编辑器。
-- `.matgraph`：Material Graph。
+- `.mat`：材质节点图或材质实例（统一格式）。
 
 ### 2.6 Console / Stats
 
@@ -296,18 +296,24 @@ Assets 面板可直接创建：
 - `.vfx`：发射、生命周期、纹理 Flipbook 与 CPU/GPU 模式。
 - `.btgraph`：行为树节点图。
 
-编辑器可以打开和保存已有 `.matgraph` 可视化材质节点图，但当前 Assets 顶部没有新建 Material Graph 按钮；应从经过验证的模板复制，或通过 `MaterialGraph::Save()` 的项目工具生成后重新打开项目扫描。
+资产面板的新建菜单中选择“材质”可生成带 PBR 节点连线的 `.mat`；选择“材质实例”则引用当前选中的材质。双击普通材质打开节点编辑器，双击实例打开参数覆盖编辑器，并可点击“打开父材质”查看父图。
 
 着色器源码编辑器编辑 `.vert/.frag` 时只修改内存缓冲区，显式保存后才调用真实 OpenGL 编译器。编译失败时保留上一份有效 Program，并显示驱动错误与行号；源码保存成功和编译成功是两个独立结果。
 
 ### 4.1 动画 Clip、Blend Tree 和 Animation Graph
 
-模型导入后通常会得到同名 `.skeleton` 和一个或多个 `.skanim`。选择 `.skanim` 可查看时长、骨骼曲线、压缩统计、事件列表和 Debug Pose：
+模型导入后会生成一个 `.skeleton` 和一个或多个 `.skanim`。导入器会把片段到骨架和蒙皮网格的关联写入 `.meta` 的 GUID 依赖，动作不需要与骨架同名。源动作名称相同或文件名规范化后重名时，输出文件会自动加后缀，避免互相覆盖。
 
-1. 用 Debug Time 检查首帧、末帧和循环接缝。
-2. 添加事件名称和触发时间，保存前确保时间位于 Clip 时长内。
-3. 需要重新压缩时调整误差后执行压缩，观察原始/压缩关键帧数量。
-4. 在实体的 Animation 组件中同时填写 Clip 与匹配 Skeleton；需要 Root Motion 时再开启对应选项。
+双击 `.skanim` 打开独立的“动画片段”窗口：
+
+1. 预览区同时显示蒙皮模型轮廓与骨架，拖动旋转、滚轮缩放；可分别隐藏模型或骨架，点击“适配视图”重新取景。预览使用简化的无材质显示，最终材质效果请在场景中检查。
+2. 使用播放、暂停、复位、速率和循环预览检查动作，拖动时间条定位到任意时间。预览循环与资产本身的“片段循环”分别控制。
+3. 骨骼层级支持选择并检查当前局部平移、角度和缩放；缺少关联时，在“预览资源”选择已登记的匹配骨架及网格。旧资产仍支持片段旁的同名骨架作为回退。
+4. 可以编辑片段名称、循环、事件时间、名称和参数，并在当前播放时间添加事件。事件时间必须在片段时长内；压缩曲线操作也会进入文档撤销历史。
+5. `Ctrl+S` 保存动画，`Ctrl+Z` / `Ctrl+Shift+Z` 撤销和重做。未保存修改会显示星号，打开另一片段或重命名受影响的资源前需保存或恢复。关闭片段及退出编辑器时提供保存、放弃、取消。
+6. 在实体的 Animation 组件中绑定 Clip 和匹配 Skeleton；需要 Root Motion 时再开启对应选项。
+
+导入时会合并被省略辅助节点的静态及动画变换，并将逆绑定矩阵换算到导入单位。当前 GPU 骨架上限为 64 根骨骼；同一模型的蒙皮网格使用共享绑定空间。多个网格对同名骨骼提供不兼容的逆绑定矩阵时，导入会明确失败，应先在 DCC 中统一绑定空间后重新导入。
 
 1D Blend Tree 用参数阈值在相邻 Clip 之间插值。阈值必须唯一并按数值排序，Clip 路径必须有效。Animation Graph 的使用顺序是：添加参数 → 添加状态并绑定 Motion → 设置 Entry State → 添加 Transition、比较运算、阈值和交叉淡化时间 → 保存 → 把 `.animgraph` 填入 Animation 组件。
 
@@ -325,14 +331,13 @@ Assets 面板可直接创建：
 
 ### 4.4 材质、材质实例和贴图通道
 
-选择 `.mat` 且没有实体选择时，Inspector 显示材质属性。材质实例通过 `parent` 指向父材质；每个属性只有在显式 Override 开启后才覆盖父值。常用字段包括 Base Color、Metallic、Roughness、Emissive、颜色/法线/Metallic/Roughness/AO 贴图，以及 ORM/RMA Packed Texture。
+材质统一保存为 `.mat`。普通材质的 `TINY_MAT 3 graph` 内容包括参数、节点连线和渲染设置；实例的 `TINY_MAT 3 instance` 内容通过 `parent` 引用父材质，只保存参数覆盖。双击普通材质直接查看和编辑节点连线；实例可通过“打开父材质”查看共享逻辑。取消“覆盖”即可恢复继承值。
 
-- ORM：R=AO、G=Roughness、B=Metallic。
-- RMA：R=Roughness、G=Metallic、B=AO。
-- 法线、Metallic、Roughness、AO 和 Packed 数据不可按 sRGB 解码。
-- 调整父材质前检查实例的 Override，避免误以为父值没有传播。
+新建材质包含 Base Color、Metallic、Roughness、Emissive、Opacity、法线和贴图通道组成的完整 PBR 图。颜色纹理使用 sRGB，Normal、Metallic、Roughness、AO 和 Packed 数据保持线性。修改父图会影响引用它的实例；需要独立逻辑时创建单独的普通材质。
 
-Material Graph 以 `.matgraph` 保存节点和连线，必须存在有效输出节点。编译器会检测环路、列出相关节点 ID 并拒绝生成 Shader；看到环路错误时应删除回边，再重新编译确认错误列表清空。
+图必须存在有效的表面输出。编译器会检测环路、列出相关节点 ID 并拒绝保存无效候选；看到环路错误时应删除回边后重新保存。
+
+旧的 `.matgraph`、无版本 `.mat` 和版本 2 材质不再加载。已有项目可先运行 `python scripts/migrate_materials.py <项目目录>` 检查，再增加 `--apply` 完成离线迁移；原文件备份到 `saved/MaterialMigration/`。迁移后重新烘焙和打包。
 
 ### 4.5 Shader 源码
 

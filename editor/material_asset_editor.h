@@ -14,10 +14,15 @@ class MaterialAssetEditor : public MaterialDocument<MaterialAssetData>
     {
         m_parameters = std::move(parameters);
     }
+    void setOpenParentRequest(std::function<void(const std::string&, const std::string&)> callback)
+    {
+        m_openParent = std::move(callback);
+    }
     static bool createInstance(const std::string& path, const std::string& parent, std::string& error);
     void draw();
 
   private:
     std::vector<MaterialParameterDecl> m_parameters;
+    std::function<void(const std::string&, const std::string&)> m_openParent;
 };
 } // namespace tinyengine

@@ -11,6 +11,7 @@
 #include "tinyengine/ecs/scene_serializer.h"
 #include "tinyengine/platform/platform.h"
 #include "tinyengine/resource/asset_registry.h"
+#include "tinyengine/resource/material_definition_resource.h"
 #include "tinyengine/task/job_system.h"
 
 #include <assimp/Importer.hpp>
@@ -180,17 +181,22 @@ bool writeMaterial(const aiScene& scene, const aiMaterial& material, const std::
     float opacity = color.a;
     material.Get(AI_MATKEY_OPACITY, opacity);
     color.a = opacity;
-    std::ostringstream out;
-    out << std::setprecision(7) << "color " << color.r << ' ' << color.g << ' ' << color.b << ' ' << color.a << '\n';
+    auto definition = makeEditablePbrDefinition();
+    const auto set = [&](const std::string& name, MaterialParameterValue value)
+    {
+        for (auto& p : definition.parameters)
+            if (p.name == name) p.defaultValue = std::move(value);
+    };
+    set("BaseColor", Vec4{color.r, color.g, color.b, color.a});
     float metallic = 0.0f, roughness = 0.7f;
     material.Get(AI_MATKEY_METALLIC_FACTOR, metallic);
     material.Get(AI_MATKEY_ROUGHNESS_FACTOR, roughness);
     aiColor3D emissive{};
     material.Get(AI_MATKEY_COLOR_EMISSIVE, emissive);
-    out << "metallic " << std::clamp(metallic, 0.0f, 1.0f) << "\nroughness " << std::clamp(roughness, 0.04f, 1.0f)
-        << "\nemissive " << emissive.r << ' ' << emissive.g << ' ' << emissive.b << '\n';
-    if (color.a < 0.999f)
-        out << "blend alpha\n";
+    set("Metallic", std::clamp(metallic, 0.0f, 1.0f));
+    set("Roughness", std::clamp(roughness, 0.04f, 1.0f));
+    set("Emissive", Vec3{emissive.r, emissive.g, emissive.b});
+    if (color.a < .999f) definition.renderState.blendMode = MaterialBlendMode::Alpha;
     auto importTexture =
         [&](const aiTextureType type, const char* key, const aiTextureType fallback = aiTextureType_NONE)
     {
@@ -206,18 +212,20 @@ bool writeMaterial(const aiScene& scene, const aiMaterial& material, const std::
                        [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
         if (extension == ".ppm" || extension == ".png" || extension == ".jpg" || extension == ".jpeg" ||
             extension == ".bmp" || extension == ".tif" || extension == ".tiff" || extension == ".hdr")
-            out << key << ' ' << resourcePath(copied, outputDirectory, options).generic_string() << '\n';
+            set(key, resourcePath(copied, outputDirectory, options).generic_string());
         else
             result.warnings.push_back("Copied texture but runtime decoder does not support it: " +
                                       copied.generic_string());
     };
-    importTexture(aiTextureType_BASE_COLOR, "texture", aiTextureType_DIFFUSE);
-    importTexture(aiTextureType_NORMALS, "normalTexture", aiTextureType_HEIGHT);
-    importTexture(aiTextureType_METALNESS, "metallicTexture");
-    importTexture(aiTextureType_DIFFUSE_ROUGHNESS, "roughnessTexture");
-    importTexture(aiTextureType_AMBIENT_OCCLUSION, "aoTexture", aiTextureType_LIGHTMAP);
-    importTexture(aiTextureType_EMISSIVE, "emissiveTexture");
-    return PlatformFile::writeAllText(path, out.str());
+    importTexture(aiTextureType_BASE_COLOR, "BaseMap", aiTextureType_DIFFUSE);
+    importTexture(aiTextureType_NORMALS, "NormalMap", aiTextureType_HEIGHT);
+    importTexture(aiTextureType_METALNESS, "MetallicMap");
+    importTexture(aiTextureType_DIFFUSE_ROUGHNESS, "RoughnessMap");
+    importTexture(aiTextureType_AMBIENT_OCCLUSION, "AOMap", aiTextureType_LIGHTMAP);
+    importTexture(aiTextureType_EMISSIVE, "EmissiveMap");
+    definition.graph.GetParameters() = definition.parameters;
+    definition.graph.GetRenderState() = definition.renderState;
+    return PlatformFile::writeAllText(path, definition.graph.serialize());
 }
 
 Vec3 radiansToDegrees(const aiVector3D& value)
@@ -307,6 +315,11 @@ ModelImportResult AssimpImporter::importModel(const std::filesystem::path& sourc
                                               const ModelImportOptions& options)
 {
     ModelImportResult result;
+    if (!std::isfinite(options.scale) || options.scale <= 0.0f)
+    {
+        result.error = "Import scale must be finite and positive";
+        return result;
+    }
     if (!std::filesystem::is_regular_file(source))
     {
         result.error = "Source model does not exist: " + source.generic_string();
@@ -380,7 +393,26 @@ ModelImportResult AssimpImporter::importModel(const std::filesystem::path& sourc
                 for (int row = 0; row < 4; ++row)
                     for (int column = 0; column < 4; ++column)
                         matrix.at(row, column) = sourceBone.mOffsetMatrix[row][column];
-                inverseBinds[sourceBone.mName.C_Str()] = matrix;
+                // 网格与骨骼平移使用统一单位，逆绑定也必须作 S * M * S^-1 变换。
+                matrix = scaleMatrix({options.scale, options.scale, options.scale}) * matrix *
+                         scaleMatrix({1.0f / options.scale, 1.0f / options.scale, 1.0f / options.scale});
+                const std::string boneName = sourceBone.mName.C_Str();
+                if (const auto previous = inverseBinds.find(boneName); previous != inverseBinds.end())
+                {
+                    for (std::size_t element = 0; element < matrix.data.size(); ++element)
+                    {
+                        const float tolerance = 0.0001f * std::max(1.0f, std::abs(previous->second.data[element]));
+                        if (std::abs(previous->second.data[element] - matrix.data[element]) > tolerance)
+                        {
+                            result.error = "Meshes have incompatible inverse bind matrices for bone: " + boneName;
+                            return result;
+                        }
+                    }
+                }
+                else
+                {
+                    inverseBinds.emplace(boneName, matrix);
+                }
             }
         for (const auto& entry : globalBones)
         {
@@ -404,15 +436,22 @@ ModelImportResult AssimpImporter::importModel(const std::filesystem::path& sourc
         result.assets.push_back({"Skeleton", skeletonPath});
     }
     std::vector<std::filesystem::path> skeletalClipPaths;
+    std::vector<unsigned int> sourceAnimationIndices;
+    std::unordered_set<std::string> clipFileNames;
     if (!importedSkeleton.bones.empty())
         for (unsigned int animationIndex = 0; animationIndex < scene->mNumAnimations; ++animationIndex)
         {
             const aiAnimation& animation = *scene->mAnimations[animationIndex];
             const double ticksPerSecond = animation.mTicksPerSecond > 0.0 ? animation.mTicksPerSecond : 25.0;
             SkeletalClip clip;
-            clip.name = safeName(animation.mName.C_Str(), "Animation" + std::to_string(animationIndex));
+            clip.name = animation.mName.length ? animation.mName.C_Str() : "Animation" + std::to_string(animationIndex);
             clip.duration = static_cast<float>(animation.mDuration / ticksPerSecond);
             clip.looping = true;
+            if (!std::isfinite(clip.duration) || clip.duration <= 0.0f || clip.duration > 3600.0f)
+            {
+                result.warnings.push_back("Skipped animation with invalid or excessive duration: " + clip.name);
+                continue;
+            }
             std::unordered_map<std::string, const aiNodeAnim*> channels;
             for (unsigned int channelIndex = 0; channelIndex < animation.mNumChannels; ++channelIndex)
                 channels[animation.mChannels[channelIndex]->mNodeName.C_Str()] = animation.mChannels[channelIndex];
@@ -428,20 +467,35 @@ ModelImportResult AssimpImporter::importModel(const std::filesystem::path& sourc
                 {
                     const Bone& bone = importedSkeleton.bones[boneIndex];
                     const aiNode* node = scene->mRootNode->FindNode(bone.name.c_str());
+                    aiMatrix4x4 local;
+                    // 骨架省略无权重节点时，其静态与动画变换仍属于保留子骨骼的局部姿势。
+                    // 只合成到最近的保留父骨骼，防止父节点变换重复应用。
+                    for (const aiNode* ancestor = node; ancestor; ancestor = ancestor->mParent)
+                    {
+                        if (ancestor != node && globalBones.count(ancestor->mName.C_Str()))
+                        {
+                            break;
+                        }
+                        aiMatrix4x4 sampled = ancestor->mTransformation;
+                        if (const auto channel = channels.find(ancestor->mName.C_Str()); channel != channels.end())
+                        {
+                            aiVector3D nodeScale{1, 1, 1}, nodePosition{};
+                            aiQuaternion nodeRotation;
+                            sampled.Decompose(nodeScale, nodeRotation, nodePosition);
+                            const auto* track = channel->second;
+                            const double ticks = seconds * ticksPerSecond;
+                            nodePosition =
+                                sampleVectorKeys(track->mPositionKeys, track->mNumPositionKeys, ticks, nodePosition);
+                            nodeScale = sampleVectorKeys(track->mScalingKeys, track->mNumScalingKeys, ticks, nodeScale);
+                            nodeRotation =
+                                sampleRotationKeys(track->mRotationKeys, track->mNumRotationKeys, ticks, nodeRotation);
+                            sampled = aiMatrix4x4(nodeScale, nodeRotation, nodePosition);
+                        }
+                        local = sampled * local;
+                    }
                     aiVector3D scale{1, 1, 1}, position{};
                     aiQuaternion rotation;
-                    if (node)
-                        node->mTransformation.Decompose(scale, rotation, position);
-                    if (const auto channel = channels.find(bone.name); channel != channels.end())
-                    {
-                        const double ticks = seconds * ticksPerSecond;
-                        position = sampleVectorKeys(channel->second->mPositionKeys, channel->second->mNumPositionKeys,
-                                                    ticks, position);
-                        scale = sampleVectorKeys(channel->second->mScalingKeys, channel->second->mNumScalingKeys, ticks,
-                                                 scale);
-                        rotation = sampleRotationKeys(channel->second->mRotationKeys, channel->second->mNumRotationKeys,
-                                                      ticks, rotation);
-                    }
+                    local.Decompose(scale, rotation, position);
                     key.localPose[boneIndex] = {
                         {position.x * options.scale, position.y * options.scale, position.z * options.scale},
                         quaternionToEulerDegrees(rotation),
@@ -467,10 +521,24 @@ ModelImportResult AssimpImporter::importModel(const std::filesystem::path& sourc
                            stats.ratio) /
                               static_cast<float>(result.compatibility.importedAnimationClips + 1);
             }
-            const auto clipPath = outputDirectory / (baseName + "_" + clip.name + ".skanim");
+            const std::string clipStem = baseName + "_" + safeName(clip.name, "Animation");
+            std::string fileStem = clipStem;
+            for (unsigned int suffix = 1;; ++suffix)
+            {
+                std::string key = fileStem;
+                std::transform(key.begin(), key.end(), key.begin(),
+                               [](unsigned char value) { return static_cast<char>(std::tolower(value)); });
+                if (clipFileNames.insert(key).second)
+                {
+                    break;
+                }
+                fileStem = clipStem + "_" + std::to_string(suffix);
+            }
+            const auto clipPath = outputDirectory / (fileStem + ".skanim");
             if (saveSkeletalClipAsset(clip, clipPath))
             {
                 skeletalClipPaths.push_back(clipPath);
+                sourceAnimationIndices.push_back(animationIndex);
                 result.assets.push_back({"Animation", clipPath});
                 ++result.compatibility.importedAnimationClips;
             }
@@ -539,7 +607,7 @@ ModelImportResult AssimpImporter::importModel(const std::filesystem::path& sourc
                 MeshComponent{resourcePath(meshPaths[meshIndex], outputDirectory, options).generic_string(),
                               material.empty() ? std::string{}
                                                : resourcePath(material, outputDirectory, options).generic_string()});
-            if (!skeletonPath.empty() && !skeletalClipPaths.empty())
+            if (mesh.HasBones() && !skeletonPath.empty() && !skeletalClipPaths.empty())
             {
                 AnimationComponent animation;
                 animation.clipPath = resourcePath(skeletalClipPaths.front(), outputDirectory, options).generic_string();
@@ -569,6 +637,45 @@ ModelImportResult AssimpImporter::importModel(const std::filesystem::path& sourc
             dependencyIds.push_back(info->id);
     }
     registry.setDependencies(result.prefabPath.generic_string(), std::move(dependencyIds));
+    if (!skeletalClipPaths.empty())
+    {
+        const auto rig = registry.Find(skeletonPath.generic_string());
+        std::vector<std::string> previewDependencies;
+        if (rig)
+        {
+            previewDependencies.push_back(rig->id);
+        }
+        std::string previewMesh;
+        for (unsigned int meshIndex = 0; meshIndex < scene->mNumMeshes; ++meshIndex)
+        {
+            if (scene->mMeshes[meshIndex]->HasBones())
+            {
+                if (const auto mesh = registry.Find(meshPaths[meshIndex].generic_string()))
+                {
+                    previewDependencies.push_back(mesh->id);
+                    if (previewMesh.empty())
+                    {
+                        previewMesh = mesh->id;
+                    }
+                }
+            }
+        }
+        for (std::size_t index = 0; index < skeletalClipPaths.size(); ++index)
+        {
+            const auto clipPath = skeletalClipPaths[index].generic_string();
+            const auto sourceIndex = sourceAnimationIndices[index];
+            if (!rig || !registry.setDependencies(clipPath, previewDependencies) ||
+                !registry.setImportSetting(clipPath, "preview.skeleton", rig->id) ||
+                !registry.setImportSetting(clipPath, "preview.mesh", previewMesh) ||
+                !registry.setImportSetting(clipPath, "source.animation.index", std::to_string(sourceIndex)) ||
+                !registry.setImportSetting(clipPath, "source.animation.name",
+                                           scene->mAnimations[sourceIndex]->mName.C_Str()))
+            {
+                result.error = "Failed to save animation preview metadata: " + clipPath;
+                return result;
+            }
+        }
+    }
     registry.setImportSetting(result.prefabPath.generic_string(), "source",
                               std::filesystem::absolute(source).lexically_normal().generic_string());
     registry.setImportSetting(result.prefabPath.generic_string(), "scale", std::to_string(options.scale));

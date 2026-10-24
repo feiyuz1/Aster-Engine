@@ -1,0 +1,144 @@
+TINY_MAT 3 graph
+settings Lit Opaque 0 0.5
+parameter "BaseColor" Vec4 Linear 0.300000012 0.699999988 1 1
+parameter_meta "BaseColor" "BaseColor" "" 0 0 1
+parameter "Metallic" Float Linear 0
+parameter_meta "Metallic" "Metallic" "" 0 0 1
+parameter "Roughness" Float Linear 0.699999988
+parameter_meta "Roughness" "Roughness" "" 0 0 1
+parameter "Emissive" Vec3 Linear 0 0 0
+parameter_meta "Emissive" "Emissive" "" 0 0 1
+parameter "AO" Float Linear 1
+parameter_meta "AO" "AO" "" 0 0 1
+parameter "Opacity" Float Linear 1
+parameter_meta "Opacity" "Opacity" "" 0 0 1
+parameter "PackedEnabled" Float Linear 0
+parameter_meta "PackedEnabled" "PackedEnabled" "" 0 0 1
+parameter "PackedLayout" Float Linear 0
+parameter_meta "PackedLayout" "PackedLayout" "" 0 0 1
+parameter "MetallicMapEnabled" Float Linear 0
+parameter_meta "MetallicMapEnabled" "MetallicMapEnabled" "" 0 0 1
+parameter "RoughnessMapEnabled" Float Linear 0
+parameter_meta "RoughnessMapEnabled" "RoughnessMapEnabled" "" 0 0 1
+parameter "AOMapEnabled" Float Linear 0
+parameter_meta "AOMapEnabled" "AOMapEnabled" "" 0 0 1
+parameter "BaseMap" Texture2D SRgb ""
+parameter_meta "BaseMap" "BaseMap" "" 0 0 1
+parameter "NormalMap" Texture2D Normal ""
+parameter_meta "NormalMap" "NormalMap" "" 0 0 1
+parameter "MetallicMap" Texture2D Linear ""
+parameter_meta "MetallicMap" "MetallicMap" "" 0 0 1
+parameter "RoughnessMap" Texture2D Linear ""
+parameter_meta "RoughnessMap" "RoughnessMap" "" 0 0 1
+parameter "AOMap" Texture2D Linear ""
+parameter_meta "AOMap" "AOMap" "" 0 0 1
+parameter "EmissiveMap" Texture2D SRgb ""
+parameter_meta "EmissiveMap" "EmissiveMap" "" 0 0 1
+parameter "PackedMap" Texture2D Linear ""
+parameter_meta "PackedMap" "PackedMap" "" 0 0 1
+node 1 SurfaceOutput "Surface" 1500 400 Float 0 0 0 0 "" ""
+node 2 VectorParameter "BaseColor" 0 -300 Float 0 0 0 0 "BaseColor" ""
+node 3 TextureParameter "BaseMap" 0 -100 Float 0 0 0 0 "BaseMap" ""
+node 4 TextureSample "BaseMap sample" 240 -100 Float 0 0 0 0 "" ""
+node 5 ComponentMask "xyz" 480 -100 Float 0 0 0 0 "" "xyz"
+node 6 ComponentMask "xyz" 480 -300 Float 0 0 0 0 "" "xyz"
+node 7 Multiply "Base color" 1100 -200 Float 0 0 0 0 "" ""
+node 8 ComponentMask "w" 480 240 Float 0 0 0 0 "" "w"
+node 9 ComponentMask "w" 480 80 Float 0 0 0 0 "" "w"
+node 10 Multiply "Color alpha" 750 100 Float 0 0 0 0 "" ""
+node 11 ScalarParameter "Opacity" 480 400 Float 0 0 0 0 "Opacity" ""
+node 12 Multiply "Opacity" 1100 100 Float 0 0 0 0 "" ""
+node 13 TextureParameter "PackedMap" 0 600 Float 0 0 0 0 "PackedMap" ""
+node 14 TextureSample "PackedMap sample" 240 600 Float 0 0 0 0 "" ""
+node 15 ScalarParameter "PackedLayout" 240 800 Float 0 0 0 0 "PackedLayout" ""
+node 16 ComponentMask "x" 480 600 Float 0 0 0 0 "" "x"
+node 17 ComponentMask "y" 480 800 Float 0 0 0 0 "" "y"
+node 18 ComponentMask "z" 480 1000 Float 0 0 0 0 "" "z"
+node 19 Lerp "ORM / RMA roughness" 750 750 Float 0 0 0 0 "" ""
+node 20 Lerp "ORM / RMA AO" 750 1000 Float 0 0 0 0 "" ""
+node 21 TextureParameter "MetallicMap" 0 1250 Float 0 0 0 0 "MetallicMap" ""
+node 22 TextureSample "MetallicMap sample" 240 1250 Float 0 0 0 0 "" ""
+node 23 ComponentMask "z" 480 1250 Float 0 0 0 0 "" "z"
+node 24 ScalarParameter "MetallicMapEnabled" 480 1450 Float 0 0 0 0 "MetallicMapEnabled" ""
+node 25 Lerp "Metallic map" 750 1250 Float 0 0 0 0 "" ""
+node 26 ScalarParameter "Metallic" 750 1450 Float 0 0 0 0 "Metallic" ""
+node 27 Multiply "Metallic" 1100 1250 Float 0 0 0 0 "" ""
+node 28 TextureParameter "RoughnessMap" 0 1690 Float 0 0 0 0 "RoughnessMap" ""
+node 29 TextureSample "RoughnessMap sample" 240 1690 Float 0 0 0 0 "" ""
+node 30 ComponentMask "y" 480 1690 Float 0 0 0 0 "" "y"
+node 31 ScalarParameter "RoughnessMapEnabled" 480 1890 Float 0 0 0 0 "RoughnessMapEnabled" ""
+node 32 Lerp "Roughness map" 750 1690 Float 0 0 0 0 "" ""
+node 33 ScalarParameter "Roughness" 750 1890 Float 0 0 0 0 "Roughness" ""
+node 34 Multiply "Roughness" 1100 1690 Float 0 0 0 0 "" ""
+node 35 TextureParameter "AOMap" 0 2130 Float 0 0 0 0 "AOMap" ""
+node 36 TextureSample "AOMap sample" 240 2130 Float 0 0 0 0 "" ""
+node 37 ComponentMask "x" 480 2130 Float 0 0 0 0 "" "x"
+node 38 ScalarParameter "AOMapEnabled" 480 2330 Float 0 0 0 0 "AOMapEnabled" ""
+node 39 Lerp "AO map" 750 2130 Float 0 0 0 0 "" ""
+node 40 ScalarParameter "AO" 750 2330 Float 0 0 0 0 "AO" ""
+node 41 Multiply "AO" 1100 2130 Float 0 0 0 0 "" ""
+node 42 TextureParameter "NormalMap" 0 2700 Float 0 0 0 0 "NormalMap" ""
+node 43 TextureSample "NormalMap sample" 240 2700 Float 0 0 0 0 "" ""
+node 44 ComponentMask "xyz" 480 2700 Float 0 0 0 0 "" "xyz"
+node 45 NormalDecode "Normal" 1100 2700 Float 0 0 0 0 "" ""
+node 46 TextureParameter "EmissiveMap" 0 3000 Float 0 0 0 0 "EmissiveMap" ""
+node 47 TextureSample "EmissiveMap sample" 240 3000 Float 0 0 0 0 "" ""
+node 48 ComponentMask "xyz" 480 3000 Float 0 0 0 0 "" "xyz"
+node 49 VectorParameter "Emissive" 480 3200 Float 0 0 0 0 "Emissive" ""
+node 50 Multiply "Emissive" 1100 3000 Float 0 0 0 0 "" ""
+link 3 0 4 0
+link 4 0 5 0
+link 2 0 6 0
+link 6 0 7 0
+link 5 0 7 1
+link 7 0 1 0
+link 4 0 8 0
+link 2 0 9 0
+link 9 0 10 0
+link 8 0 10 1
+link 10 0 12 0
+link 11 0 12 1
+link 12 0 1 6
+link 13 0 14 0
+link 14 0 16 0
+link 14 0 17 0
+link 14 0 18 0
+link 17 0 19 0
+link 16 0 19 1
+link 15 0 19 2
+link 16 0 20 0
+link 17 0 20 1
+link 15 0 20 2
+link 21 0 22 0
+link 22 0 23 0
+link 18 0 25 0
+link 23 0 25 1
+link 24 0 25 2
+link 26 0 27 0
+link 25 0 27 1
+link 27 0 1 1
+link 28 0 29 0
+link 29 0 30 0
+link 19 0 32 0
+link 30 0 32 1
+link 31 0 32 2
+link 33 0 34 0
+link 32 0 34 1
+link 34 0 1 2
+link 35 0 36 0
+link 36 0 37 0
+link 20 0 39 0
+link 37 0 39 1
+link 38 0 39 2
+link 40 0 41 0
+link 39 0 41 1
+link 41 0 1 4
+link 42 0 43 0
+link 43 0 44 0
+link 44 0 45 0
+link 45 0 1 3
+link 46 0 47 0
+link 47 0 48 0
+link 49 0 50 0
+link 48 0 50 1
+link 50 0 1 5

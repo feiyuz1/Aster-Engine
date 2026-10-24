@@ -40,13 +40,18 @@ int main()
         check(PlatformFile::writeAllText(source / "assets/value.txt", "PACKAGED"), "write packaged text");
         check(PlatformFile::writeAllText(source / "assets/empty.txt", ""), "write empty packaged file");
         check(PlatformFile::writeAllBytes(source / "assets/value.bin", {0, 42, 255}), "write packaged bytes");
-        check(PlatformFile::writeAllText(source / "assets/color.mat", "color 1 0 0 1\n"), "write packaged material");
+        check(PlatformFile::writeAllText(
+                  source / "assets/color.mat",
+                  "TINY_MAT 3 instance\nparent \"builtin:PBR\"\nparameter \"BaseColor\" Vec4 1 0 0 1\n"),
+              "write packaged material");
         check(PakArchive::packDirectory(source, archive), "pack fixture");
         check(PlatformFile::writeAllText(foreign / "assets/value.txt", "FOREIGN"), "write shadow text");
         check(PlatformFile::writeAllText(foreign / "assets/empty.txt", "NOT EMPTY"), "write shadow empty");
         check(PlatformFile::writeAllBytes(foreign / "assets/value.bin", {1, 2, 3}), "write shadow bytes");
         check(PlatformFile::writeAllText(foreign / "assets/missing.txt", "FOREIGN ONLY"), "write unmounted file");
-        check(PlatformFile::writeAllText(package / "assets/color.mat", "color 0 1 0 1\n"),
+        check(PlatformFile::writeAllText(
+                  package / "assets/color.mat",
+                  "TINY_MAT 3 instance\nparent \"builtin:PBR\"\nparameter \"BaseColor\" Vec4 0 1 0 1\n"),
               "write loose project material");
         std::filesystem::current_path(foreign);
         check(PlatformFile::mountPak(archive), "mount package");

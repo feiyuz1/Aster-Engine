@@ -99,7 +99,7 @@ void drawAssetIcon(ImDrawList* draw, ImVec2 origin, float size, const std::strin
     const ImU32 color = folder                                          ? IM_COL32(203, 170, 100, 255)
                         : type == "Texture"                             ? IM_COL32(103, 169, 128, 255)
                         : type == "Mesh" || type == "Prefab"            ? IM_COL32(110, 159, 211, 255)
-                        : type == "Material" || type == "MaterialGraph" ? IM_COL32(192, 136, 172, 255)
+                        : type == "Material" ? IM_COL32(192, 136, 172, 255)
                         : type == "Shader"                              ? IM_COL32(213, 164, 109, 255)
                         : type == "Audio"                               ? IM_COL32(164, 146, 209, 255)
                                                                         : IM_COL32(146, 163, 183, 255);
@@ -134,7 +134,7 @@ void drawAssetIcon(ImDrawList* draw, ImVec2 origin, float size, const std::strin
                                 {origin.x + size * .46f, origin.y + size * .38f},
                                 {origin.x + size * .76f, origin.y + size * .78f}, color);
     }
-    else if (type == "Material" || type == "MaterialGraph")
+    else if (type == "Material")
     {
         draw->AddCircleFilled({origin.x + size * .5f, origin.y + size * .5f}, size * .32f, color);
         draw->AddCircle({origin.x + size * .43f, origin.y + size * .43f}, size * .17f, IM_COL32(239, 218, 233, 255));
@@ -436,22 +436,31 @@ bool EditorApp::moveEditorAsset(const std::string& source, const std::filesystem
                          "请先保存或放弃受影响的着色器草稿，再重命名此资产。");
         return false;
     }
-    const auto materialDraftAffected = [&](const std::string& path, std::string text, bool graph)
+    const auto materialDraftAffected = [&](const std::string& path, std::string text)
     {
         return sameSource(path) || (!path.empty() && rewriteMaterialReferences(
-                                                         text, graph, fromUtf8Path(path), fromUtf8Path(path), assetRoot,
+                                                         text, fromUtf8Path(path), fromUtf8Path(path), assetRoot,
                                                          toUtf8GenericPath(sourcePath), toUtf8GenericPath(target)));
     };
     auto draftGraph = m_materialGraphEditor.GetDraft().graph;
     draftGraph.GetParameters() = m_materialGraphEditor.GetDraft().parameters;
     if ((m_materialAssetEditor.isDirty() &&
          materialDraftAffected(m_materialAssetEditor.GetPath(),
-                               serializeMaterialAsset(m_materialAssetEditor.GetDraft()), false)) ||
+                               serializeMaterialAsset(m_materialAssetEditor.GetDraft()))) ||
         (m_materialGraphEditor.isDirty() &&
-         materialDraftAffected(m_materialGraphEditor.GetPath(), draftGraph.serialize(), true)))
+         materialDraftAffected(m_materialGraphEditor.GetPath(), draftGraph.serialize())))
     {
         error = localize("Save or discard the affected material draft before renaming this asset.",
                          "请先保存或放弃受影响的材质草稿，再重命名此资产。");
+        return false;
+    }
+
+    const auto animationReferences = m_animationAssetEditor.retainedAssetPaths();
+    const bool animationAffected = std::any_of(animationReferences.begin(), animationReferences.end(), sameSource);
+    if (animationAffected && m_animationAssetEditor.isDirty())
+    {
+        error = localize("Save or discard the affected animation draft before renaming this asset.",
+                         "请先保存或放弃受影响的动画草稿，再重命名此资产。");
         return false;
     }
 
@@ -558,10 +567,27 @@ bool EditorApp::moveEditorAsset(const std::string& source, const std::filesystem
             continue;
         resources->reload(current->path);
         if (auto* renderer = m_engine.GetContext().renderer;
-            renderer && (current->type == "Material" || current->type == "MaterialGraph"))
+            renderer && (current->type == "Material"))
             renderer->GetMaterialSystem().reload(current->path);
     }
     resources->garbageCollect();
+    if (animationAffected && !m_animationAssetEditor.path().empty())
+    {
+        auto path = m_animationAssetEditor.path();
+        const bool visible = m_animationAssetEditor.isVisible();
+        if (remap(path))
+        {
+            m_animationAssetEditor.open(path, &registry);
+        }
+        else
+        {
+            m_animationAssetEditor.revert();
+        }
+        if (!visible)
+        {
+            m_animationAssetEditor.hide();
+        }
+    }
     if (!m_materialGraphEditor.isDirty() && !m_materialGraphEditor.GetPath().empty())
     {
         auto path = m_materialGraphEditor.GetPath();
@@ -663,19 +689,11 @@ void EditorApp::drawAssetCreationMenu(const std::filesystem::path& directory)
     };
     if (ImGui::MenuItem(localize("Material", "材质")))
     {
-        const auto path = createUniquePath("NewMaterial", ".matgraph");
-        MaterialGraph graph;
-        graph.setFormatVersion(2);
-        graph.addNode(MaterialNodeType::SurfaceOutput, "Surface", {420, 60});
-        MaterialParameterDecl color;
-        color.name = "BaseColor";
-        color.displayName = "Base Color";
-        color.type = MaterialParameterType::Vec3;
-        color.defaultValue = Vec3{.8f, .8f, .8f};
-        graph.GetParameters().push_back(color);
-        const auto id = graph.addNode(MaterialNodeType::VectorParameter, "Base Color", {40, 60});
-        graph.GetNodes().back().parameterName = "BaseColor";
-        graph.connect(id, 1, 0);
+        const auto path = createUniquePath("NewMaterial", ".mat");
+        auto definition = makeEditablePbrDefinition();
+        auto& graph = definition.graph;
+        graph.GetParameters() = definition.parameters;
+        graph.GetRenderState() = definition.renderState;
         if (graph.Save(path))
             publishCreated(path);
         else
@@ -687,7 +705,7 @@ void EditorApp::drawAssetCreationMenu(const std::filesystem::path& directory)
         const auto parent = registry.Find(m_selectedAsset);
         const auto path = createUniquePath("NewMaterialInstance", ".mat");
         std::string error;
-        const auto reference = parent && (parent->type == "Material" || parent->type == "MaterialGraph")
+        const auto reference = parent && (parent->type == "Material")
                                    ? parent->path
                                    : std::string("builtin:PBR");
         if (MaterialAssetEditor::createInstance(toUtf8GenericPath(path), reference, error))
@@ -1091,7 +1109,7 @@ void EditorApp::drawAssets()
     if (ImGui::BeginPopup("AssetFilters"))
     {
         std::set<std::string> availableTypes = {
-            "Material",    "MaterialGraph", "Texture",   "Mesh",           "Prefab", "Scene",        "Shader",
+            "Material", "Texture",   "Mesh",           "Prefab", "Scene",        "Shader",
             "Animation",   "Skeleton",      "BlendTree", "AnimationGraph", "VFX",    "BehaviorTree", "Audio",
             "Environment", "Input",         "Font"};
         for (const auto& asset : assets)
@@ -1312,7 +1330,7 @@ void EditorApp::drawAssets()
             if (ImGui::MenuItem(localize("Reference Viewer", "依赖图")))
                 openAssetReferences(asset.path);
             ImGui::Separator();
-            if (asset.type == "Material" || asset.type == "MaterialGraph")
+            if (asset.type == "Material")
             {
                 if (ImGui::MenuItem(localize("Apply to Selected Meshes", "应用到选中网格"), nullptr, false,
                                     canApplyMaterialToSelection()))

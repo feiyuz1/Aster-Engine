@@ -6,6 +6,7 @@
 #pragma once
 
 #include "asset_reference_graph.h"
+#include "animation_asset_editor.h"
 #include "material_asset_editor.h"
 #include "material_graph_editor.h"
 #include "tinyengine/ai/behavior_tree.h"
@@ -453,7 +454,8 @@ class EditorApp
     bool m_requestMaterialExitPopup = false;
     std::string m_openMaterialAsset;
     std::string m_openAnimationAsset;
-    SkeletalClip m_editSkeletalClip;
+    AnimationAssetEditor m_animationAssetEditor;
+    bool m_requestAnimationExitPopup = false;
     BlendTree1D m_editBlendTree;
     AnimationGraph m_editAnimationGraph;
     std::string m_openEffectAsset;

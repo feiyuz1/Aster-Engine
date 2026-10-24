@@ -74,7 +74,16 @@ string(REGEX MATCH "Shipping.buildId=([^\n]+)" shipping "${before}")
 if(NOT after_success MATCHES "${shipping}")
     message(FATAL_ERROR "Debug publishing lost the Shipping record")
 endif()
-run("${MODULE_TEST_EXE}" --inspect-project "${consumer}/Game.tinyproject" Development)
+# SDK identity includes the build configuration. Inspect a Development module with
+# the Debug inspector even when this integration test itself was started by Release CTest.
+set(development_inspector "${MODULE_TEST_EXE}")
+if(GENERATOR MATCHES "Visual Studio|Xcode")
+    get_filename_component(inspector_name "${MODULE_TEST_EXE}" NAME)
+    set(development_inspector "${ENGINE_BUILD}/Debug/${inspector_name}")
+    run("${CMAKE_COMMAND}" --build "${ENGINE_BUILD}" --config Debug
+        --target tinyengine_project_module_tests --parallel 4)
+endif()
+run("${development_inspector}" --inspect-project "${consumer}/Game.tinyproject" Development)
 if(REVIEW_VARIANT)
     file(WRITE "${consumer}/Source/BuildValue.hpp" "constexpr int ReviewValue=90;\n")
     file(APPEND "${consumer}/source/game.cpp" "\n#include \"BuildValue.hpp\"\nextern \"C\" TINY_PROJECT_EXPORT int TinyTest_ReviewValue(){return ReviewValue+REVIEW_OFFSET;}\n")

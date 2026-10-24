@@ -136,7 +136,8 @@ int main(int argc, char** argv)
     const std::string mesh = (root / "quad.mesh").generic_string();
     const std::string material = (root / "red.mat").generic_string();
     PlatformFile::writeAllText(mesh, "v -0.5 -0.5 0\nv 0.5 -0.5 0\nv 0.5 0.5 0\nv -0.5 0.5 0\nf 1 2 3\nf 1 3 4\n");
-    PlatformFile::writeAllText(material, "color 1 0 0 1\nemissive 4 0 0\n");
+    PlatformFile::writeAllText(material, "TINY_MAT 3 instance\nparent \"builtin:PBR\"\nparameter \"BaseColor\" Vec4 1 "
+                                         "0 0 1\nparameter \"Emissive\" Vec3 4 0 0\n");
     ResourceManager resources;
     resources.initialize(nullptr, root);
     Renderer renderer;
@@ -255,7 +256,8 @@ int main(int argc, char** argv)
     check(glGetError() == GL_NO_ERROR, "rendering does not generate OpenGL errors");
 
     const std::string greenMaterial = (root / "green.mat").generic_string();
-    PlatformFile::writeAllText(greenMaterial, "color 0 1 0 1\nemissive 0 4 0\n");
+    PlatformFile::writeAllText(greenMaterial, "TINY_MAT 3 instance\nparent \"builtin:PBR\"\nparameter \"BaseColor\" "
+                                              "Vec4 0 1 0 1\nparameter \"Emissive\" Vec3 0 4 0\n");
     gpuWorld.clear();
     const auto background = gpuWorld.createEntity("Background");
     gpuWorld.AddComponent(background, MeshComponent{mesh, greenMaterial});
@@ -321,8 +323,10 @@ int main(int argc, char** argv)
     check(glGetError() == GL_NO_ERROR, "TAA and HZB history passes do not generate OpenGL errors");
     gpuWorld.clear();
     const std::string matteMaterial = (root / "matte.mat").generic_string();
-    PlatformFile::writeAllText(matteMaterial,
-                               "color 0.08 0.20 0.55 1\nmetallic 0.08\nroughness 0.65\nemissive 0.08 0.08 0.08\n");
+    PlatformFile::writeAllText(
+        matteMaterial,
+        "TINY_MAT 3 instance\nparent \"builtin:PBR\"\nparameter \"BaseColor\" Vec4 0.08 0.20 0.55 1\nparameter "
+        "\"Metallic\" Float 0.08\nparameter \"Roughness\" Float 0.65\nparameter \"Emissive\" Vec3 0.08 0.08 0.08\n");
     const auto slope = gpuWorld.createEntity("Unoccluded tilted plane");
     gpuWorld.AddComponent(slope, MeshComponent{mesh, matteMaterial});
     auto* slopeTransform = gpuWorld.GetComponent<TransformComponent>(slope);
@@ -356,7 +360,8 @@ int main(int argc, char** argv)
     gpuWorld.AddComponent(contactOccluder, MeshComponent{mesh, matteMaterial});
     // 独立验证环境光遮蔽，避免自发光掩盖正常的接触暗化。
     const auto contactMaterial = (root / "contact.mat").generic_string();
-    PlatformFile::writeAllText(contactMaterial, "color 1 1 1 1\nroughness 1\n");
+    PlatformFile::writeAllText(contactMaterial, "TINY_MAT 3 instance\nparent \"builtin:PBR\"\nparameter \"BaseColor\" "
+                                                "Vec4 1 1 1 1\nparameter \"Roughness\" Float 1\n");
     gpuWorld.GetComponent<MeshComponent>(slope)->materialPath = contactMaterial;
     gpuWorld.GetComponent<MeshComponent>(contactOccluder)->materialPath = contactMaterial;
     const auto contactLight = gpuWorld.createEntity("Contact indirect light only");
@@ -389,7 +394,8 @@ int main(int argc, char** argv)
 
     // AO 只能遮蔽间接光；近邻遮挡不能改变表面自身发出的光。
     const auto emissionOnly = (root / "emission-only.mat").generic_string();
-    PlatformFile::writeAllText(emissionOnly, "color 0 0 0 1\nemissive 0.3 0.2 0.1\n");
+    PlatformFile::writeAllText(emissionOnly, "TINY_MAT 3 instance\nparent \"builtin:PBR\"\nparameter \"BaseColor\" "
+                                             "Vec4 0 0 0 1\nparameter \"Emissive\" Vec3 0.3 0.2 0.1\n");
     gpuWorld.GetComponent<MeshComponent>(slope)->materialPath = emissionOnly;
     glDevice->setGtaoEnabled(false);
     gpuRenderer.renderFrame(gpuWorld);
@@ -417,7 +423,8 @@ int main(int argc, char** argv)
     // 长直墙与平地的接缝沿 X 完全相同，接触遮蔽不应形成竖直亮暗条。
     gpuWorld.clear();
     const auto diffuseOnly = (root / "diffuse-only.mat").generic_string();
-    PlatformFile::writeAllText(diffuseOnly, "color 0.5 0.6 0.8 1\nroughness 1\n");
+    PlatformFile::writeAllText(diffuseOnly, "TINY_MAT 3 instance\nparent \"builtin:PBR\"\nparameter \"BaseColor\" Vec4 "
+                                            "0.5 0.6 0.8 1\nparameter \"Roughness\" Float 1\n");
     const auto wall = gpuWorld.createEntity("Uniform wall");
     gpuWorld.AddComponent(wall, MeshComponent{mesh, diffuseOnly});
     gpuWorld.GetComponent<TransformComponent>(wall)->position = {0, 0, -3};
@@ -510,7 +517,8 @@ int main(int argc, char** argv)
     glDevice->setGtaoEnabled(false);
     gpuWorld.clear();
     const auto tinyAmbient = (root / "tiny-ambient.mat").generic_string();
-    PlatformFile::writeAllText(tinyAmbient, "color 1 0 0 1\nroughness 1\n");
+    PlatformFile::writeAllText(tinyAmbient, "TINY_MAT 3 instance\nparent \"builtin:PBR\"\nparameter \"BaseColor\" Vec4 "
+                                            "1 0 0 1\nparameter \"Roughness\" Float 1\n");
     const auto farBackground = gpuWorld.createEntity("Occluded background behind tiny detail");
     gpuWorld.AddComponent(farBackground, MeshComponent{mesh, contactMaterial});
     gpuWorld.GetComponent<TransformComponent>(farBackground)->position = {0, 0, -5};

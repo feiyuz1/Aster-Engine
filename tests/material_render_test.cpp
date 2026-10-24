@@ -28,7 +28,7 @@ MaterialDefinitionData colorDefinition()
 {
     MaterialDefinitionData data;
     data.sourcePath = "gpu:color";
-    data.graph.setFormatVersion(2);
+    data.graph.setFormatVersion(3);
     data.renderState.shadingModel = MaterialShadingModel::Unlit;
     data.graph.addNode(MaterialNodeType::SurfaceOutput, "Surface");
     MaterialParameterDecl p;
@@ -185,14 +185,14 @@ void testViewportModes(SdlGlRenderDevice& device, RenderItem& item)
     device.setTaaEnabled(false);
     item.materialProxy.reset();
     item.material = std::make_shared<MaterialResource>();
-    check(item.material->load(root + "pbr.mat"), "load legacy viewport material");
-    const auto legacy = draw(device, item, viewValue);
-    check(isClose(legacy.x, .4f) && isClose(legacy.y, .2f) && isClose(legacy.z, .1f),
-          "legacy material honors Unlit viewport");
+    check(item.material->load(root + "pbr.mat"), "load resource viewport material");
+    const auto resourcePixel = draw(device, item, viewValue);
+    check(isClose(resourcePixel.x, .4f) && isClose(resourcePixel.y, .2f) && isClose(resourcePixel.z, .1f),
+          "resource material honors Unlit viewport");
     device.beginFrame(viewValue);
     device.drawInstanced({item, item});
     pixels = device.ReadHdrAttachmentForTests(0);
-    check(isClose(pixels[32 * 64 + 32].x, .4f), "legacy instancing honors Unlit viewport");
+    check(isClose(pixels[32 * 64 + 32].x, .4f), "resource instancing honors Unlit viewport");
     viewValue.renderMode = ViewportRenderMode::Wireframe;
     device.beginFrame(viewValue);
     device.drawInstanced({item, item});
@@ -201,7 +201,7 @@ void testViewportModes(SdlGlRenderDevice& device, RenderItem& item)
     for (const auto& p : pixels)
         if (p.x + p.y + p.z > .1f)
             ++edges;
-    check(edges > 30 && edges < 600, "legacy instancing honors Wireframe viewport");
+    check(edges > 30 && edges < 600, "resource instancing honors Wireframe viewport");
     item.material.reset();
     item.materialProxy.reset();
 }
@@ -454,17 +454,17 @@ void testGpuCandidateRollback(SdlGlRenderDevice& device, RenderItem& item)
     auto graph = colorDefinition();
     graph.graph.GetParameters() = graph.parameters;
     graph.graph.GetRenderState() = graph.renderState;
-    PlatformFile::writeAllText(root + "reload.matgraph", graph.graph.serialize());
-    PlatformFile::writeAllText(root + "reload.mat", "TINY_MAT 2\ndefinition \"reload.matgraph\"\n");
+    PlatformFile::writeAllText(root + "reloadGraph.mat", graph.graph.serialize());
+    PlatformFile::writeAllText(root + "reload.mat", "TINY_MAT 3 instance\nparent \"reloadGraph.mat\"\n");
     ResourceManager resources;
     resources.initialize(nullptr, root);
     MaterialSystem system(resources);
     auto active = system.BuildProxy("assets/reload.mat");
     item.materialProxy = active;
     auto red = draw(device, item, view());
-    const auto disk = PlatformFile::readAllText(root + "reload.matgraph");
+    const auto disk = PlatformFile::readAllText(root + "reloadGraph.mat");
     graph.parameters[0].defaultValue = Vec4{0, 1, 0, 1};
-    const auto result = system.applyDefinitionDraft("assets/reload.matgraph", graph,
+    const auto result = system.applyDefinitionDraft("assets/reloadGraph.mat", graph,
                                                     [&](const auto& compiled, auto& diagnostics)
                                                     {
                                                         auto invalid = compiled;
@@ -474,15 +474,15 @@ void testGpuCandidateRollback(SdlGlRenderDevice& device, RenderItem& item)
     item.materialProxy = system.BuildProxy("assets/reload.mat");
     const auto retained = draw(device, item, view());
     check(!result.success && !result.diagnostics.empty() && item.materialProxy == active &&
-              isClose(red.x, retained.x) && PlatformFile::readAllText(root + "reload.matgraph") == disk,
+              isClose(red.x, retained.x) && PlatformFile::readAllText(root + "reloadGraph.mat") == disk,
           "real GPU compile failure rolls back disk and complete live snapshot");
     const auto accept = [&](const auto& compiled, auto& diagnostics)
     { return device.validateMaterial(compiled, diagnostics); };
-    check(system.applyDefinitionDraft("assets/reload.matgraph", graph, accept).success,
+    check(system.applyDefinitionDraft("assets/reloadGraph.mat", graph, accept).success,
           "fixed GPU candidate publishes all geometry/pass variants");
     const auto programs = device.getMaterialProgramCompileCountForTests(MaterialPass::Base);
     graph.parameters[0].defaultValue = Vec4{0, 0, 1, 1};
-    check(system.applyDefinitionDraft("assets/reload.matgraph", graph, accept).success &&
+    check(system.applyDefinitionDraft("assets/reloadGraph.mat", graph, accept).success &&
               device.getMaterialProgramCompileCountForTests(MaterialPass::Base) == programs,
           "default-only publication reuses GPU programs");
     item.materialProxy = system.BuildProxy("assets/reload.mat");
@@ -499,16 +499,16 @@ void testGpuCandidateRollback(SdlGlRenderDevice& device, RenderItem& item)
     textured.parameters[0].defaultValue = std::string("snapshot.ppm");
     textured.graph.GetParameters() = textured.parameters;
     textured.graph.GetRenderState() = textured.renderState;
-    PlatformFile::writeAllText(root + "textured.matgraph", textured.graph.serialize());
+    PlatformFile::writeAllText(root + "textured.mat", textured.graph.serialize());
     PlatformFile::writeAllText(root + "snapshot.ppm", "P3\n1 1\n255\n64 64 64\n");
-    item.materialProxy = system.BuildProxy("assets/textured.matgraph");
+    item.materialProxy = system.BuildProxy("assets/textured.mat");
     const auto textureBefore = item.materialProxy;
     auto dark = draw(device, item, view());
     const auto texturePrograms = device.getMaterialProgramCompileCountForTests(MaterialPass::Base);
     PlatformFile::writeAllText(root + "snapshot.ppm", "P3\n1 1\n255\n192 192 192\n");
-    check(system.reload("assets/textured.matgraph", accept).success,
+    check(system.reload("assets/textured.mat", accept).success,
           "reload validates a same-path texture content replacement");
-    item.materialProxy = system.BuildProxy("assets/textured.matgraph");
+    item.materialProxy = system.BuildProxy("assets/textured.mat");
     const auto light = draw(device, item, view());
     check(isClose(dark.x, 64.f / 255) && isClose(light.x, 192.f / 255) &&
               textureBefore->textures[0].version != item.materialProxy->textures[0].version,
@@ -585,12 +585,23 @@ void testGpuGenerationLifetime(SdlGlRenderDevice& device, RenderItem& item)
     check(std::count_if(textureHandles.begin(), textureHandles.end(), [](GLuint id) { return glIsTexture(id); }) <= 1,
           "repeated texture versions retire after snapshot release at frame boundaries");
 }
-void testLegacyResolvedPasses(SdlGlRenderDevice& device, RenderItem& item)
+void testResolvedPasses(SdlGlRenderDevice& device, RenderItem& item)
 {
-    PlatformFile::writeAllText(root + "compat.frag", "uniform vec2 uClusterDepthRange;\n");
-    PlatformFile::writeAllText(root + "compat.mat", "color 0 0 0 1\nemissive 1 0 0\nblend alpha\nshader compat.frag\n");
+    auto definition = makeEditablePbrDefinition();
+    definition.renderState.blendMode = MaterialBlendMode::Alpha;
+    definition.renderState.twoSided = true;
+    for (auto& p : definition.parameters)
+    {
+        if (p.name == "BaseColor")
+            p.defaultValue = Vec4{0, 0, 0, 1};
+        if (p.name == "Emissive")
+            p.defaultValue = Vec3{1, 0, 0};
+    }
+    definition.graph.GetParameters() = definition.parameters;
+    definition.graph.GetRenderState() = definition.renderState;
+    PlatformFile::writeAllText(root + "compat.mat", definition.graph.serialize());
     PlatformFile::writeAllText(root + "compatChild.mat",
-                               "TINY_MAT 2\nparent \"compat.mat\"\nparameter \"Emissive\" Vec3 0 1 0\n");
+                               "TINY_MAT 3 instance\nparent \"compat.mat\"\nparameter \"Emissive\" Vec3 0 1 0\n");
     ResourceManager resources;
     resources.initialize(nullptr, root);
     MaterialSystem system(resources);
@@ -598,28 +609,28 @@ void testLegacyResolvedPasses(SdlGlRenderDevice& device, RenderItem& item)
     item.materialProxy = system.BuildProxy("assets/compatChild.mat");
     item.transparent = true;
     const auto child = draw(device, item, view());
-    check(child.y > .95f && child.x < .02f, "legacy shader branch uses resolved typed child values");
+    check(child.y > .95f && child.x < .02f, "graph material uses resolved typed child values");
     auto dynamic = system.CreateDynamicInstance("assets/compat.mat");
     dynamic->setParameter("Emissive", Vec3{0, 0, 1});
     item.material = resources.load<MaterialResource>("assets/compat.mat");
     item.materialProxy = system.BuildProxy("assets/compat.mat", dynamic.get());
     const auto blue = draw(device, item, view());
-    check(blue.z > .95f && blue.x < .02f, "legacy shader branch uses independent dynamic values");
+    check(blue.z > .95f && blue.x < .02f, "graph material uses independent dynamic values");
     device.beginFrame(view());
     device.drawInstanced({item, item});
     const auto instanced = device.ReadHdrAttachmentForTests(0)[32 * 64 + 32];
-    check(instanced.z > .95f && instanced.x < .02f, "legacy shader instancing uses effective dynamic snapshot");
+    check(instanced.z > .95f && instanced.x < .02f, "graph instancing uses effective dynamic snapshot");
     dynamic->setParameter("EmissiveMap", std::string("assets/dark.ppm"));
     item.materialProxy = system.BuildProxy("assets/compat.mat", dynamic.get());
     const auto textured = draw(device, item, view());
-    check(isClose(textured.z, .05127f, .008f), "legacy shader uses effective texture overrides with declared sampling");
+    check(isClose(textured.z, .05127f, .008f), "graph uses effective texture overrides with declared sampling");
     item.model = scaleMatrix({-1, 1, 1});
     device.beginShadowPass(view(), 0);
     glDisable(GL_CULL_FACE);
     device.drawShadow(item);
     const auto opaqueShadow = device.readShadowDepthForTests(1024, 1024);
     device.endShadowPass();
-    check(opaqueShadow < .6f, "legacy shadow opacity fixture casts before transparent override");
+    check(opaqueShadow < .6f, "graph shadow opacity fixture casts before transparent override");
     dynamic->setParameter("BaseColor", Vec4{0, 0, 0, 0});
     item.materialProxy = system.BuildProxy("assets/compat.mat", dynamic.get());
     device.beginShadowPass(view(), 0);
@@ -633,25 +644,10 @@ void testLegacyResolvedPasses(SdlGlRenderDevice& device, RenderItem& item)
     const auto instancedShadow = device.readShadowDepthForTests(1024, 1024);
     device.endShadowPass();
     check(shadow > .99f && instancedShadow > .99f,
-          "legacy shadow paths consume effective opacity from dynamic snapshot");
+          "graph shadow paths consume effective opacity from dynamic snapshot");
     item.model = Mat4::identity();
-    PlatformFile::writeAllText(root + "compat.mat",
-                               "color 0 0 0 1\nshader compat.frag\nparameter uClusterDepthRange .2 .7 0 0\n");
-    system.reload("assets/compat.mat");
-    item.materialProxy = system.BuildProxy("assets/compatChild.mat");
-    item.material = resources.load<MaterialResource>("assets/compatChild.mat");
     item.transparent = false;
-    draw(device, item, view());
-    GLint program = 0;
-    glGetIntegerv(GL_CURRENT_PROGRAM, &program);
-    const auto location = reinterpret_cast<PFNGLGETUNIFORMLOCATIONPROC>(SDL_GL_GetProcAddress("glGetUniformLocation"));
-    const auto read = reinterpret_cast<PFNGLGETUNIFORMFVPROC>(SDL_GL_GetProcAddress("glGetUniformfv"));
-    float range[2]{};
-    const auto uniform = location(program, "uClusterDepthRange");
-    if (uniform >= 0)
-        read(program, uniform, range);
-    check(uniform >= 0 && isClose(range[0], .2f) && isClose(range[1], .7f),
-          "typed legacy child preserves reflected custom uniform behavior");
+    item.material.reset();
     item.materialProxy.reset();
     resources.shutdown();
 }
@@ -661,9 +657,9 @@ void testPackagedWorkingDirectory(SdlGlRenderDevice& device, RenderItem& item)
     graph.parameters[0].defaultValue = std::string("gray.ppm");
     graph.graph.GetParameters() = graph.parameters;
     graph.graph.GetRenderState() = graph.renderState;
-    PlatformFile::writeAllText(root + "Package/assets/Parent.matgraph", graph.graph.serialize());
-    PlatformFile::writeAllText(root + "Package/assets/Base.mat", "TINY_MAT 2\ndefinition \"Parent.matgraph\"\n");
-    PlatformFile::writeAllText(root + "Package/assets/Child.mat", "TINY_MAT 2\nparent \"Base.mat\"\n");
+    PlatformFile::writeAllText(root + "Package/assets/Parent.mat", graph.graph.serialize());
+    PlatformFile::writeAllText(root + "Package/assets/Base.mat", "TINY_MAT 3 instance\nparent \"Parent.mat\"\n");
+    PlatformFile::writeAllText(root + "Package/assets/Child.mat", "TINY_MAT 3 instance\nparent \"Base.mat\"\n");
     PlatformFile::writeAllText(root + "Package/assets/gray.ppm", "P3\n1 1\n255\n128 128 128\n");
     const auto archive = std::filesystem::absolute(root + "Game.tpak");
     check(PakArchive::packDirectory(root + "Package", archive), "pack parent graph, instance chain and texture source");
@@ -707,8 +703,10 @@ int main()
             weightedSource.find("f 1/"),
             "vw 1 0 1 0 0 0 0 0 0\nvw 2 0 1 0 0 0 0 0 0\nvw 3 0 1 0 0 0 0 0 0\nvw 4 0 1 0 0 0 0 0 0\n");
         PlatformFile::writeAllText(root + "weighted.mesh", weightedSource);
-        PlatformFile::writeAllText(root + "pbr.mat",
-                                   "color .4 .2 .1 1\nmetallic .6\nroughness .35\nemissive .1 .05 .02\n");
+        PlatformFile::writeAllText(
+            root + "pbr.mat", "TINY_MAT 3 instance\nparent \"builtin:PBR\"\nparameter \"BaseColor\" Vec4 .4 .2 .1 1\n"
+                              "parameter \"Metallic\" Float .6\nparameter \"Roughness\" Float .35\n"
+                              "parameter \"Emissive\" Vec3 .1 .05 .02\n");
         SdlGlRenderDevice device(64, 64, "Material GPU tests");
         check(device.initialize(), "initialize real OpenGL 4.3 context");
         if (failures)
@@ -733,7 +731,7 @@ int main()
         testGeometryAndPbr(device, item);
         testGpuCandidateRollback(device, item);
         testGpuGenerationLifetime(device, item);
-        testLegacyResolvedPasses(device, item);
+        testResolvedPasses(device, item);
         testPackagedWorkingDirectory(device, item);
         device.shutdown();
     }

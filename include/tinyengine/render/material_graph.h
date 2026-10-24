@@ -79,7 +79,6 @@ class MaterialGraph
     bool load(const std::filesystem::path& path);
     bool parse(const std::string& source, std::string* error = nullptr);
     std::string serialize() const;
-    bool upgradeLegacy();
     int getFormatVersion() const
     {
         return m_formatVersion;
@@ -129,7 +128,7 @@ class MaterialGraph
     std::vector<MaterialNode> m_nodes;
     std::vector<MaterialLink> m_links;
     std::uint32_t m_nextId = 1;
-    int m_formatVersion = 1;
+    int m_formatVersion = 3;
     std::vector<MaterialParameterDecl> m_parameters;
     MaterialRenderState m_renderState;
 };

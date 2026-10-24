@@ -136,6 +136,19 @@ std::vector<std::string> EditorApp::AssetDeletionBlockers(const std::vector<std:
         for (const auto& reference : editor.GetRetainedAssetReferences())
             check(reference, editor.GetPath(), localize("Material document and undo history", "材质文档及撤销历史"));
     };
+    if (m_animationAssetEditor.isDirty())
+    {
+        check(m_animationAssetEditor.path(), {}, localize("Unsaved animation document", "动画尚未保存"));
+    }
+    const bool deletingCleanAnimation = !m_animationAssetEditor.isDirty() &&
+        std::any_of(paths.begin(), paths.end(), [&](const auto& path) { return same(m_animationAssetEditor.path(), path); });
+    if (!deletingCleanAnimation && (m_animationAssetEditor.isVisible() || m_animationAssetEditor.isDirty()))
+    {
+        for (const auto& reference : m_animationAssetEditor.retainedAssetPaths())
+        {
+            check(reference, {}, localize("Animation preview and undo history", "动画预览及撤销历史"));
+        }
+    }
     retainedMaterialReferences(m_materialGraphEditor);
     retainedMaterialReferences(m_materialAssetEditor);
     std::sort(result.begin(), result.end());
@@ -223,6 +236,10 @@ void EditorApp::drawAssetDeleteDialog()
             {
                 m_openShaderAsset.clear();
                 m_shaderEditorHidden = true;
+            }
+            if (removed(m_animationAssetEditor.path()))
+            {
+                m_animationAssetEditor = AnimationAssetEditor{};
             }
             if (removed(m_editingAsset))
                 m_editingAsset.clear();

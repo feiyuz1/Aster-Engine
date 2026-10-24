@@ -1,4 +1,4 @@
-TINY_MATGRAPH 2
+TINY_MAT 3 graph
 settings Lit Masked 1 0.5
 parameter "Tint" Vec3 Linear 0.12 0.55 0.2
 parameter_meta "Tint" "Leaf Tint" "Surface" 0 0 1

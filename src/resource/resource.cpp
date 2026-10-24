@@ -4,6 +4,8 @@
 // 类型：实现文件。
 
 #include "tinyengine/resource/resource.h"
+#include "tinyengine/render/material_graph.h"
+#include "tinyengine/resource/material_definition_resource.h"
 
 #include "tinyengine/platform/platform.h"
 #include "tinyengine/serialization/archive.h"
@@ -898,7 +900,6 @@ bool MaterialResource::Save(const std::string& path) const
     if (!isReady())
         return false;
     const auto source = serializeMaterialAsset(m_materialData);
-    if (m_materialData.formatVersion == 2)
     {
         MaterialAssetData validated;
         std::string error;
@@ -907,265 +908,105 @@ bool MaterialResource::Save(const std::string& path) const
     }
     return PlatformFile::writeAllText(fromUtf8Path(path), source);
 }
-void MaterialResource::captureLegacyData(const std::string& source)
-{
-    m_materialData = {};
-    m_materialData.parentPath = m_parentPath;
-    auto& data = m_materialData.legacyData;
-    data.baseColor = m_baseColor;
-    data.metallic = m_metallic;
-    data.roughness = m_roughness;
-    data.emissive = m_emissive;
-    data.transparent = isTransparent();
-    data.shaderPath = m_shaderPath;
-    data.texturePath = m_texturePath;
-    data.normalTexturePath = m_normalTexturePath;
-    data.metallicTexturePath = m_metallicTexturePath;
-    data.roughnessTexturePath = m_roughnessTexturePath;
-    data.aoTexturePath = m_aoTexturePath;
-    data.emissiveTexturePath = m_emissiveTexturePath;
-    data.packedTexturePath = m_packedTexturePath;
-    data.packedTextureLayout = m_packedTextureLayout;
-    data.overrideFlags.insert(m_overrides.begin(), m_overrides.end());
-    data.parameters.insert(m_parameters.begin(), m_parameters.end());
-    data.source = source;
-}
 bool MaterialResource::loadCandidate(const std::string& path)
 {
     markLoading(path);
-    static thread_local std::unordered_set<std::string> loadingMaterials;
-    if (loadingMaterials.size() >= m_maxParentDepth)
+    const auto source = m_sourceReader ? m_sourceReader(path) : PlatformFile::readAllText(fromUtf8Path(path));
+    std::string error;
+    if (fromUtf8Path(path).extension() != ".mat" || !parseMaterialAsset(source, m_materialData, error))
     {
-        setState(ResourceState::Failed, "Material parent chain exceeds 32 instances: " + path);
+        setState(ResourceState::Failed, error.empty() ? "Material requires a .mat file" : error);
         return false;
     }
-    const std::string normalizedPath = toUtf8GenericPath(PlatformFile::normalize(fromUtf8Path(path)));
-    if (!loadingMaterials.insert(normalizedPath).second)
+    m_parentPath = m_materialData.parentPath;
+    std::map<std::string, MaterialParameterValue> values;
+    std::unordered_set<std::string> ancestors;
+    const auto storeValue = [&](const std::string& name, MaterialParameterValue value, const std::string& owner)
     {
-        setState(ResourceState::Failed, "Cyclic material parent: " + path);
-        return false;
-    }
-    struct LoadingGuard
-    {
-        std::unordered_set<std::string>& paths;
-        std::string path;
-        ~LoadingGuard()
-        {
-            paths.erase(path);
-        }
-    } guard{loadingMaterials, normalizedPath};
-    m_baseColor = {0.3f, 0.7f, 1.0f, 1.0f};
-    m_metallic = 0.0f;
-    m_roughness = 0.7f;
-    m_emissive = {};
-    m_transparent = false;
-    m_shaderPath.clear();
-    m_texturePath.clear();
-    m_normalTexturePath.clear();
-    m_metallicTexturePath.clear();
-    m_roughnessTexturePath.clear();
-    m_aoTexturePath.clear();
-    m_emissiveTexturePath.clear();
-    m_parentPath.clear();
-    m_overrides.clear();
-    m_parameters.clear();
-    m_packedTexturePath.clear();
-    m_packedTextureLayout = "ORM";
-    const std::string source = m_sourceReader ? m_sourceReader(path) : PlatformFile::readAllText(fromUtf8Path(path));
-    if (source.empty())
-    {
-        setState(ResourceState::Failed, "Material file not found: " + path);
-        return false;
-    }
-    std::istringstream headerStream(source);
-    std::string header;
-    headerStream >> header;
-    if (header == "TINY_MAT")
-    {
-        std::string error;
-        if (!parseMaterialAsset(source, m_materialData, error))
-        {
-            setState(ResourceState::Failed, error);
-            return false;
-        }
-        m_parentPath = m_materialData.parentPath;
-        setState(ResourceState::Loaded);
-        return true;
-    }
-    {
-        std::istringstream parentStream(source);
-        std::string parentKey;
-        while (parentStream >> parentKey)
-            if (parentKey == "parent")
-            {
-                parentStream >> std::quoted(m_parentPath);
-                break;
-            }
-            else
-            {
-                std::string ignored;
-                std::getline(parentStream, ignored);
-            }
-    }
-    {
-        std::istringstream overrideStream(source);
-        std::string token;
-        while (overrideStream >> token)
-            if (token == "override")
-            {
-                std::string property;
-                bool enabled = false;
-                if (overrideStream >> property >> enabled)
-                    m_overrides[property] = enabled;
-            }
-            else
-            {
-                std::string ignored;
-                std::getline(overrideStream, ignored);
-            }
-    }
-    if (!m_parentPath.empty())
-    {
-        std::filesystem::path parent = fromUtf8Path(m_parentPath);
-        if (m_referenceResolver)
-            parent = fromUtf8Path(m_referenceResolver(m_parentPath, path));
-        else if (!PlatformFile::exists(parent))
-            parent = fromUtf8Path(path).parent_path() / parent;
-        MaterialResource base;
-        if (!base.loadWithResolver(toUtf8GenericPath(parent), m_referenceResolver, m_maxParentDepth, m_sourceReader))
-        {
-            setState(ResourceState::Failed, "Cannot load material parent: " + m_parentPath + " -> " + base.getError());
-            return false;
-        }
-        m_baseColor = base.m_baseColor;
-        m_shaderPath = base.m_shaderPath;
-        m_texturePath = base.m_texturePath;
-        m_normalTexturePath = base.m_normalTexturePath;
-        m_metallicTexturePath = base.m_metallicTexturePath;
-        m_roughnessTexturePath = base.m_roughnessTexturePath;
-        m_aoTexturePath = base.m_aoTexturePath;
-        m_emissiveTexturePath = base.m_emissiveTexturePath;
-        m_metallic = base.m_metallic;
-        m_roughness = base.m_roughness;
-        m_emissive = base.m_emissive;
-        m_transparent = base.m_transparent;
-        m_parameters = base.m_parameters;
-        m_packedTexturePath = base.m_packedTexturePath;
-        m_packedTextureLayout = base.m_packedTextureLayout;
-    }
-    const auto applies = [this](const std::string& property)
-    {
-        const auto found = m_overrides.find(property);
-        return m_parentPath.empty() || found == m_overrides.end() || found->second;
+        if (auto* texture = std::get_if<std::string>(&value); texture && !texture->empty() && m_referenceResolver)
+            *texture = m_referenceResolver(*texture, owner);
+        values[name] = std::move(value);
     };
-    std::istringstream stream(source);
-    std::string key;
-    while (stream >> key)
+    std::function<bool(const MaterialAssetData&, const std::string&, std::size_t)> collect;
+    collect = [&](const MaterialAssetData& data, const std::string& owner, std::size_t depth)
     {
-        if (key == "parent")
+        if (depth == 0 || !ancestors.insert(owner).second)
+            return false;
+        if (data.graph)
         {
-            std::string ignored;
-            stream >> std::quoted(ignored);
+            for (const auto& p : data.graph->GetParameters())
+                storeValue(p.name, p.defaultValue, owner);
+            m_transparent = data.graph->GetRenderState().blendMode == MaterialBlendMode::Alpha;
         }
-        else if (key == "override")
+        else if (data.parentPath == "builtin:PBR")
         {
-            std::string property;
-            bool ignored = false;
-            stream >> property >> ignored;
-        }
-        else if (key == "color")
-        {
-            Vec4 value;
-            stream >> value.x >> value.y >> value.z >> value.w;
-            if (applies(key))
-                m_baseColor = value;
-        }
-        else if (key == "metallic" || key == "roughness")
-        {
-            float value = 0.0f;
-            stream >> value;
-            if (applies(key))
-                (key == "metallic" ? m_metallic : m_roughness) = value;
-        }
-        else if (key == "emissive")
-        {
-            Vec3 value;
-            stream >> value.x >> value.y >> value.z;
-            if (applies(key))
-                m_emissive = value;
-        }
-        else if (key == "shader" || key == "texture" || key == "normalTexture" || key == "metallicTexture" ||
-                 key == "roughnessTexture" || key == "aoTexture" || key == "emissiveTexture" || key == "packedTexture")
-        {
-            std::string value;
-            stream >> std::quoted(value);
-            if (applies(key))
-            {
-                if (key == "shader")
-                    m_shaderPath = value;
-                else if (key == "texture")
-                    m_texturePath = value;
-                else if (key == "normalTexture")
-                    m_normalTexturePath = value;
-                else if (key == "metallicTexture")
-                    m_metallicTexturePath = value;
-                else if (key == "roughnessTexture")
-                    m_roughnessTexturePath = value;
-                else if (key == "aoTexture")
-                    m_aoTexturePath = value;
-                else if (key == "emissiveTexture")
-                    m_emissiveTexturePath = value;
-                else
-                    m_packedTexturePath = value;
-            }
-        }
-        else if (key == "packedLayout")
-        {
-            std::string value;
-            stream >> value;
-            if (applies(key) && (value == "ORM" || value == "RMA"))
-                m_packedTextureLayout = value;
-        }
-        else if (key == "parameter")
-        {
-            std::string name;
-            Vec4 value;
-            stream >> name >> value.x >> value.y >> value.z >> value.w;
-            if (applies("parameter." + name))
-                m_parameters[name] = value;
-        }
-        else if (key == "blend")
-        {
-            std::string value;
-            stream >> value;
-            if (applies(key))
-                m_transparent = value == "alpha" || value == "transparent";
+            for (const auto& p : makeBuiltinPbrDefinition().parameters)
+                values[p.name] = p.defaultValue;
         }
         else
         {
-            std::string ignored;
-            std::getline(stream, ignored);
-        }
-    }
-    m_metallic = std::clamp(m_metallic, 0.0f, 1.0f);
-    m_roughness = std::clamp(m_roughness, 0.04f, 1.0f);
-    if (m_referenceResolver)
-        for (auto* reference :
-             {&m_shaderPath, &m_texturePath, &m_normalTexturePath, &m_metallicTexturePath, &m_roughnessTexturePath,
-              &m_aoTexturePath, &m_emissiveTexturePath, &m_packedTexturePath})
-            if (!reference->empty())
+            const auto parent =
+                m_referenceResolver
+                    ? m_referenceResolver(data.parentPath, owner)
+                    : toUtf8GenericPath(
+                          (fromUtf8Path(owner).parent_path() / fromUtf8Path(data.parentPath)).lexically_normal());
+            const auto text = m_sourceReader ? m_sourceReader(parent) : PlatformFile::readAllText(fromUtf8Path(parent));
+            if (!text.empty())
             {
-                const auto resolved = m_referenceResolver(*reference, path);
-                // Legacy importers also emitted project-relative paths. Prefer an existing owner reference,
-                // then retain that older form when it points to a real loose asset.
-                if (PlatformFile::getReadPolicy() == PlatformFile::ReadPolicy::LooseFirst &&
-                    !PlatformFile::exists(fromUtf8Path(resolved)) && PlatformFile::exists(fromUtf8Path(*reference)))
-                    *reference =
-                        toUtf8GenericPath(std::filesystem::absolute(fromUtf8Path(*reference)).lexically_normal());
-                else
-                    *reference = resolved;
+                MaterialAssetData parsed;
+                std::string message;
+                if (!parseMaterialAsset(text, parsed, message) || !collect(parsed, parent, depth - 1))
+                    return false;
             }
-    captureLegacyData(source);
+        }
+        for (const auto& entry : data.overrides)
+            storeValue(entry.first, entry.second, owner);
+        ancestors.erase(owner);
+        return true;
+    };
+    if (!collect(m_materialData, path, m_maxParentDepth + 1))
+    {
+        setState(ResourceState::Failed, "Invalid material parent chain: " + path);
+        return false;
+    }
+    for (const auto& entry : values)
+    {
+        m_overrides[entry.first] = m_materialData.graph || m_materialData.overrides.count(entry.first) != 0;
+        if (entry.first == "BaseColor")
+        {
+            m_baseColor = materialNumericSlot(entry.second);
+            if (std::holds_alternative<Vec3>(entry.second))
+                m_baseColor.w = 1;
+        }
+        else if (entry.first == "Metallic" && std::holds_alternative<float>(entry.second))
+            m_metallic = std::get<float>(entry.second);
+        else if (entry.first == "Roughness" && std::holds_alternative<float>(entry.second))
+            m_roughness = std::get<float>(entry.second);
+        else if (entry.first == "Emissive" && std::holds_alternative<Vec3>(entry.second))
+            m_emissive = std::get<Vec3>(entry.second);
+        else if (entry.first == "PackedLayout" && std::holds_alternative<float>(entry.second))
+            m_packedTextureLayout = std::get<float>(entry.second) > .5f ? "RMA" : "ORM";
+        if (const auto* texture = std::get_if<std::string>(&entry.second))
+        {
+            auto value = *texture;
+            if (entry.first == "BaseMap")
+                m_texturePath = value;
+            else if (entry.first == "NormalMap")
+                m_normalTexturePath = value;
+            else if (entry.first == "MetallicMap")
+                m_metallicTexturePath = value;
+            else if (entry.first == "RoughnessMap")
+                m_roughnessTexturePath = value;
+            else if (entry.first == "AOMap")
+                m_aoTexturePath = value;
+            else if (entry.first == "EmissiveMap")
+                m_emissiveTexturePath = value;
+            else if (entry.first == "PackedMap")
+                m_packedTexturePath = value;
+        }
+        else
+            m_parameters[entry.first] = materialNumericSlot(entry.second);
+    }
     setState(ResourceState::Loaded);
     return true;
 }
@@ -1188,10 +1029,11 @@ void MaterialResource::Unload()
 
 std::size_t MaterialResource::getByteSize() const
 {
-    return sizeof(*this) + m_path.size() + m_shaderPath.size() + m_texturePath.size() + m_normalTexturePath.size() +
-           m_metallicTexturePath.size() + m_roughnessTexturePath.size() + m_aoTexturePath.size() +
-           m_emissiveTexturePath.size() + m_parentPath.size() + m_packedTexturePath.size() +
-           m_packedTextureLayout.size() + m_overrides.size() * (sizeof(bool) + sizeof(std::string)) +
+    return sizeof(*this) + (m_materialData.graph ? m_materialData.graph->serialize().size() : 0) + m_path.size() +
+           m_shaderPath.size() + m_texturePath.size() + m_normalTexturePath.size() + m_metallicTexturePath.size() +
+           m_roughnessTexturePath.size() + m_aoTexturePath.size() + m_emissiveTexturePath.size() + m_parentPath.size() +
+           m_packedTexturePath.size() + m_packedTextureLayout.size() +
+           m_overrides.size() * (sizeof(bool) + sizeof(std::string)) +
            m_parameters.size() * (sizeof(Vec4) + sizeof(std::string));
 }
 Vec4 MaterialResource::getBaseColor() const
@@ -1249,7 +1091,7 @@ const std::string& MaterialResource::GetParentPath() const
 bool MaterialResource::isOverridden(const std::string& property) const
 {
     const auto found = m_overrides.find(property);
-    return found == m_overrides.end() ? m_parentPath.empty() : found->second;
+    return found != m_overrides.end() && found->second;
 }
 const std::unordered_map<std::string, Vec4>& MaterialResource::GetParameters() const
 {

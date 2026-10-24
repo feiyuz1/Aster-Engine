@@ -325,23 +325,13 @@ MaterialCompileResult MaterialCompiler::compile(const MaterialDefinitionData& de
 {
     MaterialCompileResult result;
     auto data = definition;
-    if (data.graph.getFormatVersion() == 1)
-    {
-        if (!data.graph.upgradeLegacy())
-        {
-            result.diagnostics.push_back(
-                {MaterialDiagnosticSeverity::Error, data.sourcePath, 0, -1, "Invalid v1 output mapping"});
-            return result;
-        }
-        data.parameters = data.graph.GetParameters();
-    }
     auto compiled = std::make_shared<CompiledMaterial>();
     compiled->renderState = data.renderState;
     compiled->dependencies.push_back(data.sourcePath);
     const auto error = [&](std::uint32_t node, int port, const std::string& message) {
         result.diagnostics.push_back({MaterialDiagnosticSeverity::Error, data.sourcePath, node, port, message});
     };
-    if (data.graph.getFormatVersion() != 2 || !std::isfinite(data.renderState.maskCutoff) ||
+    if (data.graph.getFormatVersion() != 3 || !std::isfinite(data.renderState.maskCutoff) ||
         data.renderState.maskCutoff < 0 || data.renderState.maskCutoff > 1 ||
         static_cast<int>(data.renderState.shadingModel) < 0 || static_cast<int>(data.renderState.shadingModel) > 1 ||
         static_cast<int>(data.renderState.blendMode) < 0 || static_cast<int>(data.renderState.blendMode) > 2)

@@ -184,7 +184,7 @@ struct EditorInteractionTests
     void nativeDialogDpi()
     {
 #ifdef _WIN32
-        const auto root = std::filesystem::absolute("saved/EditorDpi") /
+        const auto root = std::filesystem::weakly_canonical(std::filesystem::absolute("saved/EditorDpi")) /
                           std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
         std::filesystem::create_directories(root / "assets");
         ProjectSettings project;
@@ -249,7 +249,7 @@ struct EditorInteractionTests
     {
         auto& settings = const_cast<ProjectSettings&>(app.m_engine.getProjectSettings());
         const auto old = settings;
-        settings.projectFile = std::filesystem::absolute("saved/P1Settings/Settings.tinyproject");
+        settings.projectFile = std::filesystem::weakly_canonical(std::filesystem::absolute("saved/P1Settings/Settings.tinyproject"));
         app.m_uiScale = 1.25f;
         app.m_cameraSpeed = 2.5f;
         app.m_showSceneGrid = false;
@@ -289,7 +289,7 @@ struct EditorInteractionTests
         io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
         auto& settings = const_cast<ProjectSettings&>(app.m_engine.getProjectSettings());
         const auto old = settings;
-        settings.projectFile = std::filesystem::absolute("saved/P1Docking/Workspace.tinyproject");
+        settings.projectFile = std::filesystem::weakly_canonical(std::filesystem::absolute("saved/P1Docking/Workspace.tinyproject"));
         app.m_resetWorkspace = true;
         const auto draw = [&]
         {
@@ -392,7 +392,7 @@ struct EditorInteractionTests
 
     void p1AssetWorkflow()
     {
-        const auto root = std::filesystem::absolute("saved/P1AssetWorkflow");
+        const auto root = std::filesystem::weakly_canonical(std::filesystem::absolute("saved/P1AssetWorkflow"));
         std::filesystem::create_directories(root / "assets/Models");
         PlatformFile::writeAllText(root / "assets/Models/a.mesh", "mesh\n");
         ResourceManager resources;
@@ -413,7 +413,7 @@ struct EditorInteractionTests
         app.m_assetTypeFilters = {"Material"};
         std::strcpy(app.m_assetSearch.data(), "excluded");
         app.locateAsset("assets/Models/a.mesh");
-        check(app.m_showAssets && app.m_assetFolder.lexically_normal() == (root / "assets/Models").lexically_normal(),
+        check(app.m_showAssets && std::filesystem::equivalent(app.m_assetFolder, root / "assets/Models"),
               "Locate reference opens the asset browser at the containing folder");
         check(app.m_selectedAsset.empty() && app.m_selected == e && app.m_selection == std::vector<Entity>{e},
               "Locate reference preserves entity inspector ownership");
@@ -873,7 +873,7 @@ struct EditorInteractionTests
 
     void p1SceneDrag()
     {
-        const auto root = std::filesystem::absolute("saved/P1SceneDrag") /
+        const auto root = std::filesystem::weakly_canonical(std::filesystem::absolute("saved/P1SceneDrag")) /
                           std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
         const auto assets = root / "assets";
         std::filesystem::create_directories(assets);
@@ -995,7 +995,7 @@ struct EditorInteractionTests
         const auto* transform = world.GetComponent<TransformComponent>(app.m_selected);
         check(transform && std::abs(transform->position.y) < .001f && std::abs(transform->position.x) > .1f,
               "delivered mesh uses the preview pointer position instead of the origin");
-        check(PlatformFile::writeAllText(assets / "z.matgraph", makeBuiltinPbrDefinition().graph.serialize()),
+        check(PlatformFile::writeAllText(assets / "z.mat", makeBuiltinPbrDefinition().graph.serialize()),
               "create node material for viewport drag");
         resources.getAssetRegistry().scan(assets);
         frame(draw);
@@ -1010,7 +1010,7 @@ struct EditorInteractionTests
         frame(draw);
         check(ImGui::GetDragDropPayload() != nullptr, "real node material drag creates an asset payload");
         const auto* materialPayload = ImGui::GetDragDropPayload();
-        check(fromUtf8Path(static_cast<const char*>(materialPayload->Data)).filename() == "z.matgraph",
+        check(fromUtf8Path(static_cast<const char*>(materialPayload->Data)).filename() == "z.mat",
               "viewport drag carries the actual node material path");
         // Drop inside the triangle, away from the ground-placement pivot on its edge.
         const auto point = transform->position + Vec3{.25f, .25f, 0};
@@ -1031,7 +1031,7 @@ struct EditorInteractionTests
         frame(draw);
         frame(draw);
         check(world.GetEntityManager().GetAliveEntities().size() == 1 && app.m_undo.size() == 2 &&
-                  world.GetComponent<MeshComponent>(app.m_selected)->materialPath == "assets/z.matgraph",
+                  world.GetComponent<MeshComponent>(app.m_selected)->materialPath == "assets/z.mat",
               "dropping node material on scene mesh assigns it without spawning an entity");
         app.undo();
         check(world.GetComponent<MeshComponent>(*world.GetEntityManager().GetAliveEntities().begin())->materialPath ==
@@ -1175,11 +1175,11 @@ struct EditorInteractionTests
         std::filesystem::path root;
         BrowserFixture(EditorInteractionTests& owner, const char* name) : tests(owner)
         {
-            root = std::filesystem::absolute("saved/AssetBrowserRegression") / name /
+            root = std::filesystem::weakly_canonical(std::filesystem::absolute("saved/AssetBrowserRegression")) / name /
                    std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) / "assets";
             std::filesystem::create_directories(root / "Subfolder");
-            PlatformFile::writeAllText(root / "a.mat", "color 1 0 0 1\n");
-            PlatformFile::writeAllText(root / "b.mat", "color 0 1 0 1\n");
+            PlatformFile::writeAllText(root / "a.mat", "TINY_MAT 3 instance\nparent \"builtin:PBR\"\nparameter \"BaseColor\" Vec4 1 0 0 1\n");
+            PlatformFile::writeAllText(root / "b.mat", "TINY_MAT 3 instance\nparent \"builtin:PBR\"\nparameter \"BaseColor\" Vec4 0 1 0 1\n");
             PlatformFile::writeAllText(root / "c.ppm", "P3\n1 1\n255\n255 255 255\n");
             PlatformFile::writeAllText(root / "d.mesh", "v 0 0 0\nv 1 0 0\nv 0 1 0\nf 1 2 3\n");
             resources.initialize(nullptr, root);
@@ -1222,7 +1222,7 @@ struct EditorInteractionTests
     void materialAssignmentRegression()
     {
         BrowserFixture fixture(*this, "MaterialAssignment");
-        const auto graphPath = toUtf8GenericPath((fixture.root / "NodeMaterial.matgraph"));
+        const auto graphPath = toUtf8GenericPath((fixture.root / "NodeMaterial.mat"));
         const auto definition = makeBuiltinPbrDefinition();
         check(PlatformFile::writeAllText(fromUtf8Path(graphPath), definition.graph.serialize()),
               "write assignable node material fixture");
@@ -1243,8 +1243,8 @@ struct EditorInteractionTests
         check(field != mesh.properties.end(), "mesh exposes material reference field");
         check(app.applyInspectorAsset(mesh, *field, graphPath, 7241),
               "material picker and drop accept node material assets");
-        check(world.GetComponent<MeshComponent>(a)->materialPath == "assets/NodeMaterial.matgraph" &&
-                  world.GetComponent<MeshComponent>(b)->materialPath == "assets/NodeMaterial.matgraph" &&
+        check(world.GetComponent<MeshComponent>(a)->materialPath == "assets/NodeMaterial.mat" &&
+                  world.GetComponent<MeshComponent>(b)->materialPath == "assets/NodeMaterial.mat" &&
                   app.m_undo.size() == 1,
               "node material assignment updates all selected meshes with one portable undo transaction");
         app.undo();
@@ -1278,7 +1278,7 @@ struct EditorInteractionTests
         check(!app.m_materialGraphEditor.isDirty() && app.m_undo.size() == 1 && app.m_selectedAsset.empty(),
               "material document saves and applies draft to selected meshes through editor integration");
         for (auto entity : app.m_selection)
-            check(world.GetComponent<MeshComponent>(entity)->materialPath == "assets/NodeMaterial.matgraph",
+            check(world.GetComponent<MeshComponent>(entity)->materialPath == "assets/NodeMaterial.mat",
                   "document Apply assigns node material to every selected mesh");
         check(app.applyMaterialToMeshes(graphPath, app.m_selection) && app.m_undo.size() == 1,
               "reapplying current material succeeds without creating an undo record");
@@ -1413,7 +1413,7 @@ struct EditorInteractionTests
         BrowserFixture fixture(*this, "MaterialTrashCache");
         world.clear();
         app.resetSceneInteraction();
-        const auto path = toUtf8GenericPath((fixture.root / "NewMaterial.matgraph"));
+        const auto path = toUtf8GenericPath((fixture.root / "NewMaterial.mat"));
         auto definition = makeBuiltinPbrDefinition();
         const auto write = [&](float roughness)
         {
@@ -1511,10 +1511,10 @@ struct EditorInteractionTests
         browserActivate(ImGui::FindWindowByName("Assets"), "Create...");
         check(browserPopup() != nullptr, "toolbar and right click share the creation menu");
         browserActivate(browserPopup(), "Material");
-        check(std::filesystem::exists(created / "NewMaterial.matgraph") &&
+        check(std::filesystem::exists(created / "NewMaterial.mat") &&
                   fromUtf8Path(app.m_selectedAsset).parent_path().lexically_normal() == created.lexically_normal(),
               "toolbar creates and selects a material graph in the current directory");
-        check(!std::filesystem::exists(fixture.root / "NewMaterial.matgraph"),
+        check(!std::filesystem::exists(fixture.root / "NewMaterial.mat"),
               "nested creation does not write to the asset root");
         browserActivate(ImGui::FindWindowByName("Assets"), "Create...");
         browserActivate(browserPopup(), "+ Blend Tree");
@@ -1561,7 +1561,7 @@ struct EditorInteractionTests
         frame(draw);
         check(browserPopup() != nullptr, "folder tiles have their own right click creation menu");
         browserActivate(browserPopup(), "Material");
-        check(std::filesystem::exists(fixture.root / "Subfolder/NewMaterial.matgraph"),
+        check(std::filesystem::exists(fixture.root / "Subfolder/NewMaterial.mat"),
               "right click on a folder creates assets inside that folder");
         check(fixture.resources.getAssetRegistry().Find(toUtf8GenericPath((fixture.root / "a.mat"))).has_value(),
               "creating an asset in a subfolder retains assets elsewhere in the registry");
@@ -1585,7 +1585,7 @@ struct EditorInteractionTests
         frame(draw);
         check(browserPopup() != nullptr, "folder tree entries expose the shared right click creation actions");
         browserActivate(browserPopup(), "Material");
-        check(std::filesystem::exists(fixture.root / "Subfolder/NewMaterial1.matgraph"),
+        check(std::filesystem::exists(fixture.root / "Subfolder/NewMaterial1.mat"),
               "folder tree creation targets the clicked directory and chooses a unique filename");
     }
 
@@ -1686,7 +1686,7 @@ struct EditorInteractionTests
         check(limited.nodes.size() == 3 && limited.truncated,
               "large reference graphs enforce the node budget and report truncation");
         const auto unicodeFile = fixture.root / fromUtf8Path("中文 路径") / "Color.mat";
-        PlatformFile::writeAllText(unicodeFile, "color 1 0 0 1\n");
+        PlatformFile::writeAllText(unicodeFile, "TINY_MAT 3 instance\nparent \"builtin:PBR\"\nparameter \"BaseColor\" Vec4 1 0 0 1\n");
         registry.scan(fixture.root);
         const auto unicodeGraph = buildAssetReferenceGraph(fixture.resources, toUtf8GenericPath(unicodeFile));
         check(unicodeGraph.nodes.size() == 1 && !unicodeGraph.nodes.front().missing,
@@ -1756,7 +1756,7 @@ struct EditorInteractionTests
 
     void assetClicks()
     {
-        const auto root = std::filesystem::absolute("saved/EditorP0Clicks/assets");
+        const auto root = std::filesystem::weakly_canonical(std::filesystem::absolute("saved/EditorP0Clicks/assets"));
         std::filesystem::create_directories(root);
         PlatformFile::writeAllText(root / "a.mesh", "v 0 0 0\nv 1 0 0\nv 0 1 0\nf 1 2 3\n");
         PlatformFile::writeAllText(root / "b.frag", "#version 330 core\nvoid main() {}\n");
@@ -1920,7 +1920,7 @@ struct EditorInteractionTests
 
     void assetGridDrag()
     {
-        const auto root = std::filesystem::absolute("saved/EditorP0Clicks/assets");
+        const auto root = std::filesystem::weakly_canonical(std::filesystem::absolute("saved/EditorP0Clicks/assets"));
         ResourceManager resources;
         resources.initialize(nullptr, root);
         auto& context = const_cast<EngineContext&>(app.m_engine.GetContext());
@@ -2103,7 +2103,7 @@ struct EditorInteractionTests
         app.resetInspectorComponent(transform);
         check(app.m_undo.empty() && !app.m_sceneDirty, "resetting default properties does not dirty the scene");
 
-        const auto root = std::filesystem::absolute("saved/EditorP0Clicks/assets");
+        const auto root = std::filesystem::weakly_canonical(std::filesystem::absolute("saved/EditorP0Clicks/assets"));
         ResourceManager resources;
         resources.initialize(nullptr, root);
         auto& context = const_cast<EngineContext&>(app.m_engine.GetContext());
@@ -2186,9 +2186,45 @@ struct EditorInteractionTests
         app.resetSceneInteraction();
     }
 
+    void animationAssetRouting()
+    {
+        EditorApp isolatedApp;
+        const auto root = std::filesystem::weakly_canonical(std::filesystem::absolute("saved/AnimationRouting"));
+        std::filesystem::create_directories(root);
+        SkeletalClip clip;
+        clip.name = "Route";
+        clip.duration = 1.0f;
+        clip.keyframes = {{0.0f, {BonePose{}}}, {1.0f, {BonePose{}}}};
+        const auto first = toUtf8GenericPath(root / "First.skanim");
+        const auto second = toUtf8GenericPath(root / "Second.skanim");
+        check(saveSkeletalClipAsset(clip, fromUtf8Path(first)) &&
+                  saveSkeletalClipAsset(clip, fromUtf8Path(second)), "prepare animation routing assets");
+        AssetInfo asset;
+        asset.path = first;
+        asset.extension = ".skanim";
+        asset.type = "Animation";
+        isolatedApp.openAsset(asset);
+        check(isolatedApp.m_animationAssetEditor.path() == first && isolatedApp.m_animationAssetEditor.isVisible(),
+              "opening a skeletal clip routes to the animation document");
+        isolatedApp.m_animationAssetEditor.setName("Unsaved animation");
+        asset.path = second;
+        isolatedApp.openAsset(asset);
+        check(isolatedApp.m_animationAssetEditor.path() == first && isolatedApp.m_animationAssetEditor.isDirty(),
+              "opening another clip retains unsaved animation edits");
+        isolatedApp.requestEditorExit();
+        check(isolatedApp.m_requestAnimationExitPopup,
+              "application exit requests saving an unsaved animation document");
+        isolatedApp.m_exitInProgress = false;
+        isolatedApp.m_requestAnimationExitPopup = false;
+        check(isolatedApp.m_animationAssetEditor.revert(), "animation draft can be reverted before switching");
+        isolatedApp.openAsset(asset);
+        check(isolatedApp.m_animationAssetEditor.path() == second,
+              "a clean animation document can switch to another clip");
+    }
+
     void typedSkeletonAndFailedOpen()
     {
-        const auto root = std::filesystem::absolute("saved/EditorP0Typed/assets");
+        const auto root = std::filesystem::weakly_canonical(std::filesystem::absolute("saved/EditorP0Typed/assets"));
         PlatformFile::writeAllText(root / "rig.skeleton", "skeleton fixture");
         PlatformFile::writeAllText(root / "locomotion.blendtree", "blend tree fixture");
         ResourceManager resources;
@@ -2237,7 +2273,7 @@ struct EditorInteractionTests
         app.m_selected = entity;
         app.m_selection = {entity};
         app.m_selectedAsset.clear();
-        const auto path = std::filesystem::absolute("saved/EditorP0Packaging/locked.scene");
+        const auto path = std::filesystem::weakly_canonical(std::filesystem::absolute("saved/EditorP0Packaging/locked.scene"));
         const auto packageInput = app.m_engine.GetSceneManager().createSnapshot();
         PlatformFile::writeAllText(path, packageInput);
         world.createEntity("Unsaved addition");
@@ -2601,7 +2637,7 @@ struct EditorInteractionTests
 
     void sceneOpenRegression()
     {
-        const auto root = std::filesystem::absolute("saved/SceneOpenRegression") /
+        const auto root = std::filesystem::weakly_canonical(std::filesystem::absolute("saved/SceneOpenRegression")) /
                           std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
         std::filesystem::create_directories(root / "assets");
         const auto oldSettings = app.m_engine.getProjectSettings();
@@ -2754,7 +2790,7 @@ struct EditorInteractionTests
 
     void shaderDocuments()
     {
-        const auto root = std::filesystem::absolute("saved/EditorShaderRegression") /
+        const auto root = std::filesystem::weakly_canonical(std::filesystem::absolute("saved/EditorShaderRegression")) /
                           std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
         std::filesystem::create_directories(root);
         const auto first = toUtf8GenericPath((root / "first.frag"));
@@ -2915,8 +2951,8 @@ struct EditorInteractionTests
     void materialDocuments()
     {
         MaterialAssetData data;
-        data.formatVersion = 2;
-        data.definitionPath = "builtin:PBR";
+        data.formatVersion = 3;
+        data.parentPath = "builtin:PBR";
         MaterialAssetEditor asset;
         const auto definition = makeBuiltinPbrDefinition();
         check(asset.Open("saved/EditorMaterials/instance.mat", data, definition.parameters),
@@ -2948,10 +2984,10 @@ struct EditorInteractionTests
                                                   "saved/EditorMaterials/instance.mat", error),
               "create child instance asset");
         check(saved.load("saved/EditorMaterials/child.mat") && saved.GetMaterialData().parentPath == "instance.mat",
-              "child has v2 relative parent reference");
+              "child has v3 relative parent reference");
         MaterialDefinitionData graph;
-        graph.graph.setFormatVersion(2);
-        graph.sourcePath = "saved/EditorMaterials/parent.matgraph";
+        graph.graph.setFormatVersion(3);
+        graph.sourcePath = "saved/EditorMaterials/parent.mat";
         graph.graph.addNode(MaterialNodeType::SurfaceOutput, "Surface");
         MaterialGraphEditor editor;
         check(editor.Open(graph.sourcePath, graph), "open graph draft");
@@ -2972,13 +3008,13 @@ struct EditorInteractionTests
     }
     void materialTexturePortability()
     {
-        const auto directory = std::filesystem::absolute("saved/EditorPortable");
+        const auto directory = std::filesystem::weakly_canonical(std::filesystem::absolute("saved/EditorPortable"));
         const auto assets = directory / "assets";
         std::filesystem::create_directories(assets);
         PlatformFile::writeAllText(assets / "white.ppm", "P3\n1 1\n255\n255 255 255\n");
         MaterialAssetData data;
-        data.formatVersion = 2;
-        data.definitionPath = "builtin:PBR";
+        data.formatVersion = 3;
+        data.parentPath = "builtin:PBR";
         auto schema = makeBuiltinPbrDefinition().parameters;
         for (auto& p : schema)
             if (p.name == "BaseMap")
@@ -3018,12 +3054,12 @@ struct EditorInteractionTests
     }
     void materialExternalReload()
     {
-        const auto assets = std::filesystem::absolute("saved/EditorReload/assets");
+        const auto assets = std::filesystem::weakly_canonical(std::filesystem::absolute("saved/EditorReload/assets"));
         auto definition = makeBuiltinPbrDefinition();
-        PlatformFile::writeAllText(assets / "parent.matgraph", definition.graph.serialize());
+        PlatformFile::writeAllText(assets / "parent.mat", definition.graph.serialize());
         MaterialAssetData data;
-        data.formatVersion = 2;
-        data.definitionPath = "parent.matgraph";
+        data.formatVersion = 3;
+        data.parentPath = "parent.mat";
         data.overrides["Roughness"] = .2f;
         PlatformFile::writeAllText(assets / "child.mat", serializeMaterialAsset(data));
         ResourceManager resources;
@@ -3056,6 +3092,18 @@ struct EditorInteractionTests
         };
         select("child.mat");
         frame(draw);
+        check(app.m_materialAssetEditor.GetPath() == toUtf8GenericPath(assets / "child.mat") &&
+                  !app.m_materialGraphEditor.isVisible(),
+              "instance content opens parameter editor for the unified Material asset type");
+        auto* instanceWindow = ImGui::FindWindowByID(ImHashStr("###MaterialAssetEditor"));
+        ImGui::ActivateItemByID(ImHashStr("###OpenParentMaterial", 0, instanceWindow->ID));
+        frame(draw);
+        frame(draw);
+        check(app.m_materialGraphEditor.GetPath() == toUtf8GenericPath(assets / "parent.mat") &&
+                  app.m_materialGraphEditor.isVisible(),
+              "Open parent navigates from an instance to its graph material with the same extension");
+        select("child.mat");
+        frame(draw);
         data.overrides["Roughness"] = .8f;
         PlatformFile::writeAllText(assets / "child.mat", serializeMaterialAsset(data));
         reload();
@@ -3064,14 +3112,14 @@ struct EditorInteractionTests
         loaded.load(toUtf8GenericPath((assets / "child.mat")));
         check(std::get<float>(loaded.GetMaterialData().overrides.at("Roughness")) == .8f,
               "Ctrl+R refreshes clean instance draft and saved baseline");
-        select("parent.matgraph");
+        select("parent.mat");
         frame(draw);
         definition.graph.GetParameters()[1].defaultValue = .6f;
-        PlatformFile::writeAllText(assets / "parent.matgraph", definition.graph.serialize());
+        PlatformFile::writeAllText(assets / "parent.mat", definition.graph.serialize());
         reload();
         check(app.m_materialGraphEditor.Save(), "save clean graph after external Ctrl+R");
         MaterialDefinitionResource saved;
-        saved.load(toUtf8GenericPath((assets / "parent.matgraph")));
+        saved.load(toUtf8GenericPath((assets / "parent.mat")));
         check(std::get<float>(saved.GetData().parameters[1].defaultValue) == .6f, "Ctrl+R refreshes clean graph draft");
         select("child.mat");
         frame(draw);
@@ -3093,7 +3141,7 @@ struct EditorInteractionTests
     }
     void materialWorkflowGpu()
     {
-        const auto root = std::filesystem::absolute("saved/MaterialWorkflow");
+        const auto root = std::filesystem::weakly_canonical(std::filesystem::absolute("saved/MaterialWorkflow"));
         const auto assets = root / "assets";
         std::filesystem::create_directories(assets);
         PlatformFile::writeAllText(assets / "quad.mesh",
@@ -3117,9 +3165,9 @@ struct EditorInteractionTests
         const auto validator = [&](const auto& compiled, auto& diagnostics)
         { return device->validateMaterial(compiled, diagnostics); };
         MaterialDefinitionData definition;
-        definition.sourcePath = toUtf8GenericPath((assets / "Shared.matgraph"));
+        definition.sourcePath = toUtf8GenericPath((assets / "Shared.mat"));
         definition.renderState.shadingModel = MaterialShadingModel::Unlit;
-        definition.graph.setFormatVersion(2);
+        definition.graph.setFormatVersion(3);
         definition.graph.addNode(MaterialNodeType::SurfaceOutput, "Surface");
         MaterialParameterDecl color;
         color.name = "Tint";
@@ -3179,7 +3227,7 @@ struct EditorInteractionTests
         auto hdr = device->ReadHdrAttachmentForTests(0);
         check(hdr[32 * 128 + 52].x > .9f && hdr[32 * 128 + 76].z > .9f,
               "assigned instances render red and blue in the actual scene");
-        scene.GetComponent<MeshComponent>(a)->materialPath = "assets/Shared.matgraph";
+        scene.GetComponent<MeshComponent>(a)->materialPath = "assets/Shared.mat";
         renderer.renderFrame(scene);
         hdr = device->ReadHdrAttachmentForTests(0);
         check(std::abs(hdr[32 * 128 + 52].x - .3f) < .02f && std::abs(hdr[32 * 128 + 52].y - .3f) < .02f,
@@ -3258,6 +3306,8 @@ int main(int argc, char** argv)
                 tests.p1AssetWorkflow();
             else if (filter == "--p1-scene")
                 tests.p1SceneNavigation();
+            else if (filter == "--animation-assets")
+                tests.animationAssetRouting();
             else if (filter == "--asset-menus")
                 tests.assetBrowserMenus();
             else if (filter == "--asset-filters")
@@ -3298,6 +3348,7 @@ int main(int argc, char** argv)
         tests.inspector();
         tests.inspectorAxisDefaults();
         tests.inspectorBatchAndValidation();
+        tests.animationAssetRouting();
         tests.typedSkeletonAndFailedOpen();
         tests.packagingWriteLock();
         tests.gizmo();

@@ -520,7 +520,6 @@ std::string translateUi(const std::string_view text, const bool simplifiedChines
         {"BlendTree", "混合树"},
         {"AnimationGraph", "动画图"},
         {"Environment", "环境"},
-        {"MaterialGraph", "材质（节点）"},
         {"Input", "输入映射"},
         {"Font", "字体"},
         {"Binary", "二进制"},
@@ -928,15 +927,24 @@ void EditorApp::openAsset(const AssetInfo& asset)
     }
     else if (asset.type == "Shader")
         requestShaderAction(ShaderAction::Open, asset.path);
-    else if (asset.type == "Material" || asset.type == "MaterialGraph" || asset.extension == ".skanim" ||
+    else if (asset.extension == ".skanim")
+    {
+        auto* resources = m_engine.GetContext().resourceManager;
+        if (!m_animationAssetEditor.open(asset.path, resources ? &resources->getAssetRegistry() : nullptr))
+        {
+            notify(m_animationAssetEditor.error(), FeedbackKind::Warning);
+        }
+    }
+    else if (asset.type == "Material" ||
              asset.extension == ".blendtree" || asset.extension == ".animgraph" || asset.extension == ".vfx" ||
              asset.extension == ".btgraph")
     {
         m_editingAsset = asset.path;
-        if (asset.type == "MaterialGraph")
-            m_openMaterialGraphAsset.clear();
         if (asset.type == "Material")
+        {
+            m_openMaterialGraphAsset.clear();
             m_openMaterialAsset.clear();
+        }
     }
     else
     {
@@ -1260,7 +1268,8 @@ void EditorApp::handleShortcuts()
     if (m_assetsFocused && !io.KeyCtrl && !io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_F2, false))
         m_assetRenameRequested = true;
     // 材质文档处理自己的保存、节点删除和撤销，不得透传为场景命令。
-    if (m_materialGraphEditor.isFocused() || m_materialAssetEditor.isFocused())
+    if (m_materialGraphEditor.isFocused() || m_materialAssetEditor.isFocused() ||
+        m_animationAssetEditor.isFocused())
         return;
     if (m_assetsFocused)
     {
@@ -1378,6 +1387,11 @@ void EditorApp::requestEditorExit(const bool continueExit)
     if (isShaderDirty())
     {
         requestShaderAction(ShaderAction::Exit);
+        return;
+    }
+    if (m_animationAssetEditor.isDirty())
+    {
+        m_requestAnimationExitPopup = true;
         return;
     }
     if (m_materialAssetEditor.isDirty() || m_materialGraphEditor.isDirty())
@@ -1930,163 +1944,7 @@ void EditorApp::drawInspector()
                                         "双击打开；拖到匹配的属性字段或场景中使用。"));
             ImGui::Separator();
         }
-        if (asset && asset->type == "Material")
-        {
-            if (auto material = m_engine.GetContext().resourceManager->load<MaterialResource>(asset->path))
-            {
-                if (material->GetMaterialData().formatVersion == 2)
-                {
-                    ImGui::End();
-                    return;
-                }
-                ImGui::SeparatorText(localize("Material Asset", "材质资产"));
-                ImGui::TextWrapped("%s", asset->path.c_str());
-                Vec4 color = material->getBaseColor();
-                float metallic = material->getMetallic(), roughness = material->getRoughness();
-                Vec3 emissive = material->getEmissive();
-                bool transparent = material->isTransparent();
-                bool changed = false;
-                std::string parent = material->GetParentPath(), shader = material->GetShaderPath(),
-                            albedo = material->GetTexturePath(), normal = material->GetNormalTexturePath(),
-                            metallicMap = material->GetMetallicTexturePath();
-                std::string roughnessMap = material->GetRoughnessTexturePath(), ao = material->GetAoTexturePath(),
-                            emissiveMap = material->GetEmissiveTexturePath(), packed = material->GetPackedTexturePath(),
-                            packedLayout = material->GetPackedTextureLayout();
-                const bool hasParent = !parent.empty();
-                std::unordered_map<std::string, bool> overrides;
-                const auto overrideControl = [&](const char* property)
-                {
-                    auto found = overrides.find(property);
-                    if (found == overrides.end())
-                        found = overrides.emplace(property, material->isOverridden(property)).first;
-                    bool& enabled = found->second;
-                    if (hasParent)
-                    {
-                        ImGui::PushID(property);
-                        changed = ImGui::Checkbox("##Override", &enabled) || changed;
-                        ImGui::SameLine();
-                        ImGui::PopID();
-                    }
-                    return enabled || !hasParent;
-                };
-                ImGui::BeginDisabled(!overrideControl("color"));
-                changed = ImGui::ColorEdit4(localize("Base Color", "基础颜色"), &color.x) || changed;
-                ImGui::EndDisabled();
-                ImGui::BeginDisabled(!overrideControl("metallic"));
-                changed = ImGui::SliderFloat(localize("Metallic", "金属度"), &metallic, 0.0f, 1.0f) || changed;
-                ImGui::EndDisabled();
-                ImGui::BeginDisabled(!overrideControl("roughness"));
-                changed = ImGui::SliderFloat(localize("Roughness", "粗糙度"), &roughness, 0.04f, 1.0f) || changed;
-                ImGui::EndDisabled();
-                ImGui::BeginDisabled(!overrideControl("emissive"));
-                changed = ImGui::ColorEdit3(localize("Emissive", "自发光"), &emissive.x) || changed;
-                ImGui::EndDisabled();
-                ImGui::BeginDisabled(!overrideControl("blend"));
-                changed = ImGui::Checkbox(localize("Transparent", "透明"), &transparent) || changed;
-                ImGui::EndDisabled();
-                auto editPath = [&](const char* label, const char* property, std::string& path)
-                {
-                    const bool enabled = std::string(property) == "parent" || overrideControl(property);
-                    char buffer[512]{};
-                    std::strncpy(buffer, path.c_str(), sizeof(buffer) - 1);
-                    ImGui::BeginDisabled(!enabled);
-                    if (ImGui::InputText(label, buffer, sizeof(buffer), ImGuiInputTextFlags_EnterReturnsTrue))
-                    {
-                        path = buffer;
-                        changed = true;
-                    }
-                    ImGui::EndDisabled();
-                };
-                editPath(localize("Parent Material", "父材质"), "parent", parent);
-                editPath(localize("Shader", "着色器"), "shader", shader);
-                editPath(localize("Base Color Texture", "基础色贴图"), "texture", albedo);
-                editPath(localize("Normal Texture", "法线贴图"), "normalTexture", normal);
-                editPath(localize("Metallic Texture", "金属度贴图"), "metallicTexture", metallicMap);
-                editPath(localize("Roughness Texture", "粗糙度贴图"), "roughnessTexture", roughnessMap);
-                editPath(localize("Ambient Occlusion Texture", "环境光遮蔽贴图"), "aoTexture", ao);
-                editPath(localize("Emissive Texture", "自发光贴图"), "emissiveTexture", emissiveMap);
-                editPath(localize("Packed ORM/RMA Texture", "打包 ORM/RMA 贴图"), "packedTexture", packed);
-                if (overrideControl("packedLayout"))
-                {
-                    int layout = packedLayout == "RMA" ? 1 : 0;
-                    if (ImGui::Combo(localize("Packed Channel Layout", "打包通道布局"), &layout, "ORM\0RMA\0"))
-                    {
-                        packedLayout = layout ? "RMA" : "ORM";
-                        changed = true;
-                    }
-                }
-                auto parameters = material->GetParameters();
-                if (!shader.empty())
-                    for (const auto& parameter : ShaderPipeline::ReflectParameters(shader))
-                    {
-                        Vec4& value = parameters[parameter.name];
-                        if (!material->GetParameters().count(parameter.name))
-                            value = {parameter.defaultValue[0], parameter.defaultValue[1], parameter.defaultValue[2],
-                                     parameter.defaultValue[3]};
-                        const std::string property = "parameter." + parameter.name;
-                        ImGui::BeginDisabled(!overrideControl(property.c_str()));
-                        bool parameterChanged = false;
-                        if (parameter.type == ShaderParameterType::Float)
-                            parameterChanged = parameter.hasRange
-                                                   ? ImGui::SliderFloat(parameter.name.c_str(), &value.x,
-                                                                        parameter.minimum, parameter.maximum)
-                                                   : ImGui::DragFloat(parameter.name.c_str(), &value.x, 0.01f);
-                        else if (parameter.type == ShaderParameterType::Vec2)
-                            parameterChanged = ImGui::DragFloat2(parameter.name.c_str(), &value.x, 0.01f);
-                        else if (parameter.type == ShaderParameterType::Vec3)
-                            parameterChanged = ImGui::DragFloat3(parameter.name.c_str(), &value.x, 0.01f);
-                        else if (parameter.type == ShaderParameterType::Vec4)
-                            parameterChanged = ImGui::DragFloat4(parameter.name.c_str(), &value.x, 0.01f);
-                        ImGui::EndDisabled();
-                        changed = parameterChanged || changed;
-                    }
-                if (changed)
-                {
-                    std::ostringstream output;
-                    if (!parent.empty())
-                        output << "parent " << parent << '\n';
-                    if (!parent.empty())
-                        for (const auto& entry : overrides)
-                            output << "override " << entry.first << ' ' << entry.second << '\n';
-                    output << "color " << color.x << ' ' << color.y << ' ' << color.z << ' ' << color.w << "\nmetallic "
-                           << metallic << "\nroughness " << roughness << "\nemissive " << emissive.x << ' '
-                           << emissive.y << ' ' << emissive.z << '\n';
-                    if (!shader.empty())
-                        output << "shader " << shader << '\n';
-                    if (!albedo.empty())
-                        output << "texture " << albedo << '\n';
-                    if (!normal.empty())
-                        output << "normalTexture " << normal << '\n';
-                    if (!metallicMap.empty())
-                        output << "metallicTexture " << metallicMap << '\n';
-                    if (!roughnessMap.empty())
-                        output << "roughnessTexture " << roughnessMap << '\n';
-                    if (!ao.empty())
-                        output << "aoTexture " << ao << '\n';
-                    if (!emissiveMap.empty())
-                        output << "emissiveTexture " << emissiveMap << '\n';
-                    if (!packed.empty())
-                        output << "packedTexture " << packed << "\npackedLayout " << packedLayout << '\n';
-                    for (const auto& parameter : parameters)
-                        output << "parameter " << parameter.first << ' ' << parameter.second.x << ' '
-                               << parameter.second.y << ' ' << parameter.second.z << ' ' << parameter.second.w << '\n';
-                    output << "blend " << (transparent ? "alpha" : "opaque") << '\n';
-                    MaterialAssetData draft;
-                    draft.legacyData.source = output.str();
-                    const auto result = m_engine.GetContext().renderer->GetMaterialSystem().applyInstanceDraft(
-                        asset->path, draft,
-                        [this](const auto& compiled, auto& diagnostics)
-                        { return !m_device || m_device->validateMaterial(compiled, diagnostics); });
-                    if (result.success)
-                        notify(std::string(localize("Material saved: ", "材质已保存：")) + asset->path,
-                               FeedbackKind::Success);
-                    else
-                        notify(std::string(localize("Failed to save material: ", "材质保存失败：")) + asset->path,
-                               FeedbackKind::Error);
-                }
-            }
-        }
-        else if (!asset)
+        if (!asset)
         {
             ImGui::TextWrapped(
                 "%s", localize("Select an object to edit its properties.", "选择场景对象后，在这里编辑属性。"));
@@ -2761,18 +2619,50 @@ void EditorApp::requestThumbnail(const AssetInfo& asset, const bool force)
 
 void EditorApp::drawAnimationEditor()
 {
+    m_animationAssetEditor.draw(m_interfaceLanguage == InterfaceLanguage::SimplifiedChinese);
+    const char* exitPopup = localize("Unsaved animation###UnsavedAnimationExit", "动画尚未保存###UnsavedAnimationExit");
+    if (m_requestAnimationExitPopup)
+    {
+        ImGui::OpenPopup(exitPopup);
+        m_requestAnimationExitPopup = false;
+    }
+    if (ImGui::BeginPopupModal(exitPopup, nullptr, ImGuiWindowFlags_AlwaysAutoResize))
+    {
+        ImGui::TextUnformatted(localize("Save animation changes before exiting?", "退出前保存动画修改？"));
+        if (ImGui::Button(localize("Save", "保存")) && m_animationAssetEditor.save())
+        {
+            ImGui::CloseCurrentPopup();
+            requestEditorExit(true);
+        }
+        ImGui::SameLine();
+        if (ImGui::Button(localize("Discard", "放弃")))
+        {
+            m_animationAssetEditor.discard();
+            ImGui::CloseCurrentPopup();
+            requestEditorExit(true);
+        }
+        ImGui::SameLine();
+        if (ImGui::Button(localize("Cancel", "取消")))
+        {
+            m_exitInProgress = false;
+            ImGui::CloseCurrentPopup();
+        }
+        if (!m_animationAssetEditor.error().empty())
+        {
+            ImGui::TextWrapped("%s", m_animationAssetEditor.error().c_str());
+        }
+        ImGui::EndPopup();
+    }
     if (m_editingAsset.empty())
         return;
     const std::string extension = std::filesystem::path(m_editingAsset).extension().string();
-    if (extension != ".skanim" && extension != ".blendtree" && extension != ".animgraph")
+    if (extension != ".blendtree" && extension != ".animgraph")
         return;
     if (m_openAnimationAsset != m_editingAsset)
     {
         m_openAnimationAsset.clear();
         bool loaded = false;
-        if (extension == ".skanim")
-            loaded = loadSkeletalClipAsset(m_editingAsset, m_editSkeletalClip);
-        else if (extension == ".blendtree")
+        if (extension == ".blendtree")
             loaded = loadBlendTreeAsset(m_editingAsset, m_editBlendTree);
         else
             loaded = loadAnimationGraphAsset(m_editingAsset, m_editAnimationGraph);
@@ -2794,77 +2684,7 @@ void EditorApp::drawAnimationEditor()
     }
     ImGui::TextWrapped("%s", m_openAnimationAsset.c_str());
     ImGui::Separator();
-    if (extension == ".skanim")
-    {
-        ImGui::Text(localize("Clip: %s | %.3f seconds | %zu bones", "片段：%s | %.3f 秒 | %zu 根骨骼"),
-                    m_editSkeletalClip.name.c_str(), m_editSkeletalClip.duration,
-                    m_editSkeletalClip.isCompressed()      ? m_editSkeletalClip.tracks.size()
-                    : m_editSkeletalClip.keyframes.empty() ? 0
-                                                           : m_editSkeletalClip.keyframes.front().localPose.size());
-        ImGui::Text(localize("Storage: %s", "存储：%s"), m_editSkeletalClip.isCompressed()
-                                                             ? localize("Compressed Curves", "压缩曲线")
-                                                             : localize("Raw Sampled Poses", "原始采样姿势"));
-        static float debugTime = 0.0f;
-        ImGui::SliderFloat(localize("Debug Time", "调试时间"), &debugTime, 0.0f, m_editSkeletalClip.duration);
-        const auto skeletonPath = std::filesystem::path(m_openAnimationAsset).replace_extension(".skeleton");
-        Skeleton debugSkeleton;
-        if (loadSkeletonAsset(skeletonPath, debugSkeleton))
-        {
-            const auto snapshot = buildAnimationDebugSnapshot(
-                debugSkeleton, m_editSkeletalClip.sample(debugTime, debugSkeleton.bones.size(), false));
-            ImGui::Text(localize("Debug Pose: %zu joints / %zu links | Root Motion %.2f, %.2f, %.2f",
-                                 "调试姿势：%zu 个关节 / %zu 条连接 | 根运动 %.2f, %.2f, %.2f"),
-                        snapshot.jointPositions.size(), snapshot.bones.size(),
-                        m_editSkeletalClip.sampleRootMotion(debugTime, false).x,
-                        m_editSkeletalClip.sampleRootMotion(debugTime, false).y,
-                        m_editSkeletalClip.sampleRootMotion(debugTime, false).z);
-        }
-        else
-            ImGui::TextDisabled("%s",
-                                localize("Place a matching .skeleton file beside the clip to preview joint debug data.",
-                                         "请在片段旁放置同名 .skeleton 文件以预览关节调试信息"));
-        ImGui::BeginDisabled(m_editSkeletalClip.isCompressed());
-        if (ImGui::Button(localize("Compress Curves", "压缩曲线")))
-        {
-            const auto stats = m_editSkeletalClip.compress();
-            notify(std::string(localize("Animation curve keys: ", "动画曲线关键帧：")) +
-                   std::to_string(stats.originalCurveKeys) + " -> " + std::to_string(stats.compressedCurveKeys));
-        }
-        ImGui::EndDisabled();
-        ImGui::SeparatorText(localize("Events", "事件"));
-        int remove = -1;
-        for (std::size_t index = 0; index < m_editSkeletalClip.events.size(); ++index)
-        {
-            auto& event = m_editSkeletalClip.events[index];
-            ImGui::PushID(static_cast<int>(index));
-            ImGui::SetNextItemWidth(90.0f);
-            ImGui::DragFloat(localize("Time", "时间"), &event.time, 0.01f, 0.0f, m_editSkeletalClip.duration);
-            ImGui::SameLine();
-            ImGui::SetNextItemWidth(150.0f);
-            inputString(localize("Name", "名称"), event.name, 128);
-            ImGui::SameLine();
-            ImGui::SetNextItemWidth(220.0f);
-            inputString(localize("Payload", "载荷"), event.payload, 256);
-            ImGui::SameLine();
-            if (ImGui::SmallButton("X"))
-                remove = static_cast<int>(index);
-            ImGui::PopID();
-        }
-        if (remove >= 0)
-            m_editSkeletalClip.events.erase(m_editSkeletalClip.events.begin() + remove);
-        if (ImGui::Button(localize("+ Event", "+ 事件")))
-            m_editSkeletalClip.events.push_back({0.0f, "Event", {}});
-        ImGui::SameLine();
-        if (ImGui::Button(localize("Save Clip", "保存片段")))
-        {
-            std::sort(m_editSkeletalClip.events.begin(), m_editSkeletalClip.events.end(),
-                      [](const AnimationEvent& left, const AnimationEvent& right) { return left.time < right.time; });
-            if (saveSkeletalClipAsset(m_editSkeletalClip, m_openAnimationAsset))
-                notify(std::string(localize("Animation events saved: ", "动画事件已保存：")) + m_openAnimationAsset,
-                       FeedbackKind::Success);
-        }
-    }
-    else if (extension == ".blendtree")
+    if (extension == ".blendtree")
     {
         inputString(localize("Parameter", "参数"), m_editBlendTree.parameter, 128);
         ImGui::SeparatorText(localize("1D Samples", "一维采样点"));
@@ -3454,36 +3274,48 @@ void EditorApp::drawMaterialGraphEditor()
     auto& system = renderer->GetMaterialSystem();
     const auto asset =
         m_editingAsset.empty() ? std::optional<AssetInfo>{} : resources->getAssetRegistry().Find(m_editingAsset);
-    if (asset && asset->type == "MaterialGraph" && m_openMaterialGraphAsset != asset->path)
-    {
-        MaterialDefinitionResource definition;
-        if (definition.load(asset->path) && m_materialGraphEditor.Open(asset->path, definition.GetData()))
-            m_openMaterialGraphAsset = asset->path;
-    }
-    if (asset && asset->type == "Material" && m_openMaterialAsset != asset->path)
+    if (asset && asset->type == "Material" &&
+        m_openMaterialGraphAsset != asset->path && m_openMaterialAsset != asset->path)
     {
         MaterialResource resource;
-        auto resolved = system.resolve(asset->path);
-        if (resource.load(asset->path) && resource.GetMaterialData().formatVersion == 2 && resolved)
+        if (resource.load(asset->path))
         {
             const auto& data = resource.GetMaterialData();
-            const auto parent = system.resolve(resources->resolveAssetPath(
-                data.parentPath.empty() ? data.definitionPath : data.parentPath, asset->path));
-            auto schema = resolved->definition->parameters;
-            if (parent)
-                for (std::size_t i = 0; i < schema.size(); ++i)
-                    schema[i].defaultValue = parent->values[i];
-            if (m_materialAssetEditor.Open(asset->path, resource.GetMaterialData(), schema))
-                m_openMaterialAsset = asset->path;
+            if (data.graph)
+            {
+                MaterialDefinitionResource definition;
+                if (definition.load(asset->path) && m_materialGraphEditor.Open(asset->path, definition.GetData()))
+                    m_openMaterialGraphAsset = asset->path;
+            }
+            else if (const auto resolved = system.resolve(asset->path))
+            {
+                const auto parent = system.resolve(resources->resolveAssetPath(data.parentPath, asset->path));
+                auto schema = resolved->definition->parameters;
+                if (parent)
+                    for (std::size_t i = 0; i < schema.size(); ++i)
+                        schema[i].defaultValue = parent->values[i];
+                if (m_materialAssetEditor.Open(asset->path, data, schema))
+                    m_openMaterialAsset = asset->path;
+            }
         }
     }
+    m_materialAssetEditor.setOpenParentRequest(
+        [this, resources](const std::string& parent, const std::string& owner)
+        {
+            const auto path = resources->resolveAssetPath(parent, owner);
+            if (const auto parentAsset = resources->getAssetRegistry().Find(path))
+                openAsset(*parentAsset);
+            else
+                notify(localize("Parent material was not found in the asset registry.",
+                                "资产库中未找到父材质。"), FeedbackKind::Warning);
+        });
     const auto validator = [this](const auto& compiled, auto& diagnostics)
     { return !m_device || m_device->validateMaterial(compiled, diagnostics); };
     if (!m_materialAssetEditor.GetPath().empty())
     {
         const auto& draft = m_materialAssetEditor.GetDraft();
         const auto parent = system.resolve(resources->resolveAssetPath(
-            draft.parentPath.empty() ? draft.definitionPath : draft.parentPath, m_materialAssetEditor.GetPath()));
+            draft.parentPath, m_materialAssetEditor.GetPath()));
         if (parent)
         {
             auto schema = parent->definition->parameters;
@@ -3510,7 +3342,7 @@ void EditorApp::drawMaterialGraphEditor()
             diagnostics = result.diagnostics;
             return result.success;
         });
-    if (!m_packageFuture.valid() && asset && (asset->type == "Material" || asset->type == "MaterialGraph") &&
+    if (!m_packageFuture.valid() && asset && (asset->type == "Material") &&
         ImGui::GetIO().KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_R))
     {
         const auto result = system.reload(asset->path, validator);

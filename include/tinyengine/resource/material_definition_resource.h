@@ -26,4 +26,5 @@ class MaterialDefinitionResource final : public Resource
     MaterialDefinitionData m_data;
 };
 MaterialDefinitionData makeBuiltinPbrDefinition();
+MaterialDefinitionData makeEditablePbrDefinition();
 } // namespace tinyengine

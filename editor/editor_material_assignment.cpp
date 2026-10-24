@@ -25,7 +25,7 @@ bool EditorApp::applyMaterialToMeshes(const std::string& path, const std::vector
         return false;
     const auto resolved = resources->resolveAssetPath(path);
     const auto asset = resources->getAssetRegistry().Find(resolved);
-    if (!asset || (asset->type != "Material" && asset->type != "MaterialGraph"))
+    if (!asset || asset->type != "Material")
         return false;
     auto stored = resolved;
     std::error_code error;

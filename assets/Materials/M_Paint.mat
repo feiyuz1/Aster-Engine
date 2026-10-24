@@ -1,4 +1,4 @@
-TINY_MATGRAPH 2
+TINY_MAT 3 graph
 settings Lit Opaque 0 0.5
 parameter "PaintColor" Vec3 Linear 0.5 0.05 0.02
 parameter_meta "PaintColor" "Paint Color" "Surface" 0 0 1

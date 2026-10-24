@@ -126,7 +126,7 @@ std::set<std::string> ReferenceKeys(ResourceManager& resources, const std::strin
 }
 bool serializedType(const std::string& type)
 {
-    return type == "Scene" || type == "Prefab" || type == "Shader" || type == "Material" || type == "MaterialGraph" ||
+    return type == "Scene" || type == "Prefab" || type == "Shader" || type == "Material" ||
            type == "VFX" || type == "Environment" || type == "BlendTree" || type == "AnimationGraph";
 }
 bool validSerializedText(const std::string& type, const std::string& text)
@@ -136,22 +136,11 @@ bool validSerializedText(const std::string& type, const std::string& text)
         World validation;
         return SceneSerializer::deserialize(validation, text);
     }
-    if (type == "MaterialGraph")
-    {
-        MaterialGraph validation;
-        return validation.parse(text);
-    }
     if (type == "Material")
     {
-        std::istringstream input(text);
-        std::string format;
-        input >> format;
-        if (format == "TINY_MAT")
-        {
-            MaterialAssetData validation;
-            std::string error;
-            return parseMaterialAsset(text, validation, error);
-        }
+        MaterialAssetData validation;
+        std::string error;
+        return parseMaterialAsset(text, validation, error);
     }
     return true;
 }
@@ -301,8 +290,8 @@ std::vector<AssetTrashReference> AssetTrash::FindReferences(ResourceManager& res
                     incoming.emplace(target.second, owner.path);
                 continue;
             }
-            if (owner.type == "Material" || owner.type == "MaterialGraph")
-                for (const auto& reference : CollectMaterialReferences(text, owner.type == "MaterialGraph"))
+            if (owner.type == "Material")
+                for (const auto& reference : CollectMaterialReferences(text))
                     add(reference);
             if (owner.type == "Shader")
             {

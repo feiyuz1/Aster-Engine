@@ -3,8 +3,8 @@
 #include "tinyengine/platform/platform.h"
 #include "tinyengine/platform/utf8_arguments.h"
 #include "tinyengine/project_sdk/sdk_info.h"
-#include "tinyengine/runtime/engine.h"
 #include "tinyengine/render/sdl_gl_render_device.h"
+#include "tinyengine/runtime/engine.h"
 #include "tinyengine/ui/ui_system.h"
 #define SDL_MAIN_HANDLED
 #include <SDL.h>
@@ -46,12 +46,17 @@ struct Fixture
     void publish(const char* binary)
     {
         fs::copy_file(fromUtf8Path(binary), root / "Binaries/Game.dll", fs::copy_options::overwrite_existing);
-        const std::string text = std::string("module.id=game.test\nproject.id=p0-project\nmodule.abi=1\nmodule."
-                                             "platform=Windows-x64\nDevelopment.sdkBuildId=") +
-                                 project_sdk::getSdkBuildId() +
-                                 "\nDevelopment.library=Binaries/"
-                                 "Game.dll\nDevelopment.buildId=build-1\nDevelopment.sourceFingerprint=source-"
-                                 "1\nDevelopment.schemaHash=none\nDevelopment.dependencies.count=0\n";
+        const std::string profile =
+#ifdef NDEBUG
+            "Shipping";
+#else
+            "Development";
+#endif
+        const std::string text =
+            "module.id=game.test\nproject.id=p0-project\nmodule.abi=1\nmodule.platform=Windows-x64\n" + profile +
+            ".sdkBuildId=" + project_sdk::getSdkBuildId() + "\n" + profile + ".library=Binaries/Game.dll\n" + profile +
+            ".buildId=build-1\n" + profile + ".sourceFingerprint=source-1\n" + profile + ".schemaHash=none\n" +
+            profile + ".dependencies.count=0\n";
         check(PlatformFile::writeAllText(root / "Binaries/Project.modules", text), "publish runtime manifest");
     }
     ~Fixture()

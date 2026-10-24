@@ -14,6 +14,7 @@
 namespace tinyengine
 {
 class TextureResource;
+class MaterialGraph;
 enum class MaterialParameterType
 {
     Float,
@@ -70,27 +71,15 @@ struct MaterialDiagnostic
     int port = -1;
     std::string message;
 };
-struct LegacyMaterialData
-{
-    Vec4 baseColor{.3f, .7f, 1.f, 1.f};
-    float metallic = 0, roughness = .7f;
-    Vec3 emissive{};
-    bool transparent = false;
-    std::string shaderPath, texturePath, normalTexturePath, metallicTexturePath, roughnessTexturePath, aoTexturePath,
-        emissiveTexturePath, packedTexturePath, packedTextureLayout = "ORM";
-    std::map<std::string, bool> overrideFlags;
-    std::map<std::string, Vec4> parameters;
-    std::string source;
-};
 struct MaterialAssetData
 {
-    int formatVersion = 1;
-    std::string definitionPath, parentPath;
+    int formatVersion = 3;
+    std::shared_ptr<MaterialGraph> graph;
+    std::string parentPath;
     std::map<std::string, MaterialParameterValue> overrides;
     // Provenance of overrides previously validated against a declaration.
     // Keep their values recoverable when the parent schema changes.
     std::map<std::string, MaterialParameterType> validatedOverrideTypes;
-    LegacyMaterialData legacyData;
 };
 struct MaterialParameterSlot
 {
