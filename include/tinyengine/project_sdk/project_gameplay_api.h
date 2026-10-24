@@ -117,6 +117,11 @@ typedef struct TinyProjectGameplayAPI
      * 该通道独立于 TAA/Bloom，只作用于色调映射之后的最终画面。 */
     TinyProjectResult(TINY_PROJECT_CALL* set_retro_post)(void*, uint32_t enabled, float block_size,
                                                          float color_levels);
+
+    /* 运行时加载场景。path 为项目资产相对路径（如 "saved/Reliquary.scene"）。
+     * 成功时 *out_loaded 为 1；失败（文件不存在/解析失败）返回错误码且不清空当前场景。
+     * 注意：加载成功会清空 World，调用方持有的全部实体句柄随之失效。 */
+    TinyProjectResult(TINY_PROJECT_CALL* load_scene)(void*, TinyProjectString path, uint32_t* out_loaded);
 } TinyProjectGameplayAPI;
 
 /* 老宿主（struct_size 更小）缺少该成员时返回 0，调用方必须据此降级。 */

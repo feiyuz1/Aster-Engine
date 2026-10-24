@@ -6,6 +6,8 @@
 #include "tinyengine/ecs/ecs.h"
 #include "tinyengine/input/input_system.h"
 #include "tinyengine/physics/physics_world.h"
+#include "tinyengine/platform/platform.h"
+#include "tinyengine/project/project.h"
 #include "tinyengine/project/project_host_bridge.h"
 #include "tinyengine/project_sdk/project_gameplay_api.h"
 #include "tinyengine/project_sdk/project.h"
@@ -247,6 +249,63 @@ int main()
               "destroyed entity handle is rejected");
         check(api->destroy_entity(api->host_context, entity) == TINY_PROJECT_NOT_FOUND,
               "destroying the same handle twice is rejected");
+
+        // ---- 运行时场景加载：沿用项目挂载路径，失败保留 World ----
+        check(TINY_PROJECT_GAMEPLAY_HAS(api, load_scene), "runtime scene loading is available");
+        static_assert(offsetof(TinyProjectGameplayAPI, load_scene) ==
+                      offsetof(TinyProjectGameplayAPI, set_retro_post) + sizeof(api->set_retro_post),
+                      "scene loading must be appended after all existing callbacks");
+        partial.struct_size = offsetof(TinyProjectGameplayAPI, load_scene);
+        check(!TINY_PROJECT_GAMEPLAY_HAS(&partial, load_scene), "older tables omit scene loading safely");
+        const auto sceneRoot = std::filesystem::absolute("saved/GameplaySceneLoading");
+        World sceneWorld;
+        sceneWorld.createEntity("Loaded scene entity");
+        check(SceneManager{&sceneWorld}.saveScene(sceneRoot / "saved/Runtime.scene"), "write scene fixture");
+        check(PlatformFile::writeAllText(sceneRoot / "saved/Broken.scene", "TINYSCENE 999999\nentity"),
+              "write malformed scene fixture");
+        PlatformFile::mountDirectory(sceneRoot);
+        PlatformFile::setReadPolicy(PlatformFile::ReadPolicy::MountedOnly);
+        const auto before = SceneManager{&world}.createSnapshot();
+        uint32_t loaded = 1;
+        check(api->load_scene(api->host_context, span("saved/Absent.scene"), &loaded) == TINY_PROJECT_FAILED &&
+                  loaded == 0 && SceneManager{&world}.createSnapshot() == before,
+              "missing scene preserves the world and clears the loaded flag");
+        loaded = 1;
+        check(api->load_scene(api->host_context, span("saved/Broken.scene"), &loaded) == TINY_PROJECT_FAILED &&
+                  loaded == 0 && SceneManager{&world}.createSnapshot() == before,
+              "malformed scene preserves the world");
+        check(api->load_scene(api->host_context, span(""), &loaded) == TINY_PROJECT_INVALID_ARGUMENT &&
+                  api->load_scene(api->host_context, {nullptr, 1}, &loaded) == TINY_PROJECT_INVALID_ARGUMENT &&
+                  api->load_scene(api->host_context, span("saved/Runtime.scene"), nullptr) ==
+                      TINY_PROJECT_INVALID_ARGUMENT,
+              "invalid scene arguments are rejected");
+        bridge.setWorldAccess(true, false);
+        loaded = 1;
+        check(api->load_scene(api->host_context, span("saved/Runtime.scene"), &loaded) == TINY_PROJECT_READ_ONLY &&
+                  loaded == 0 && SceneManager{&world}.createSnapshot() == before,
+              "read-only access cannot replace the scene");
+        bridge.setWorldAccess(false, false);
+        check(api->load_scene(api->host_context, span("saved/Runtime.scene"), &loaded) == TINY_PROJECT_NOT_READY,
+              "scene loading requires a ready world");
+        bridge.setWorldAccess(true, true);
+        TinyProjectResult threadedResult = TINY_PROJECT_OK;
+        std::thread worker([&] { threadedResult = api->load_scene(api->host_context, span("saved/Runtime.scene"), &loaded); });
+        worker.join();
+        check(threadedResult == TINY_PROJECT_WRONG_THREAD && SceneManager{&world}.createSnapshot() == before,
+              "scene loading requires the host thread");
+        TinyProjectEntity previous{};
+        check(api->create_entity(api->host_context, span("Before scene replacement"), nullptr, &previous) ==
+                  TINY_PROJECT_OK, "create entity before scene replacement");
+        check(api->load_scene(api->host_context, span("saved/Runtime.scene"), &loaded) == TINY_PROJECT_OK &&
+                  loaded == 1 && SceneManager{&world}.createSnapshot() == SceneManager{&sceneWorld}.createSnapshot(),
+              "scene loading replaces the world through the project asset mount");
+        check(bridge.GetAPI().is_alive(bridge.GetAPI().host_context, previous, &alive) == TINY_PROJECT_NOT_FOUND &&
+                  alive == 0, "scene replacement invalidates previous entity handles");
+        const std::string utf8Scene = "saved/运行时场景.scene";
+        check(SceneManager{&sceneWorld}.saveScene(sceneRoot / fromUtf8Path(utf8Scene)), "write UTF-8 scene fixture");
+        check(api->load_scene(api->host_context, span(utf8Scene), &loaded) == TINY_PROJECT_OK && loaded == 1,
+              "scene paths use the SDK UTF-8 encoding on Windows");
+        PlatformFile::clearMounts();
 
         std::cout << "ALL GAMEPLAY BRIDGE CHECKS PASSED (" << checks << " checks)\n";
         return 0;

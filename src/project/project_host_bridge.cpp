@@ -5,6 +5,8 @@
 #include "tinyengine/ecs/ecs.h"
 #include "tinyengine/input/input_system.h"
 #include "tinyengine/physics/physics_world.h"
+#include "tinyengine/platform/platform.h"
+#include "tinyengine/project/project.h"
 #include "tinyengine/render/renderer.h"
 #include "tinyengine/ui/ui_system.h"
 #include "tinyengine/vfx/particle_system.h"
@@ -785,6 +787,25 @@ void ProjectHostBridge::buildGameplayAPI() noexcept
                 // 设备不支持该通道时明确回报，便于项目侧区分“已关闭”和“不支持”。
                 return b.m_renderer->isRetroPostProcessEnabled() == (enabled != 0) ? TINY_PROJECT_OK
                                                                                    : TINY_PROJECT_UNSUPPORTED;
+            });
+    };
+    m_gameplay.load_scene = [](void* p, TinyProjectString path, uint32_t* outLoaded) -> TinyProjectResult
+    {
+        if (outLoaded)
+            *outLoaded = 0;
+        if (!outLoaded || !valid(path) || !path.size)
+            return TINY_PROJECT_INVALID_ARGUMENT;
+        return guard(
+            [&]() -> TinyProjectResult
+            {
+                auto& b = *static_cast<ProjectHostBridge*>(p);
+                auto result = b.access(true);
+                if (result != TINY_PROJECT_OK)
+                    return result;
+                if (!SceneManager{&b.m_world}.loadScene(fromUtf8Path(String(path))))
+                    return TINY_PROJECT_FAILED;
+                *outLoaded = 1;
+                return TINY_PROJECT_OK;
             });
     };
 }
