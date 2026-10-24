@@ -379,6 +379,19 @@ void EditorApp::drawSceneView()
         for (int mode = 0; mode < 3; ++mode)
             if (ImGui::MenuItem(modeNames[mode], nullptr, static_cast<int>(m_viewportRenderMode) == mode))
                 m_viewportRenderMode = static_cast<ViewportRenderMode>(mode);
+        ImGui::Separator();
+        auto* renderer = m_engine.GetContext().renderer;
+        for (const auto path : {RenderPath::Forward, RenderPath::Deferred})
+            if (ImGui::MenuItem(path == RenderPath::Deferred ? localize("Deferred", "延迟渲染")
+                                                             : localize("Forward+", "前向渲染"),
+                                nullptr, renderer->getRenderPath() == path))
+            {
+                if (auto* diagnostics = m_engine.GetContext().diagnostics)
+                    diagnostics->GetConsole().setVariable("r.Deferred",
+                                                          path == RenderPath::Deferred ? "true" : "false");
+                else
+                    renderer->setRenderPath(path);
+            }
         ImGui::EndPopup();
     }
     sameLineIfFits(75);

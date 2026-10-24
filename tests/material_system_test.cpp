@@ -778,6 +778,20 @@ int main()
 {
     std::cout.setf(std::ios::unitbuf);
     {
+        const auto material = MaterialCompiler{}.compile(makeBuiltinPbrDefinition());
+        const auto templates = ShaderPipeline::loadMaterialTemplates();
+        // The appended pass must evaluate the full surface without lighting it.
+        for (auto geometry : {MaterialGeometry::Static, MaterialGeometry::Skinned, MaterialGeometry::Instanced})
+        {
+            const auto sources =
+                MaterialCompiler{}.generatePass(*material.material, static_cast<MaterialPass>(2), geometry, templates);
+            check(sources.error.empty() && sources.fragment.find("outBaseColorOpacity") != std::string::npos &&
+                      sources.fragment.find("SurfaceData EvaluateSurface") != std::string::npos &&
+                      sources.fragment.find("EvaluateLighting") == std::string::npos,
+                  "GBuffer variants evaluate surface data without calculating lighting");
+        }
+    }
+    {
         MaterialAssetData material;
         std::string error;
         check(parseMaterialAsset("TINY_MAT 3 graph\nsettings Lit Opaque 0 .5\n"

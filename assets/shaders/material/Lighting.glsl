@@ -75,10 +75,10 @@ vec3 FresnelSchlick(float cosine, vec3 f0)
     return f0 + (1.0 - f0) * pow(clamp(1.0 - cosine, 0.0, 1.0), 5.0);
 }
 
-float ShadowFactor(vec3 normal, vec3 light)
+float ShadowFactor(vec3 normal, vec3 light, float viewDepth, vec4 lightSpace[3])
 {
-    int cascade = vViewDepth < uShadowCascadeSplits[0] ? 0 : (vViewDepth < uShadowCascadeSplits[1] ? 1 : 2);
-    vec3 projected = vLightSpace[cascade].xyz / max(vLightSpace[cascade].w, 0.0001);
+    int cascade = viewDepth < uShadowCascadeSplits[0] ? 0 : (viewDepth < uShadowCascadeSplits[1] ? 1 : 2);
+    vec3 projected = lightSpace[cascade].xyz / max(lightSpace[cascade].w, 0.0001);
     projected = projected * 0.5 + 0.5;
     if (projected.z > 1.0 || projected.x < 0.0 || projected.x > 1.0 || projected.y < 0.0 || projected.y > 1.0) return 0.0;
     float bias = max(0.0025 * (1.0 - dot(normal, light)), 0.0005);
@@ -94,12 +94,12 @@ float ShadowFactor(vec3 normal, vec3 light)
     return shadow / 9.0;
 }
 
-void EvaluateLighting(vec3 albedo, vec3 normal, float metallic, float roughness, float ao, vec3 emissive, out vec3 color, out vec3 ambientContribution)
+void EvaluateLighting(vec3 albedo, vec3 normal, float metallic, float roughness, float ao, vec3 emissive, vec3 worldPosition, float viewDepth, vec4 lightSpace[3], out vec3 color, out vec3 ambientContribution)
 {
-    vec3 view = normalize(uCameraPosition - vWorldPosition);
+    vec3 view = normalize(uCameraPosition - worldPosition);
     vec3 f0 = mix(vec3(0.04), albedo, metallic);
     vec3 direct = vec3(0.0);
-    float logarithmicDepth = log(max(vViewDepth, uClusterDepthRange.x) / uClusterDepthRange.x) /
+    float logarithmicDepth = log(max(viewDepth, uClusterDepthRange.x) / uClusterDepthRange.x) /
                              log(uClusterDepthRange.y / uClusterDepthRange.x);
     int clusterX = clamp(int(gl_FragCoord.x / max(1.0, uViewportSize.x) * float(uClusterDimensions.x)), 0, uClusterDimensions.x - 1);
     int clusterY = clamp(int(gl_FragCoord.y / max(1.0, uViewportSize.y) * float(uClusterDimensions.y)), 0, uClusterDimensions.y - 1);
@@ -117,7 +117,7 @@ void EvaluateLighting(vec3 albedo, vec3 normal, float metallic, float roughness,
         vec4 colorIntensity = texelFetch(uLightData, int(index * 4u + 2u));
         vec4 cones = texelFetch(uLightData, int(index * 4u + 3u));
         int lightType = int(positionType.w + 0.5);
-        vec3 toLight = positionType.xyz - vWorldPosition;
+        vec3 toLight = positionType.xyz - worldPosition;
         float distanceToLight = length(toLight);
         vec3 light = lightType == 0 ? normalize(-directionRange.xyz) : toLight / max(distanceToLight, 0.0001);
         float attenuation = 1.0;
@@ -140,7 +140,7 @@ void EvaluateLighting(vec3 albedo, vec3 normal, float metallic, float roughness,
         float geometry = GeometrySchlickGGX(nv, roughness) * GeometrySchlickGGX(nl, roughness);
         vec3 specular = distribution * geometry * fresnel / max(4.0 * nv * nl, 0.0001);
         vec3 diffuse = (vec3(1.0) - fresnel) * (1.0 - metallic) * albedo / 3.14159265;
-        float visibility = lightType == 0 && index == 0u ? 1.0 - ShadowFactor(normal, light) : 1.0;
+        float visibility = lightType == 0 && index == 0u ? 1.0 - ShadowFactor(normal, light, viewDepth, lightSpace) : 1.0;
         direct += (diffuse + specular) * colorIntensity.rgb * colorIntensity.w * nl * visibility * attenuation;
     }
     vec3 skyAmbient = mix(vec3(0.025, 0.035, 0.055), vec3(0.12, 0.18, 0.28), clamp(normal.y * 0.5 + 0.5, 0.0, 1.0));

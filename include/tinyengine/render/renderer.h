@@ -53,6 +53,12 @@ struct InputState
     std::array<bool, kMaxScancodes> keysPressed{};
 };
 
+enum class RenderPath
+{
+    Forward,
+    Deferred
+};
+
 enum class ViewportRenderMode
 {
     Lit,
@@ -138,6 +144,13 @@ enum class PostProcessPass
 class RenderDevice
 {
   public:
+    virtual bool supportsDeferredRendering() const
+    {
+        return false;
+    }
+    virtual void beginGBufferPass() {}
+    virtual void endGBufferPass() {}
+    virtual void executeDeferredLighting() {}
     /// @brief 析构 `RenderDevice` 对象并释放其持有资源。
     virtual ~RenderDevice() = default;
     virtual bool validateMaterial(const CompiledMaterial&, std::vector<MaterialDiagnostic>&)
@@ -432,6 +445,15 @@ class Renderer
     /// @param rotation 旋转值，单位与空间由接口约定。
     /// @param fov 本次操作使用的数值。
     void setCameraOverride(bool enabled, const Vec3& position = {}, const Vec3& rotation = {}, float fov = 60.0f);
+    void setRenderPath(RenderPath path);
+    RenderPath getRenderPath() const
+    {
+        return m_renderPath;
+    }
+    RenderPath getActiveRenderPath() const
+    {
+        return m_activeRenderPath;
+    }
     void setViewportRenderMode(ViewportRenderMode mode);
     /// @brief 设置 `EnvironmentPath`。
     /// @param path 文件、资源或目录路径。
@@ -446,6 +468,8 @@ class Renderer
     RenderQueue m_renderQueue;
     std::vector<RenderItem> m_shadowItems;
     FrameView m_frameView;
+    RenderPath m_renderPath = RenderPath::Deferred;
+    RenderPath m_activeRenderPath = RenderPath::Forward;
     ViewportRenderMode m_viewportRenderMode = ViewportRenderMode::Lit;
     std::size_t m_lastDrawCalls = 0;
     std::size_t m_lastCulled = 0;

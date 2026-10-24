@@ -96,7 +96,8 @@ struct MaterialParameterLayout
 enum class MaterialPass
 {
     Base,
-    Shadow
+    Shadow,
+    GBuffer
 };
 enum class MaterialGeometry
 {
@@ -111,7 +112,7 @@ struct CompiledMaterial
     MaterialRenderState renderState;
     std::string canonicalProgramContent;
     std::vector<std::string> dependencies;
-    std::uint32_t compilerVersion = 1;
+    std::uint32_t compilerVersion = 2;
 };
 struct MaterialCompileResult
 {

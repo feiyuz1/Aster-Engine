@@ -125,6 +125,10 @@ bool Engine::initialize(const std::filesystem::path& projectFile, const bool sta
     auto& console = m_diagnostics.GetConsole();
     console.registerVariable("t.TimeScale", 1.0f, "Global gameplay time scale", false,
                              [this](const ConsoleValue& value) { setTimeScale(std::get<float>(value)); });
+    console.registerVariable(
+        "r.Deferred", true, "Use deferred lighting (false selects Forward+)", false,
+        [this](const ConsoleValue& value)
+        { m_renderer.setRenderPath(std::get<bool>(value) ? RenderPath::Deferred : RenderPath::Forward); });
     console.registerVariable("r.FXAA", true, "Enable post-process FXAA", false,
                              [this](const ConsoleValue& value)
                              {

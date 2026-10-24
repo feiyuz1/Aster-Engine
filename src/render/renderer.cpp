@@ -493,6 +493,15 @@ void Renderer::renderFrame(World& world)
     if (!m_device)
         return;
     const auto totalStart = std::chrono::steady_clock::now();
+    const RenderPath path = m_renderPath == RenderPath::Deferred && m_viewportRenderMode == ViewportRenderMode::Lit &&
+                                    m_device->supportsDeferredRendering()
+                                ? RenderPath::Deferred
+                                : RenderPath::Forward;
+    if (path != m_activeRenderPath)
+    {
+        m_hasPreviousView = false;
+        m_activeRenderPath = path;
+    }
     buildRenderQueue(world);
     const auto queueEnd = std::chrono::steady_clock::now();
     const auto batches = BuildInstanceBatches(m_renderQueue.GetItems());
@@ -557,21 +566,80 @@ void Renderer::renderFrame(World& world)
                                            m_device->drawShadow(batch.front());
                                    m_device->endShadowPass();
                                }});
-    m_renderGraph.addPass({"Forward+ Scene",
-                           {shadow0, shadow1, shadow2},
-                           {hdr, ambient, depth, velocity},
-                           [&]
-                           {
-                               m_device->beginFrame(m_frameView);
-                               m_device->drawSkybox();
-                               for (const auto& batch : batches)
-                                   if (batch.size() > 1)
-                                       m_device->drawInstanced(batch);
-                                   else
-                                       m_device->draw(batch.front());
-                               m_device->drawParticles(particles);
-                               m_device->drawGpuParticles(gpuEmitters);
-                           }});
+    const auto drawBatches = [&](const std::vector<std::vector<RenderItem>>& selected)
+    {
+        for (const auto& batch : selected)
+            if (batch.size() > 1)
+                m_device->drawInstanced(batch);
+            else
+                m_device->draw(batch.front());
+    };
+    std::vector<RenderItem> deferredItems, forwardItems;
+    std::vector<std::vector<RenderItem>> deferredBatches, forwardBatches;
+    if (path == RenderPath::Deferred)
+    {
+        for (const auto& item : m_renderQueue.GetItems())
+        {
+            const auto& proxy = item.materialProxy;
+            if (!item.transparent && proxy && proxy->compiled && proxy->legacyShaderPath.empty())
+                deferredItems.push_back(item);
+            else
+                forwardItems.push_back(item);
+        }
+        deferredBatches = BuildInstanceBatches(deferredItems);
+        forwardBatches = BuildInstanceBatches(forwardItems);
+        std::array<RenderGraphResourceHandle, 4> surface;
+        const char* names[] = {"GBufferBaseColorOpacity", "GBufferNormalRoughness", "GBufferEmissiveMetallic",
+                               "GBufferMaterialFlags"};
+        for (std::size_t i = 0; i < surface.size(); ++i)
+            surface[i] = m_renderGraph.createResource(
+                {RenderGraphResourceType::Texture, names[i], static_cast<std::uint32_t>(viewport.x),
+                 static_cast<std::uint32_t>(viewport.y), 1, i == 3 ? 102u : 101u});
+        m_renderGraph.addPass({"Scene Setup",
+                               {},
+                               {hdr, ambient, depth, velocity},
+                               [&]
+                               {
+                                   m_device->beginFrame(m_frameView);
+                                   m_device->drawSkybox();
+                               }});
+        m_renderGraph.addPass({"GBuffer Geometry",
+                               {depth},
+                               {surface[0], surface[1], surface[2], surface[3], depth, velocity},
+                               [&]
+                               {
+                                   m_device->beginGBufferPass();
+                                   drawBatches(deferredBatches);
+                                   m_device->endGBufferPass();
+                               }});
+        m_renderGraph.addPass({"Deferred Lighting",
+                               {surface[0], surface[1], surface[2], surface[3], depth, shadow0, shadow1, shadow2},
+                               {hdr, ambient},
+                               [&] { m_device->executeDeferredLighting(); }});
+        m_renderGraph.addPass({"Forward Compatibility",
+                               {hdr, ambient, depth, velocity},
+                               {hdr, ambient, depth, velocity},
+                               [&]
+                               {
+                                   drawBatches(forwardBatches);
+                                   m_device->drawParticles(particles);
+                                   m_device->drawGpuParticles(gpuEmitters);
+                               }});
+    }
+    else
+    {
+        m_renderGraph.addPass({"Forward+ Scene",
+                               {shadow0, shadow1, shadow2},
+                               {hdr, ambient, depth, velocity},
+                               [&]
+                               {
+                                   m_device->beginFrame(m_frameView);
+                                   m_device->drawSkybox();
+                                   drawBatches(batches);
+                                   m_device->drawParticles(particles);
+                                   m_device->drawGpuParticles(gpuEmitters);
+                               }});
+    }
     m_renderGraph.addPass(
         {"GPU HZB", {depth}, {hzb}, [&] { m_device->executePostProcess(PostProcessPass::HierarchicalDepth); }});
     m_renderGraph.addPass({"GTAO", {depth, hzb}, {gtao}, [&] { m_device->executePostProcess(PostProcessPass::Gtao); }});
@@ -622,7 +690,13 @@ void Renderer::renderFrame(World& world)
         m_overlayCallback();
     m_device->present();
     const auto sceneEnd = std::chrono::steady_clock::now();
-    m_lastDrawCalls = batches.size() + particleCount;
+    if (path == RenderPath::Deferred && !m_device->supportsDeferredRendering())
+    {
+        m_activeRenderPath = RenderPath::Forward;
+        m_hasPreviousView = false;
+    }
+    m_lastDrawCalls = (path == RenderPath::Deferred ? deferredBatches.size() + forwardBatches.size() : batches.size()) +
+                      particleCount;
     const auto milliseconds = [](const auto start, const auto end)
     { return std::chrono::duration<float, std::milli>(end - start).count(); };
     m_lastFrameProfile = {milliseconds(totalStart, queueEnd),
@@ -703,6 +777,15 @@ const RenderGraph& Renderer::GetLastRenderGraph() const
 {
     return m_renderGraph;
 }
+void Renderer::setRenderPath(RenderPath path)
+{
+    if (m_renderPath != path)
+    {
+        m_renderPath = path;
+        m_hasPreviousView = false;
+    }
+}
+
 void Renderer::setViewportRenderMode(ViewportRenderMode mode)
 {
     if (m_viewportRenderMode != mode)

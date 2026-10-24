@@ -12,7 +12,7 @@ Aster-Engine 是参考 Unreal Engine 5.3.2 模块职责、以 C++20 实现的轻
 
 - 项目与内容生产：项目配置、场景与 Prefab、多场景编辑、反射 Inspector、Undo/Redo、自动恢复、后台模型导入、资产维护、Cook、TPAK 和独立游戏打包。
 - 世界与 Gameplay：ECS、父子层级、常用 3D 组件、GameInstance/GameMode、SaveGame、C++ 脚本、模块生命周期和稳定 C 插件 ABI。
-- 渲染与材质：OpenGL 4.3、九 Pass Render Graph、Forward+、GPU HZB/Indirect Draw、PBR、CSM、GTAO、Bloom、Motion Vector TAA、材质实例、Material Graph 和 Shader 工具链。
+- 渲染与材质：OpenGL 4.3、Render Graph、可切换的延迟渲染 / Forward+、GPU HZB/Indirect Draw、PBR、CSM、GTAO、Bloom、Motion Vector TAA、材质实例、Material Graph 和 Shader 工具链。
 - 角色与交互：骨骼动画、Blend Tree、Animation Graph、重定向、Two Bone IK、Root Motion、VFX、空间音频、输入映射和手柄支持。
 - 仿真与世界系统：轻量刚体/碰撞/约束、角色移动、可选 Jolt、导航、Crowd、EQS、行为树、World Partition 协调器、地形和 Sequencer。
 - UI 与本地化：Runtime Widget、动态 Unicode 字形、基础 BiDi/连字/换行/富文本，以及中英文编辑器界面。

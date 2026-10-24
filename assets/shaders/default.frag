@@ -61,7 +61,7 @@ void main()
     float ao = uHasAoTexture != 0 ? texture(uAoTexture, vUv).r : packedAo;
     vec3 emissive = uEmissive * (uHasEmissiveTexture != 0 ? texture(uEmissiveTexture, vUv).rgb : vec3(1.0));
     vec3 color, ambient;
-    EvaluateLighting(albedo, normal, metallic, roughness, ao, emissive, color, ambient);
+    EvaluateLighting(albedo, normal, metallic, roughness, ao, emissive, vWorldPosition, vViewDepth, vLightSpace, color, ambient);
     if (uViewportRenderMode != 0)
     {
         color = uViewportRenderMode == 2 ? vec3(0.65,0.75,0.9) : albedo;

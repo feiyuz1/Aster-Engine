@@ -49,12 +49,12 @@ struct GlMaterialProgramCache::Impl
     std::unordered_map<std::string, std::unique_ptr<GlMaterialProgram>> programs;
     std::unordered_set<std::string> failed, warned;
     std::vector<MaterialDiagnostic> diagnostics;
-    std::array<std::size_t, 2> count{};
+    std::array<std::size_t, 3> count{};
     std::uint64_t frame = 0;
     struct FastEntry
     {
         std::weak_ptr<const CompiledMaterial> owner;
-        std::array<GlMaterialProgram*, 6> variants{};
+        std::array<GlMaterialProgram*, 9> variants{};
     };
     std::unordered_map<const CompiledMaterial*, FastEntry> fast;
     GLuint numericBuffer = 0, fallback[2]{};
@@ -90,6 +90,46 @@ struct GlMaterialProgramCache::Impl
     void matrix(const char* name, const Mat4& matrix)
     {
         UniformMatrix4fv(location(name), 1, GL_FALSE, matrix.Data());
+    }
+    GlMaterialProgram externalLighting;
+    void bindFrame(const FrameView& view)
+    {
+        matrix("uViewProjection", view.projection * view.view);
+        matrix("uPreviousViewProjection", view.previousViewProjection);
+        matrix("uView", view.view);
+        matrix("uLightViewProjection", view.shadowViewProjections[std::min<std::size_t>(cascade, 2)]);
+        for (int index = 0; index < 3; ++index)
+        {
+            const auto suffix = '[' + std::to_string(index) + ']';
+            matrix(("uShadowViewProjections" + suffix).c_str(), view.shadowViewProjections[index]);
+            Uniform1f(location(("uShadowCascadeSplits" + suffix).c_str()), view.shadowCascadeSplits[index]);
+            Uniform1i(location(("uShadowMaps" + suffix).c_str()), 8 + index);
+            bindTexture(8 + index, shadows[index]);
+        }
+        const auto irradiance = view.environmentIrradiance ? view.environmentIrradiance : view.environmentTexture;
+        const auto prefilter = view.environmentPrefilter ? view.environmentPrefilter : view.environmentTexture;
+        const std::shared_ptr<TextureResource> environment[] = {irradiance, prefilter, view.environmentBrdfLut};
+        const char* names[] = {"uEnvironmentIrradiance", "uEnvironmentPrefilter", "uEnvironmentBrdfLut"};
+        bool environmentReady = true;
+        for (int index = 0; index < 3; ++index)
+        {
+            const auto texture = Texture(environment[index], false);
+            environmentReady = environmentReady && texture != 0;
+            bindTexture(11 + index, texture ? texture : fallback[0]);
+            Uniform1i(location(names[index]), 11 + index);
+        }
+        Uniform1i(location("uHasEnvironment"), environmentReady ? 1 : 0);
+        bindTexture(14, lightData, GL_TEXTURE_BUFFER);
+        bindTexture(15, clusterData, GL_TEXTURE_BUFFER);
+        Uniform1i(location("uLightData"), 14);
+        Uniform1i(location("uClusterData"), 15);
+        Uniform1i(location("uLightCount"), view.lightCount);
+        Uniform3f(location("uCameraPosition"), view.cameraPosition.x, view.cameraPosition.y, view.cameraPosition.z);
+        Uniform3i(location("uClusterDimensions"), static_cast<GLint>(view.clusteredLights.tilesX),
+                  static_cast<GLint>(view.clusteredLights.tilesY), static_cast<GLint>(view.clusteredLights.slicesZ));
+        Uniform2f(location("uClusterDepthRange"), view.clusteredLights.nearPlane, view.clusteredLights.farPlane);
+        Uniform2f(location("uViewportSize"), viewport.x, viewport.y);
+        ActiveTexture(GL_TEXTURE0);
     }
     GLuint compileStage(GLenum type, const std::string& source)
     {
@@ -300,7 +340,7 @@ bool GlMaterialProgramCache::validateTemplates(const MaterialTemplateSources& so
     materials.push_back(MaterialCompiler{}.compile(makeBuiltinPbrDefinition()).material);
     bool valid = true;
     for (const auto& material : materials)
-        for (auto pass : {MaterialPass::Base, MaterialPass::Shadow})
+        for (auto pass : {MaterialPass::Base, MaterialPass::Shadow, MaterialPass::GBuffer})
             for (auto geometry : {MaterialGeometry::Static, MaterialGeometry::Skinned, MaterialGeometry::Instanced})
                 valid = getOrCreate(*material, pass, geometry) != nullptr && valid;
     p.templates = std::move(previous);
@@ -423,43 +463,21 @@ bool GlMaterialProgramCache::bind(const MaterialRenderProxy& proxy, const FrameV
     p.Uniform1i(p.location("uMaterialTwoSided"), proxy.state.twoSided ? 1 : 0);
     p.Uniform1i(p.location("uViewportRenderMode"), static_cast<int>(view.renderMode));
     p.Uniform1f(p.location("uMaterialMaskCutoff"), proxy.state.maskCutoff);
-    p.matrix("uViewProjection", view.projection * view.view);
-    p.matrix("uPreviousViewProjection", view.previousViewProjection);
-    p.matrix("uView", view.view);
-    p.matrix("uLightViewProjection", view.shadowViewProjections[std::min<std::size_t>(p.cascade, 2)]);
-    for (int index = 0; index < 3; ++index)
-    {
-        const auto suffix = '[' + std::to_string(index) + ']';
-        p.matrix(("uShadowViewProjections" + suffix).c_str(), view.shadowViewProjections[index]);
-        p.Uniform1f(p.location(("uShadowCascadeSplits" + suffix).c_str()), view.shadowCascadeSplits[index]);
-        p.Uniform1i(p.location(("uShadowMaps" + suffix).c_str()), 8 + index);
-        p.bindTexture(8 + index, p.shadows[index]);
-    }
-    const auto irradiance = view.environmentIrradiance ? view.environmentIrradiance : view.environmentTexture;
-    const auto prefilter = view.environmentPrefilter ? view.environmentPrefilter : view.environmentTexture;
-    const std::shared_ptr<TextureResource> environment[] = {irradiance, prefilter, view.environmentBrdfLut};
-    const char* names[] = {"uEnvironmentIrradiance", "uEnvironmentPrefilter", "uEnvironmentBrdfLut"};
-    bool environmentReady = true;
-    for (int index = 0; index < 3; ++index)
-    {
-        const auto texture = p.Texture(environment[index], false);
-        environmentReady = environmentReady && texture != 0;
-        p.bindTexture(11 + index, texture ? texture : p.fallback[0]);
-        p.Uniform1i(p.location(names[index]), 11 + index);
-    }
-    p.Uniform1i(p.location("uHasEnvironment"), environmentReady ? 1 : 0);
-    p.bindTexture(14, p.lightData, GL_TEXTURE_BUFFER);
-    p.bindTexture(15, p.clusterData, GL_TEXTURE_BUFFER);
-    p.Uniform1i(p.location("uLightData"), 14);
-    p.Uniform1i(p.location("uClusterData"), 15);
-    p.Uniform1i(p.location("uLightCount"), view.lightCount);
-    p.Uniform3f(p.location("uCameraPosition"), view.cameraPosition.x, view.cameraPosition.y, view.cameraPosition.z);
-    p.Uniform3i(p.location("uClusterDimensions"), static_cast<GLint>(view.clusteredLights.tilesX),
-                static_cast<GLint>(view.clusteredLights.tilesY), static_cast<GLint>(view.clusteredLights.slicesZ));
-    p.Uniform2f(p.location("uClusterDepthRange"), view.clusteredLights.nearPlane, view.clusteredLights.farPlane);
-    p.Uniform2f(p.location("uViewportSize"), p.viewport.x, p.viewport.y);
-    p.ActiveTexture(GL_TEXTURE0);
+    p.bindFrame(view);
     return true;
+}
+void GlMaterialProgramCache::bindLightingProgram(std::uint32_t handle, const FrameView& view)
+{
+    auto& p = *m_impl;
+    if (p.externalLighting.handle != handle)
+    {
+        p.externalLighting = {};
+        p.externalLighting.handle = handle;
+    }
+    p.current = &p.externalLighting;
+    p.UseProgram(handle);
+    p.bindFrame(view);
+    p.current = nullptr;
 }
 void GlMaterialProgramCache::bindObject(const RenderItem& item, const FrameView& view, MaterialGeometry geometry)
 {

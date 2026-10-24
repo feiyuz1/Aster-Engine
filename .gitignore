@@ -71,6 +71,10 @@
 !/assets/shaders/material/BasePass.frag
 !/assets/shaders/material/ShadowPass.vert
 !/assets/shaders/material/ShadowPass.frag
+!/assets/shaders/material/GBufferPass.vert
+!/assets/shaders/material/GBufferPass.frag
+!/assets/shaders/material/DeferredLighting.frag
+!/tests/deferred_render_test.cpp
 !/tests/editor_interaction_test.cpp
 !/tests/extended_regression_test.cpp
 !/assets/Materials/

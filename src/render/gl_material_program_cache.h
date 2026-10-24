@@ -28,6 +28,8 @@ class GlMaterialProgramCache
                           std::uint32_t clusterData, std::size_t cascade, Vec2 viewport);
     GlMaterialProgram* getOrCreate(const CompiledMaterial&, MaterialPass, MaterialGeometry);
     bool bind(const MaterialRenderProxy&, const FrameView&, MaterialPass, MaterialGeometry);
+    // Binds common lighting resources to an externally owned fullscreen program.
+    void bindLightingProgram(std::uint32_t handle, const FrameView& view);
     void bindObject(const RenderItem&, const FrameView&, MaterialGeometry);
     std::size_t getCompileCount(MaterialPass) const;
     const std::vector<MaterialDiagnostic>& GetDiagnostics() const;

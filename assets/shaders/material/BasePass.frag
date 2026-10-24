@@ -35,7 +35,7 @@ void main()
     ambient = vec3(0.0);
 #else
     vec3 normal = SurfaceWorldNormal(s,vNormal,vTangent,uMaterialTwoSided != 0);
-    EvaluateLighting(s.BaseColor,normal,s.Metallic,s.Roughness,s.AO,s.Emissive,color,ambient);
+    EvaluateLighting(s.BaseColor,normal,s.Metallic,s.Roughness,s.AO,s.Emissive,vWorldPosition,vViewDepth,vLightSpace,color,ambient);
 #endif
     }
     outColor = vec4(color,s.Opacity);

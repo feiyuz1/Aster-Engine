@@ -16,6 +16,10 @@ namespace tinyengine
 class SdlGlRenderDevice final : public RenderDevice
 {
   public:
+    bool supportsDeferredRendering() const override;
+    void beginGBufferPass() override;
+    void endGBufferPass() override;
+    void executeDeferredLighting() override;
     /// @brief 构造 `SdlGlRenderDevice` 对象。
     /// @param width 目标宽度。
     /// @param height 目标高度。

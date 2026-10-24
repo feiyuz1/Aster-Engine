@@ -531,8 +531,8 @@ GeneratedShaderSources MaterialCompiler::generatePass(const CompiledMaterial& ma
             else if (line.find("/*MATERIAL_DECLARATIONS*/") != std::string::npos)
                 output += material.parameterSource;
             else if (line.find("/*MATERIAL_FUNCTIONS*/") != std::string::npos)
-                output += pass == MaterialPass::Base ? material.surfaceSource + material.opacitySource
-                                                     : material.opacitySource;
+                output += pass != MaterialPass::Shadow ? material.surfaceSource + material.opacitySource
+                                                       : material.opacitySource;
             else
             {
                 output += line + '\n';
@@ -546,7 +546,9 @@ GeneratedShaderSources MaterialCompiler::generatePass(const CompiledMaterial& ma
         stack.erase(key);
         return true;
     };
-    const std::string base = pass == MaterialPass::Base ? "BasePass" : "ShadowPass";
+    const std::string base = pass == MaterialPass::Base     ? "BasePass"
+                             : pass == MaterialPass::Shadow ? "ShadowPass"
+                                                            : "GBufferPass";
     if (!expand(base + ".vert", generated.vertex) || !expand(base + ".frag", generated.fragment))
     {
         generated.vertex.clear();
@@ -561,13 +563,16 @@ bool MaterialCompiler::writeCache(const CompiledMaterial& material, const Materi
     std::map<std::string, std::string> files;
     std::set<std::string> dependencies;
     std::string content = material.canonicalProgramContent;
-    for (auto pass : {MaterialPass::Base, MaterialPass::Shadow})
+    for (auto pass : {MaterialPass::Base, MaterialPass::Shadow, MaterialPass::GBuffer})
         for (auto geometry : {MaterialGeometry::Static, MaterialGeometry::Skinned, MaterialGeometry::Instanced})
         {
             const auto generated = generatePass(material, pass, geometry, templates);
             if (!generated.error.empty())
                 return false;
-            const std::string name = std::string(pass == MaterialPass::Base ? "Base" : "Shadow") + '-' +
+            const std::string name = std::string(pass == MaterialPass::Base     ? "Base"
+                                                 : pass == MaterialPass::Shadow ? "Shadow"
+                                                                                : "GBuffer") +
+                                     '-' +
                                      (geometry == MaterialGeometry::Static    ? "Static"
                                       : geometry == MaterialGeometry::Skinned ? "Skinned"
                                                                               : "Instanced");

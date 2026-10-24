@@ -19,6 +19,7 @@
 #endif
 #include <Windows.h>
 #endif
+#include "gl_deferred_targets.h"
 #include <SDL.h>
 #include <SDL_opengl.h>
 
@@ -854,6 +855,8 @@ struct SdlGlRenderDevice::Impl
     InputState input;
     FrameView view;
     std::unique_ptr<GlMaterialProgramCache> materialPrograms;
+    GlDeferredTargets deferred;
+    GLuint deferredProgram = 0;
     GLuint program = 0, shadowProgram = 0, skyProgram = 0, toneProgram = 0, presentProgram = 0, hzbProgram = 0,
            gtaoProgram = 0, gtaoFilterProgram = 0, bloomProgram = 0, taaProgram = 0, gpuCullProgram = 0, uiProgram = 0,
            particleProgram = 0, gpuParticleProgram = 0, retroProgram = 0, fullScreenVao = 0,
@@ -951,6 +954,7 @@ struct SdlGlRenderDevice::Impl
           gpuParticleHasTextureLocation = -1;
     FileWatcher vertexShaderWatcher, fragmentShaderWatcher;
     std::unordered_map<std::string, FileWatcher> shaderDependencyWatchers;
+    std::unordered_map<std::string, bool> shaderDependencyPresence;
     std::filesystem::path vertexShaderPath{"assets/shaders/default.vert"},
         fragmentShaderPath{"assets/shaders/default.frag"};
     std::string lastShaderError;
@@ -1102,6 +1106,7 @@ struct SdlGlRenderDevice::Impl
 
     void destroySceneTarget()
     {
+        deferred.destroy(*this);
         if (sceneHdrColor)
             glDeleteTextures(1, &sceneHdrColor);
         if (sceneAmbient)
@@ -1267,6 +1272,8 @@ struct SdlGlRenderDevice::Impl
         }
         sceneWidth = width;
         sceneHeight = height;
+        if (!deferred.create(*this, width, height, sceneDepth, sceneVelocity, sceneHdrColor, sceneAmbient))
+            SDL_LogWarn(SDL_LOG_CATEGORY_RENDER, "Deferred targets unavailable; using Forward+");
         return true;
     }
 
@@ -1382,9 +1389,10 @@ struct SdlGlRenderDevice::Impl
     }
 
     bool createDefaultProgram(const char* vertexSource = kVertexShaderSource,
-                              const char* fragmentSource = kFragmentShaderSource)
+                              const char* fragmentSource = kFragmentShaderSource, GLuint validatedProgram = 0)
     {
-        const GLuint candidate = createLinkedProgram(vertexSource, fragmentSource);
+        const GLuint candidate =
+            validatedProgram ? validatedProgram : createLinkedProgram(vertexSource, fragmentSource);
         if (!candidate)
             return false;
         if (program)
@@ -1677,8 +1685,24 @@ struct SdlGlRenderDevice::Impl
         }
     }
 
+    GLuint createDeferredProgram(const MaterialTemplateSources& sources)
+    {
+        const auto fragment = sources.files.find("DeferredLighting.frag");
+        const auto lighting = sources.files.find("Lighting.glsl");
+        if (fragment == sources.files.end() || lighting == sources.files.end())
+            return 0;
+        auto text = fragment->second;
+        const std::string include = "#include \"Lighting.glsl\"";
+        const auto position = text.find(include);
+        if (position == std::string::npos)
+            return 0;
+        text.replace(position, include.size(), lighting->second);
+        return createLinkedProgram(kToneVertexShaderSource, text.c_str());
+    }
+
     bool createAuxiliaryPrograms()
     {
+        deferredProgram = createDeferredProgram(ShaderPipeline::loadMaterialTemplates());
         shadowProgram = createLinkedProgram(kShadowVertexShaderSource, kShadowFragmentShaderSource);
         skyProgram = createLinkedProgram(kToneVertexShaderSource, kSkyFragmentShaderSource);
         toneProgram = createLinkedProgram(kToneVertexShaderSource, kFinalToneFragmentShaderSource);
@@ -1816,37 +1840,80 @@ struct SdlGlRenderDevice::Impl
         return fullScreenVao != 0 && uiVao != 0 && createFontAtlas();
     }
 
-    bool reloadDefaultShadersFromFiles()
+    void watchShaderSources(const MaterialTemplateSources& templates, const ShaderPreprocessResult& vertex,
+                            const ShaderPreprocessResult& fragment)
     {
+        shaderDependencyWatchers.clear();
+        shaderDependencyPresence.clear();
+        const auto watch = [&](const std::filesystem::path& path)
+        {
+            const auto key = path.generic_string();
+            std::error_code error;
+            shaderDependencyPresence[key] = std::filesystem::exists(path, error);
+            shaderDependencyWatchers[key].hasChanged(path);
+        };
+        for (const auto& dependency : vertex.dependencies)
+            watch(dependency);
+        for (const auto& dependency : fragment.dependencies)
+            watch(dependency);
+        for (const auto& source : templates.files)
+            watch(std::filesystem::path("assets/shaders/material") / source.first);
+    }
+    bool reloadRenderShaders()
+    {
+        const auto templates = ShaderPipeline::loadMaterialTemplates();
         const auto vertex = ShaderPipeline::preprocess(vertexShaderPath),
                    fragment = ShaderPipeline::preprocess(fragmentShaderPath);
-        if (!vertex.success || !fragment.success)
+        const bool embedded = PlatformFile::readAllText(vertexShaderPath).empty() &&
+                              PlatformFile::readAllText(fragmentShaderPath).empty();
+        if ((!vertex.success || !fragment.success) && !embedded)
         {
             lastShaderError = !vertex.success ? vertex.error : fragment.error;
-            SDL_LogError(SDL_LOG_CATEGORY_RENDER, "%s", lastShaderError.c_str());
             return false;
         }
-        ShaderPipeline::writeCache(vertex, "saved/ShaderCache");
-        ShaderPipeline::writeCache(fragment, "saved/ShaderCache");
-        shaderDependencyWatchers.clear();
-        for (const auto& dependency : vertex.dependencies)
-            shaderDependencyWatchers[dependency.generic_string()].hasChanged(dependency);
-        for (const auto& dependency : fragment.dependencies)
-            shaderDependencyWatchers[dependency.generic_string()].hasChanged(dependency);
-        const bool reloaded = createDefaultProgram(vertex.source.c_str(), fragment.source.c_str());
-        SDL_Log(reloaded ? "Reloaded render shaders" : "Render shader reload failed; keeping the previous program");
-        return reloaded;
+        if (!materialPrograms->validateTemplates(templates))
+        {
+            const auto& diagnostics = materialPrograms->GetDiagnostics();
+            if (!diagnostics.empty())
+                lastShaderError = diagnostics.back().message;
+            return false;
+        }
+        const GLuint candidate = createDeferredProgram(templates);
+        if (!candidate)
+            return false;
+        const GLuint defaultCandidate = createLinkedProgram(embedded ? kVertexShaderSource : vertex.source.c_str(),
+                                                            embedded ? kFragmentShaderSource : fragment.source.c_str());
+        if (!defaultCandidate)
+        {
+            DeleteProgram(candidate);
+            return false;
+        }
+        // No live program is replaced until every candidate has compiled and linked.
+        createDefaultProgram(nullptr, nullptr, defaultCandidate);
+        if (deferredProgram)
+            DeleteProgram(deferredProgram);
+        deferredProgram = candidate;
+        materialPrograms->setTemplates(templates);
+        legacyReflection.clear();
+        historyValid = false;
+        watchShaderSources(templates, vertex, fragment);
+        return true;
     }
-
     void checkShaderHotReload()
     {
-        const bool vertexChanged = vertexShaderWatcher.hasChanged(vertexShaderPath);
-        const bool fragmentChanged = fragmentShaderWatcher.hasChanged(fragmentShaderPath);
-        bool dependencyChanged = false;
+        bool changed = vertexShaderWatcher.hasChanged(vertexShaderPath);
+        changed = fragmentShaderWatcher.hasChanged(fragmentShaderPath) || changed;
         for (auto& watcher : shaderDependencyWatchers)
-            dependencyChanged = watcher.second.hasChanged(watcher.first) || dependencyChanged;
-        if (vertexChanged || fragmentChanged || dependencyChanged)
-            reloadDefaultShadersFromFiles();
+        {
+            std::error_code error;
+            const bool present = std::filesystem::exists(watcher.first, error);
+            changed = present != shaderDependencyPresence[watcher.first] || changed;
+            shaderDependencyPresence[watcher.first] = present;
+            changed = watcher.second.hasChanged(watcher.first) || changed;
+        }
+        if (changed && !reloadRenderShaders())
+            SDL_LogWarn(SDL_LOG_CATEGORY_RENDER, "Shader reload failed; keeping previous programs: %s",
+                        lastShaderError.c_str());
     }
 
     const GpuMesh* getOrCreateMesh(const std::shared_ptr<MeshResource>& resource)
@@ -2127,6 +2194,7 @@ bool SdlGlRenderDevice::initialize()
         return false;
     }
     m_impl->GenQueries(2, m_impl->timerQueries);
+    m_impl->watchShaderSources(ShaderPipeline::loadMaterialTemplates(), vertexSource, fragmentSource);
     m_impl->vertexShaderWatcher.hasChanged(m_impl->vertexShaderPath);
     m_impl->fragmentShaderWatcher.hasChanged(m_impl->fragmentShaderPath);
     SDL_GL_SetSwapInterval(1);
@@ -2225,8 +2293,8 @@ void SdlGlRenderDevice::shutdown()
             m_impl->DeleteProgram(m_impl->presentProgram);
             m_impl->presentProgram = 0;
         }
-        for (GLuint* program : {&m_impl->hzbProgram, &m_impl->gtaoProgram, &m_impl->gtaoFilterProgram,
-                                &m_impl->bloomProgram, &m_impl->taaProgram})
+        for (GLuint* program : {&m_impl->deferredProgram, &m_impl->hzbProgram, &m_impl->gtaoProgram,
+                                &m_impl->gtaoFilterProgram, &m_impl->bloomProgram, &m_impl->taaProgram})
         {
             if (*program)
             {
@@ -2656,8 +2724,73 @@ void SdlGlRenderDevice::endShadowPass()
 }
 
 // 保存本帧公共常量并准备离屏颜色、深度和运动矢量目标，后处理统一从这些目标读取。
+bool SdlGlRenderDevice::supportsDeferredRendering() const
+{
+    return m_impl && m_impl->sceneTargetEnabled && m_impl->deferred.geometry && m_impl->deferredProgram;
+}
+void SdlGlRenderDevice::beginGBufferPass()
+{
+    if (!supportsDeferredRendering())
+        return;
+    m_impl->deferred.active = true;
+    m_impl->BindFramebuffer(GL_FRAMEBUFFER, m_impl->deferred.geometry);
+    glViewport(0, 0, m_impl->sceneWidth, m_impl->sceneHeight);
+    glDisable(GL_BLEND);
+    glDepthMask(GL_TRUE);
+    glEnable(GL_DEPTH_TEST);
+    glClearColor(0, 0, 0, 0);
+    // Scene setup already cleared shared depth and velocity; clear all surface attachments.
+    glClear(GL_COLOR_BUFFER_BIT);
+}
+void SdlGlRenderDevice::endGBufferPass()
+{
+    m_impl->deferred.active = false;
+    m_impl->BindFramebuffer(GL_FRAMEBUFFER, m_impl->sceneFramebuffer);
+}
+void SdlGlRenderDevice::executeDeferredLighting()
+{
+    if (!supportsDeferredRendering())
+        return;
+    m_impl->BindFramebuffer(GL_FRAMEBUFFER, m_impl->deferred.lighting);
+    glViewport(0, 0, m_impl->sceneWidth, m_impl->sceneHeight);
+    glDisable(GL_DEPTH_TEST);
+    glDepthMask(GL_FALSE);
+    glDisable(GL_CULL_FACE);
+    glDisable(GL_BLEND);
+    m_impl->materialPrograms->setFrameBindings(m_impl->shadowDepths, m_impl->lightDataTexture,
+                                               m_impl->clusterDataTexture, 0,
+                                               {float(m_impl->sceneWidth), float(m_impl->sceneHeight)});
+    m_impl->materialPrograms->bindLightingProgram(m_impl->deferredProgram, m_impl->view);
+    const auto uniform = [&](const char* name) { return m_impl->GetUniformLocation(m_impl->deferredProgram, name); };
+    const char* names[] = {"uGBufferBase", "uGBufferNormal", "uGBufferEmissive", "uGBufferFlags", "uGBufferDepth"};
+    for (int i = 0; i < 5; ++i)
+    {
+        m_impl->ActiveTexture(GL_TEXTURE0 + i);
+        glBindTexture(GL_TEXTURE_2D, i < 4 ? m_impl->deferred.textures[i] : m_impl->sceneDepth);
+        m_impl->Uniform1i(uniform(names[i]), i);
+    }
+    const auto inverse = inverseCameraViewProjection(m_impl->view);
+    m_impl->UniformMatrix4fv(uniform("uInverseViewProjection"), 1, GL_FALSE, inverse.Data());
+    m_impl->BindVertexArray(m_impl->fullScreenVao);
+    glDrawArrays(GL_TRIANGLES, 0, 3);
+    m_impl->BindVertexArray(0);
+    // Unbind sampled attachments before returning to geometry output.
+    for (int i = 0; i < 5; ++i)
+    {
+        m_impl->ActiveTexture(GL_TEXTURE0 + i);
+        glBindTexture(GL_TEXTURE_2D, 0);
+    }
+    m_impl->ActiveTexture(GL_TEXTURE0);
+    m_impl->BindFramebuffer(GL_FRAMEBUFFER, m_impl->sceneFramebuffer);
+    m_impl->UseProgram(m_impl->program);
+    glEnable(GL_DEPTH_TEST);
+    glDepthMask(GL_TRUE);
+    glEnable(GL_CULL_FACE);
+}
+
 void SdlGlRenderDevice::beginFrame(const FrameView& view)
 {
+    m_impl->deferred.active = false;
     if (m_impl->materialPrograms)
         m_impl->materialPrograms->retireUnused();
     m_impl->retireMaterialTextures();
@@ -2782,7 +2915,8 @@ void SdlGlRenderDevice::draw(const RenderItem& item)
     if (item.materialProxy && item.materialProxy->legacyShaderPath.empty())
     {
         const auto geometry = item.skinMatrices.empty() ? MaterialGeometry::Static : MaterialGeometry::Skinned;
-        if (!m_impl->bindCompiledMaterial(item, MaterialPass::Base, geometry))
+        if (!m_impl->bindCompiledMaterial(item, m_impl->deferred.active ? MaterialPass::GBuffer : MaterialPass::Base,
+                                          geometry))
             return;
         const auto* compiledMesh = m_impl->getOrCreateMesh(item.mesh);
         if (!compiledMesh)
@@ -2895,7 +3029,9 @@ void SdlGlRenderDevice::drawInstanced(const std::vector<RenderItem>& items)
     glDisable(GL_BLEND);
     glDepthMask(GL_TRUE);
     if (items.front().materialProxy && items.front().materialProxy->legacyShaderPath.empty())
-        if (!m_impl->bindCompiledMaterial(items.front(), MaterialPass::Base, MaterialGeometry::Instanced))
+        if (!m_impl->bindCompiledMaterial(items.front(),
+                                          m_impl->deferred.active ? MaterialPass::GBuffer : MaterialPass::Base,
+                                          MaterialGeometry::Instanced))
             return;
     auto* mesh = const_cast<Impl::GpuMesh*>(m_impl->getOrCreateMesh(items.front().mesh));
     if (!mesh)
@@ -2982,7 +3118,9 @@ void SdlGlRenderDevice::drawInstanced(const std::vector<RenderItem>& items)
     if (items.front().materialProxy && items.front().materialProxy->legacyShaderPath.empty())
     {
         // Compute culling changes program and texture bindings; restore the complete material/frame bindings.
-        if (!m_impl->bindCompiledMaterial(items.front(), MaterialPass::Base, MaterialGeometry::Instanced))
+        if (!m_impl->bindCompiledMaterial(items.front(),
+                                          m_impl->deferred.active ? MaterialPass::GBuffer : MaterialPass::Base,
+                                          MaterialGeometry::Instanced))
         {
             m_impl->BindVertexArray(0);
             return;
@@ -3575,14 +3713,7 @@ int SdlGlRenderDevice::getSceneTargetHeight() const
 }
 bool SdlGlRenderDevice::reloadShaders()
 {
-    if (!m_impl)
-        return false;
-    const auto templates = ShaderPipeline::loadMaterialTemplates();
-    if (!m_impl->materialPrograms->validateTemplates(templates) || !m_impl->reloadDefaultShadersFromFiles())
-        return false;
-    m_impl->legacyReflection.clear();
-    m_impl->materialPrograms->setTemplates(templates);
-    return true;
+    return m_impl && m_impl->reloadRenderShaders();
 }
 bool SdlGlRenderDevice::validateShader(const std::string& path)
 {
@@ -3609,7 +3740,7 @@ bool SdlGlRenderDevice::validateMaterial(const CompiledMaterial& material, std::
         return false;
     const auto before = m_impl->materialPrograms->GetDiagnostics().size();
     bool valid = true;
-    for (const auto pass : {MaterialPass::Base, MaterialPass::Shadow})
+    for (const auto pass : {MaterialPass::Base, MaterialPass::Shadow, MaterialPass::GBuffer})
         for (const auto geometry : {MaterialGeometry::Static, MaterialGeometry::Skinned, MaterialGeometry::Instanced})
             valid = m_impl->materialPrograms->getOrCreate(material, pass, geometry) != nullptr && valid;
     const auto& all = m_impl->materialPrograms->GetDiagnostics();
