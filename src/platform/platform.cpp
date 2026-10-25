@@ -21,6 +21,7 @@
 #include <iterator>
 #include <mutex>
 #include <optional>
+#include <sstream>
 
 namespace tinyengine
 {
@@ -35,6 +36,7 @@ struct Mount
 std::vector<Mount> mounts;
 std::mutex mountMutex;
 std::atomic<PlatformFile::ReadPolicy> readPolicy{PlatformFile::ReadPolicy::LooseFirst};
+std::uint64_t mountRevision = 0;
 
 std::optional<std::vector<std::uint8_t>> ReadMounted(const std::filesystem::path& path)
 {
@@ -95,6 +97,44 @@ std::vector<std::uint8_t> PlatformFile::ReadAllBytes(const std::filesystem::path
         return mounted ? std::move(*mounted) : std::vector<std::uint8_t>{};
     }
     return {std::istreambuf_iterator<char>(stream), std::istreambuf_iterator<char>()};
+}
+
+std::string PlatformFile::getReadCacheKey(const std::filesystem::path& path)
+{
+    std::ostringstream key;
+    const auto appendSource = [&](const std::filesystem::path& source)
+    {
+        std::error_code error;
+        const auto absolute = std::filesystem::absolute(source, error).lexically_normal().generic_u8string();
+        key << absolute.size() << ':';
+        key.write(reinterpret_cast<const char*>(absolute.data()), static_cast<std::streamsize>(absolute.size()));
+        const auto size = std::filesystem::file_size(source, error);
+        key << ':' << (error ? 0 : size) << ':';
+        const auto modified = std::filesystem::last_write_time(source, error);
+        if (!error)
+            key << modified.time_since_epoch().count();
+        else
+            key << "missing";
+        key << ';';
+    };
+    const auto policy = getReadPolicy();
+    key << static_cast<int>(policy) << ';';
+    if (path.is_absolute())
+    {
+        appendSource(path);
+        return key.str();
+    }
+    // 同时记录候选源，覆盖低优先级来源被替换、归档重挂载和失败加载后文件出现的情况。
+    if (policy == ReadPolicy::LooseFirst)
+        appendSource(path);
+    std::lock_guard<std::mutex> lock(mountMutex);
+    key << mountRevision << ';';
+    for (const auto& mount : mounts)
+    {
+        key << mount.priority << ':' << mount.pak << ':';
+        appendSource(mount.pak ? mount.path : mount.path / path);
+    }
+    return key.str();
 }
 
 std::string PlatformFile::readAllText(const std::filesystem::path& path)
@@ -245,6 +285,7 @@ void PlatformFile::mountDirectory(const std::filesystem::path& directory, const 
         return;
     std::lock_guard<std::mutex> lock(mountMutex);
     mounts.push_back({std::filesystem::absolute(directory).lexically_normal(), priority, false});
+    ++mountRevision;
     std::stable_sort(mounts.begin(), mounts.end(),
                      [](const Mount& a, const Mount& b) { return a.priority > b.priority; });
 }
@@ -255,6 +296,7 @@ bool PlatformFile::mountPak(const std::filesystem::path& archive, const int prio
         return false;
     std::lock_guard<std::mutex> lock(mountMutex);
     mounts.push_back({std::filesystem::absolute(archive).lexically_normal(), priority, true});
+    ++mountRevision;
     std::stable_sort(mounts.begin(), mounts.end(),
                      [](const Mount& a, const Mount& b) { return a.priority > b.priority; });
     return true;
@@ -264,6 +306,7 @@ void PlatformFile::clearMounts()
 {
     std::lock_guard<std::mutex> lock(mountMutex);
     mounts.clear();
+    ++mountRevision;
     readPolicy.store(ReadPolicy::LooseFirst);
 }
 

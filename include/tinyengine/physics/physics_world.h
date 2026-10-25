@@ -9,11 +9,26 @@
 #include "tinyengine/math/math.h"
 #include "tinyengine/types.h"
 
+#include <memory>
 #include <vector>
 
 namespace tinyengine
 {
 class World;
+namespace detail
+{
+struct PhysicsAcceleration;
+}
+// 自上次 clear() 起的累计工作量；用于诊断和基准，不依赖机器时钟。
+struct PhysicsStatistics
+{
+    std::uint64_t meshLoads = 0;
+    std::uint64_t triangleTests = 0;
+    std::uint64_t triangleBoundsTests = 0;
+    std::uint64_t sceneBoundsTests = 0;
+    std::uint64_t staticTreeBuilds = 0;
+    std::uint64_t dynamicTreeBuilds = 0;
+};
 enum class PhysicsBackend
 {
     Builtin,
@@ -139,6 +154,9 @@ class PhysicsWorld
     /// @brief 获取 `DebugBoxes`。
     /// @return 返回对应对象的引用；有效期不超过其所属对象。
     const std::vector<PhysicsDebugBox>& GetDebugBoxes() const;
+    /// @brief 获取自上次 clear() 起的碰撞加速累计统计快照。
+    /// @return 包括资源加载次数、空间包围盒检查次数和三角形检查次数的值副本。
+    PhysicsStatistics GetStatistics() const;
     /// @brief 清空对象保存的状态和数据。
     void clear();
     /// @brief 设置 `Backend`。
@@ -158,7 +176,14 @@ class PhysicsWorld
     /// @param world 要读取或修改的 World。
     /// @param entity 目标实体句柄。
     /// @return 返回接口计算或查询得到的结果。
-    static Aabb computeBounds(const World& world, Entity entity);
+    Aabb computeBounds(const World& world, Entity entity) const;
+    /// @brief 获取实例独占的惰性加速缓存；查询会更新缓存，不支持同实例并发访问。
+    /// @return 有效期至 clear() 或实例销毁的内部加速状态。
+    detail::PhysicsAcceleration& accelerationState() const;
+    /// @brief 从当前 ECS 同步静态和非静态空间树，兼容组件指针的直接修改。
+    /// @param world 要读取碰撞体、变换和刚体类型的场景。
+    void synchronizeScene(const World& world) const;
+    mutable std::shared_ptr<detail::PhysicsAcceleration> m_acceleration;
     std::vector<CollisionEvent> m_events;
     std::vector<std::pair<Entity, Entity>> m_previousPairs;
     std::vector<PhysicsDebugBox> m_debugBoxes;

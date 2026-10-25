@@ -32,6 +32,10 @@ class PlatformFile
     /// @param path 文件、资源或目录路径。
     /// @return 返回查询或处理得到的结果集合。
     static std::vector<std::uint8_t> ReadAllBytes(const std::filesystem::path& path);
+    /// @brief 获取资源读取上下文和候选源的元数据指纹，不读取文件内容。
+    /// @param path 与 ReadAllBytes 相同的物理或逻辑资源路径。
+    /// @return 文件大小、修改时间、工作目录、策略及挂载变化时改变的不透明缓存键。
+    static std::string getReadCacheKey(const std::filesystem::path& path);
     /// @brief 读取 `AllText`。
     /// @param path 文件、资源或目录路径。
     /// @return 返回对应的文本或路径。

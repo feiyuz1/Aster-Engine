@@ -170,6 +170,7 @@ add_library(tinyengine STATIC
     src/render/shader_pipeline.cpp
     src/render/sdl_gl_render_device.cpp
     src/physics/physics_world.cpp
+    src/physics/physics_acceleration.cpp
     src/audio/audio_engine.cpp
     src/audio/stb_vorbis.cpp
     src/input/input_system.cpp
@@ -469,6 +470,10 @@ if(TINYENGINE_BUILD_TESTS)
     set_tests_properties(tinyengine_material_cpu PROPERTIES WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
     add_executable(tinyengine_tests tests/engine_test.cpp)
     target_link_libraries(tinyengine_tests PRIVATE tinyengine)
+    add_executable(tinyengine_physics_acceleration_tests tests/physics_acceleration_test.cpp)
+    target_link_libraries(tinyengine_physics_acceleration_tests PRIVATE tinyengine)
+    add_test(NAME tinyengine_physics_acceleration COMMAND tinyengine_physics_acceleration_tests)
+    set_tests_properties(tinyengine_physics_acceleration PROPERTIES WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
     add_executable(tinyengine_render_stability_tests tests/render_stability_test.cpp)
     target_link_libraries(tinyengine_render_stability_tests PRIVATE tinyengine)
     add_test(NAME tinyengine_render_stability COMMAND tinyengine_render_stability_tests)

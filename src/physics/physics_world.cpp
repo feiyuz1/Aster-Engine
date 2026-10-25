@@ -5,6 +5,7 @@
 
 #include "tinyengine/physics/physics_world.h"
 
+#include "physics_acceleration.h"
 #include "tinyengine/ecs/components.h"
 #include "tinyengine/ecs/ecs.h"
 #include "tinyengine/resource/resource.h"
@@ -12,6 +13,7 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <unordered_set>
 
 namespace tinyengine
 {
@@ -31,7 +33,7 @@ bool rayAabb(const Ray& ray, const Aabb& bounds, const float maxDistance, float&
         const float direction = axis == 0 ? ray.direction.x : axis == 1 ? ray.direction.y : ray.direction.z;
         const float minimum = axis == 0 ? bounds.minimum.x : axis == 1 ? bounds.minimum.y : bounds.minimum.z;
         const float maximum = axis == 0 ? bounds.maximum.x : axis == 1 ? bounds.maximum.y : bounds.maximum.z;
-        if (std::abs(direction) < 1e-6f)
+        if (direction == 0.0f)
         {
             if (origin < minimum || origin > maximum)
                 return false;
@@ -95,61 +97,73 @@ bool rayTriangle(const Ray& ray, const Vec3& a, const Vec3& b, const Vec3& c, co
     return true;
 }
 
-bool rayMesh(const World& world, const Entity entity, const Ray& ray, const float maximum, float& closest,
-             Vec3& hitNormal)
+bool rayMesh(detail::PhysicsAcceleration& acceleration, const World& world, const Entity entity, const Ray& ray,
+             const float maximum, float& closest, Vec3& hitNormal)
 {
     const auto* collider = world.GetComponent<ColliderComponent>(entity);
     const auto* transform = world.GetComponent<TransformComponent>(entity);
     if (!collider || !transform || collider->meshPath.empty())
         return false;
-    MeshResource mesh;
-    if (!mesh.load(collider->meshPath))
+    const auto mesh = acceleration.meshFor(collider->meshPath);
+    if (!mesh)
         return false;
     const Mat4 matrix = transformMatrix(transform->position, transform->rotation, transform->scale);
     bool found = false;
-    for (std::size_t index = 0; index + 2 < mesh.GetIndices().size(); index += 3)
-    {
-        const auto ia = mesh.GetIndices()[index], ib = mesh.GetIndices()[index + 1], ic = mesh.GetIndices()[index + 2];
-        if (ia >= mesh.GetVertices().size() || ib >= mesh.GetVertices().size() || ic >= mesh.GetVertices().size())
-            continue;
-        float distance = 0.0f;
-        Vec3 normal;
-        if (rayTriangle(ray, transformPoint(matrix, mesh.GetVertices()[ia].position),
-                        transformPoint(matrix, mesh.GetVertices()[ib].position),
-                        transformPoint(matrix, mesh.GetVertices()[ic].position), std::min(maximum, closest), distance,
-                        normal))
+    mesh->tree.visit(
+        [&](const Aabb& localBounds)
         {
-            closest = distance;
-            hitNormal = normal;
-            found = true;
-        }
-    }
+            float distance;
+            return rayAabb(ray, detail::transformBounds(localBounds, matrix), std::min(maximum, closest), distance);
+        },
+        [&](std::uint64_t index)
+        {
+            ++acceleration.statistics.triangleTests;
+            const auto& triangle = mesh->triangles[index];
+            float distance = 0.0f;
+            Vec3 normal;
+            if (rayTriangle(ray, transformPoint(matrix, mesh->vertices[triangle[0]]),
+                            transformPoint(matrix, mesh->vertices[triangle[1]]),
+                            transformPoint(matrix, mesh->vertices[triangle[2]]), std::min(maximum, closest), distance,
+                            normal))
+            {
+                closest = distance;
+                hitNormal = normal;
+                found = true;
+            }
+            return true;
+        },
+        acceleration.statistics.triangleBoundsTests);
     return found;
 }
-bool meshTrianglesOverlapBounds(const World& world, const Entity meshEntity, const Aabb& otherBounds)
+bool meshTrianglesOverlapBounds(detail::PhysicsAcceleration& acceleration, const World& world, const Entity meshEntity,
+                                const Aabb& otherBounds)
 {
     const auto* collider = world.GetComponent<ColliderComponent>(meshEntity);
     const auto* transform = world.GetComponent<TransformComponent>(meshEntity);
     if (!collider || !transform || collider->meshPath.empty())
         return false;
-    MeshResource mesh;
-    if (!mesh.load(collider->meshPath))
+    const auto mesh = acceleration.meshFor(collider->meshPath);
+    if (!mesh)
         return false;
     const Mat4 matrix = transformMatrix(transform->position, transform->rotation, transform->scale);
-    for (std::size_t index = 0; index + 2 < mesh.GetIndices().size(); index += 3)
-    {
-        const auto ia = mesh.GetIndices()[index], ib = mesh.GetIndices()[index + 1], ic = mesh.GetIndices()[index + 2];
-        if (ia >= mesh.GetVertices().size() || ib >= mesh.GetVertices().size() || ic >= mesh.GetVertices().size())
-            continue;
-        const Vec3 a = transformPoint(matrix, mesh.GetVertices()[ia].position);
-        const Vec3 b = transformPoint(matrix, mesh.GetVertices()[ib].position);
-        const Vec3 c = transformPoint(matrix, mesh.GetVertices()[ic].position);
-        const Aabb triangleBounds{{std::min({a.x, b.x, c.x}), std::min({a.y, b.y, c.y}), std::min({a.z, b.z, c.z})},
-                                  {std::max({a.x, b.x, c.x}), std::max({a.y, b.y, c.y}), std::max({a.z, b.z, c.z})}};
-        if (triangleBounds.intersects(otherBounds))
-            return true;
-    }
-    return false;
+    bool found = false;
+    mesh->tree.visit([&](const Aabb& bounds)
+                     { return detail::transformBounds(bounds, matrix).intersects(otherBounds); },
+                     [&](std::uint64_t index)
+                     {
+                         ++acceleration.statistics.triangleTests;
+                         const auto& triangle = mesh->triangles[index];
+                         const Vec3 a = transformPoint(matrix, mesh->vertices[triangle[0]]);
+                         const Vec3 b = transformPoint(matrix, mesh->vertices[triangle[1]]);
+                         const Vec3 c = transformPoint(matrix, mesh->vertices[triangle[2]]);
+                         const Aabb triangleBounds{
+                             {std::min({a.x, b.x, c.x}), std::min({a.y, b.y, c.y}), std::min({a.z, b.z, c.z})},
+                             {std::max({a.x, b.x, c.x}), std::max({a.y, b.y, c.y}), std::max({a.z, b.z, c.z})}};
+                         found = triangleBounds.intersects(otherBounds);
+                         return !found;
+                     },
+                     acceleration.statistics.triangleBoundsTests);
+    return found;
 }
 
 Vec3 closestPointOnTriangle(const Vec3& point, const Vec3& a, const Vec3& b, const Vec3& c)
@@ -179,8 +193,8 @@ Vec3 closestPointOnTriangle(const Vec3& point, const Vec3& a, const Vec3& b, con
     return a + ab * (vb * denominator) + ac * (vc * denominator);
 }
 
-bool meshSphereContact(const World& world, const Entity meshEntity, const Entity sphereEntity, Vec3& meshToSphere,
-                       float& penetration)
+bool meshSphereContact(detail::PhysicsAcceleration& acceleration, const World& world, const Entity meshEntity,
+                       const Entity sphereEntity, Vec3& meshToSphere, float& penetration)
 {
     const auto* meshCollider = world.GetComponent<ColliderComponent>(meshEntity);
     const auto* meshTransform = world.GetComponent<TransformComponent>(meshEntity);
@@ -189,8 +203,8 @@ bool meshSphereContact(const World& world, const Entity meshEntity, const Entity
     if (!meshCollider || !meshTransform || meshCollider->meshPath.empty() || !sphereCollider || !sphereTransform ||
         sphereCollider->shape != ColliderShape::Sphere)
         return false;
-    MeshResource mesh;
-    if (!mesh.load(meshCollider->meshPath))
+    const auto mesh = acceleration.meshFor(meshCollider->meshPath);
+    if (!mesh)
         return false;
     const Mat4 matrix = transformMatrix(meshTransform->position, meshTransform->rotation, meshTransform->scale);
     const float radius =
@@ -198,36 +212,45 @@ bool meshSphereContact(const World& world, const Entity meshEntity, const Entity
                                            std::abs(sphereTransform->scale.z)});
     bool found = false;
     penetration = 0.0f;
-    for (std::size_t index = 0; index + 2 < mesh.GetIndices().size(); index += 3)
-    {
-        const auto ia = mesh.GetIndices()[index], ib = mesh.GetIndices()[index + 1], ic = mesh.GetIndices()[index + 2];
-        if (ia >= mesh.GetVertices().size() || ib >= mesh.GetVertices().size() || ic >= mesh.GetVertices().size())
-            continue;
-        const Vec3 a = transformPoint(matrix, mesh.GetVertices()[ia].position);
-        const Vec3 b = transformPoint(matrix, mesh.GetVertices()[ib].position);
-        const Vec3 c = transformPoint(matrix, mesh.GetVertices()[ic].position);
-        const Vec3 closest = closestPointOnTriangle(sphereTransform->position, a, b, c);
-        const Vec3 delta = sphereTransform->position - closest;
-        const float distanceSquared = lengthSquared(delta);
-        if (distanceSquared > radius * radius)
-            continue;
-        const float distance = std::sqrt(std::max(0.0f, distanceSquared));
-        const float candidatePenetration = radius - distance;
-        if (!found || candidatePenetration > penetration)
-        {
-            Vec3 normal = distance > 0.00001f ? delta / distance : normalize(cross(b - a, c - a));
-            if (lengthSquared(normal) < 0.00001f)
-                normal = {0.0f, 1.0f, 0.0f};
-            if (dot(normal, sphereTransform->position - a) < 0.0f)
-                normal = normal * -1.0f;
-            meshToSphere = normal;
-            penetration = candidatePenetration;
-            found = true;
-        }
-    }
+    const Vec3 extent{radius, radius, radius};
+    const Aabb sphereBounds{sphereTransform->position - extent, sphereTransform->position + extent};
+    std::uint64_t bestIndex = std::numeric_limits<std::uint64_t>::max();
+    mesh->tree.visit([&](const Aabb& bounds)
+                     { return detail::transformBounds(bounds, matrix).intersects(sphereBounds); },
+                     [&](std::uint64_t index)
+                     {
+                         ++acceleration.statistics.triangleTests;
+                         const auto& triangle = mesh->triangles[index];
+                         const Vec3 a = transformPoint(matrix, mesh->vertices[triangle[0]]);
+                         const Vec3 b = transformPoint(matrix, mesh->vertices[triangle[1]]);
+                         const Vec3 c = transformPoint(matrix, mesh->vertices[triangle[2]]);
+                         const Vec3 closest = closestPointOnTriangle(sphereTransform->position, a, b, c);
+                         const Vec3 delta = sphereTransform->position - closest;
+                         const float distanceSquared = lengthSquared(delta);
+                         if (distanceSquared > radius * radius)
+                             return true;
+                         const float distance = std::sqrt(std::max(0.0f, distanceSquared));
+                         const float candidatePenetration = radius - distance;
+                         if (!found || candidatePenetration > penetration ||
+                             (candidatePenetration == penetration && index < bestIndex))
+                         {
+                             Vec3 normal = distance > 0.00001f ? delta / distance : normalize(cross(b - a, c - a));
+                             if (lengthSquared(normal) < 0.00001f)
+                                 normal = {0.0f, 1.0f, 0.0f};
+                             if (dot(normal, sphereTransform->position - a) < 0.0f)
+                                 normal = normal * -1.0f;
+                             meshToSphere = normal;
+                             penetration = candidatePenetration;
+                             found = true;
+                             bestIndex = index;
+                         }
+                         return true;
+                     },
+                     acceleration.statistics.triangleBoundsTests);
     return found;
 }
-Vec3 shapeSupport(const World& world, const Entity entity, const Vec3& direction)
+Vec3 shapeSupport(detail::PhysicsAcceleration& acceleration, const World& world, const Entity entity,
+                  const Vec3& direction)
 {
     const auto* collider = world.GetComponent<ColliderComponent>(entity);
     const auto* transform = world.GetComponent<TransformComponent>(entity);
@@ -249,31 +272,39 @@ Vec3 shapeSupport(const World& world, const Entity entity, const Vec3& direction
         const float scale = std::max(std::abs(transform->scale.x), std::abs(transform->scale.z));
         return end + normalized * (collider->radius * scale);
     }
-    std::vector<Vec3> points;
+    Vec3 best{};
+    float bestProjection = std::numeric_limits<float>::lowest();
+    const auto consider = [&](const Vec3& point)
+    {
+        const float projection = dot(point, direction);
+        if (projection > bestProjection)
+        {
+            bestProjection = projection;
+            best = point;
+        }
+    };
     if (collider->shape == ColliderShape::ConvexHull && !collider->meshPath.empty())
     {
-        MeshResource mesh;
-        if (mesh.load(collider->meshPath))
+        if (const auto mesh = acceleration.meshFor(collider->meshPath))
         {
-            points.reserve(mesh.GetVertices().size());
-            for (const auto& vertex : mesh.GetVertices())
-                points.push_back(transformPoint(matrix, vertex.position));
+            for (const auto& vertex : mesh->vertices)
+                consider(transformPoint(matrix, vertex));
+            return best;
         }
     }
-    if (points.empty())
-        for (int x = -1; x <= 1; x += 2)
-            for (int y = -1; y <= 1; y += 2)
-                for (int z = -1; z <= 1; z += 2)
-                    points.push_back(transformPoint(matrix, {collider->halfExtents.x * x, collider->halfExtents.y * y,
-                                                             collider->halfExtents.z * z}));
-    return *std::max_element(points.begin(), points.end(),
-                             [&](const Vec3& left, const Vec3& right)
-                             { return dot(left, direction) < dot(right, direction); });
+    for (int x = -1; x <= 1; x += 2)
+        for (int y = -1; y <= 1; y += 2)
+            for (int z = -1; z <= 1; z += 2)
+                consider(transformPoint(
+                    matrix, {collider->halfExtents.x * x, collider->halfExtents.y * y, collider->halfExtents.z * z}));
+    return best;
 }
 
-Vec3 minkowskiSupport(const World& world, const Entity first, const Entity second, const Vec3& direction)
+Vec3 minkowskiSupport(detail::PhysicsAcceleration& acceleration, const World& world, const Entity first,
+                      const Entity second, const Vec3& direction)
 {
-    return shapeSupport(world, first, direction) - shapeSupport(world, second, direction * -1.0f);
+    return shapeSupport(acceleration, world, first, direction) -
+           shapeSupport(acceleration, world, second, direction * -1.0f);
 }
 
 Vec3 tripleCross(const Vec3& a, const Vec3& b, const Vec3& c)
@@ -355,7 +386,8 @@ bool updateSimplex(std::vector<Vec3>& simplex, Vec3& direction)
     return true;
 }
 
-bool convexOverlap(const World& world, const Entity first, const Entity second)
+bool convexOverlap(detail::PhysicsAcceleration& acceleration, const World& world, const Entity first,
+                   const Entity second)
 {
     const auto* firstTransform = world.GetComponent<TransformComponent>(first);
     const auto* secondTransform = world.GetComponent<TransformComponent>(second);
@@ -363,11 +395,11 @@ bool convexOverlap(const World& world, const Entity first, const Entity second)
                                                        : Vec3{1.0f, 0.0f, 0.0f};
     if (lengthSquared(direction) < 1e-8f)
         direction = {1.0f, 0.0f, 0.0f};
-    std::vector<Vec3> simplex{minkowskiSupport(world, first, second, direction)};
+    std::vector<Vec3> simplex{minkowskiSupport(acceleration, world, first, second, direction)};
     direction = simplex.front() * -1.0f;
     for (int iteration = 0; iteration < 32; ++iteration)
     {
-        const Vec3 point = minkowskiSupport(world, first, second, direction);
+        const Vec3 point = minkowskiSupport(acceleration, world, first, second, direction);
         if (dot(point, direction) < 0.0f)
             return false;
         simplex.push_back(point);
@@ -380,40 +412,74 @@ bool convexOverlap(const World& world, const Entity first, const Entity second)
 }
 } // namespace
 
-Aabb PhysicsWorld::computeBounds(const World& world, const Entity entity)
+detail::PhysicsAcceleration& PhysicsWorld::accelerationState() const
+{
+    if (!m_acceleration)
+        m_acceleration = std::make_shared<detail::PhysicsAcceleration>();
+    else if (m_acceleration.use_count() != 1)
+        m_acceleration = std::make_shared<detail::PhysicsAcceleration>(*m_acceleration);
+    return *m_acceleration;
+}
+
+Aabb PhysicsWorld::computeBounds(const World& world, const Entity entity) const
 {
     const auto* transform = world.GetComponent<TransformComponent>(entity);
     const auto* collider = world.GetComponent<ColliderComponent>(entity);
     if (!transform || !collider)
         return {};
-    Vec3 center = transform->position;
-    Vec3 extent = collider->shape == ColliderShape::Box
-                      ? collider->halfExtents
-                      : Vec3{collider->radius,
-                             collider->shape == ColliderShape::Capsule ? collider->height * 0.5f + collider->radius
-                                                                       : collider->radius,
-                             collider->radius};
+    const Mat4 matrix = transformMatrix(transform->position, transform->rotation, transform->scale);
+    if (collider->shape == ColliderShape::Sphere)
+    {
+        const float radius = collider->radius * std::max({std::abs(transform->scale.x), std::abs(transform->scale.y),
+                                                          std::abs(transform->scale.z)});
+        const Vec3 extent{radius, radius, radius};
+        return {transform->position - extent, transform->position + extent};
+    }
+    if (collider->shape == ColliderShape::Capsule)
+    {
+        const Vec3 top = transformPoint(matrix, {0.0f, collider->height * 0.5f, 0.0f});
+        const Vec3 bottom = transformPoint(matrix, {0.0f, -collider->height * 0.5f, 0.0f});
+        const float radius = collider->radius * std::max(std::abs(transform->scale.x), std::abs(transform->scale.z));
+        return {{std::min(top.x, bottom.x) - radius, std::min(top.y, bottom.y) - radius,
+                 std::min(top.z, bottom.z) - radius},
+                {std::max(top.x, bottom.x) + radius, std::max(top.y, bottom.y) + radius,
+                 std::max(top.z, bottom.z) + radius}};
+    }
     if ((collider->shape == ColliderShape::ConvexHull || collider->shape == ColliderShape::TriangleMesh) &&
         !collider->meshPath.empty())
+        if (const auto mesh = accelerationState().meshFor(collider->meshPath))
+            return detail::transformBounds(mesh->bounds, matrix);
+    const Vec3 extent = collider->shape == ColliderShape::Box
+                            ? collider->halfExtents
+                            : Vec3{collider->radius, collider->radius, collider->radius};
+    return detail::transformBounds({extent * -1.0f, extent}, matrix);
+}
+
+void PhysicsWorld::synchronizeScene(const World& world) const
+{
+    auto& acceleration = accelerationState();
+    std::vector<detail::BoundsEntry> statics, dynamics;
+    acceleration.sceneEntries.clear();
+    for (const Entity entity : world.GetEntityManager().GetAliveEntities())
     {
-        MeshResource mesh;
-        if (mesh.load(collider->meshPath))
-        {
-            const Aabb& bounds = mesh.GetBounds();
-            const Vec3 localCenter = (bounds.minimum + bounds.maximum) * 0.5f;
-            extent = (bounds.maximum - bounds.minimum) * 0.5f;
-            center += Vec3{localCenter.x * transform->scale.x, localCenter.y * transform->scale.y,
-                           localCenter.z * transform->scale.z};
-        }
+        if (!world.HasComponent<ColliderComponent>(entity) || !world.HasComponent<TransformComponent>(entity))
+            continue;
+        const detail::BoundsEntry entry{entity, computeBounds(world, entity)};
+        acceleration.sceneEntries.push_back(entry);
+        const auto* body = world.GetComponent<RigidBodyComponent>(entity);
+        (body && body->type != BodyType::Static ? dynamics : statics).push_back(entry);
     }
-    extent = {extent.x * std::abs(transform->scale.x), extent.y * std::abs(transform->scale.y),
-              extent.z * std::abs(transform->scale.z)};
-    return {center - extent, center + extent};
+    if (acceleration.staticTree.update(std::move(statics)))
+        ++acceleration.statistics.staticTreeBuilds;
+    if (acceleration.dynamicTree.update(std::move(dynamics)))
+        ++acceleration.statistics.dynamicTreeBuilds;
 }
 
 // 先积分动态刚体，再生成接触并修正穿透，最后与上一帧接触集合比较得到 Enter/Stay/Exit。
 void PhysicsWorld::step(World& world, const float fixedDeltaTime)
 {
+    auto& acceleration = accelerationState();
+    acceleration.beginOperation();
     m_events.clear();
     m_debugBoxes.clear();
     world.GetComponentManager().ForEach<TransformComponent, RigidBodyComponent>(
@@ -458,21 +524,44 @@ void PhysicsWorld::step(World& world, const float fixedDeltaTime)
         Entity entity;
         Aabb bounds;
     };
+    synchronizeScene(world);
     std::vector<BroadphaseEntry> colliders;
+    colliders.reserve(acceleration.sceneEntries.size());
+    std::unordered_map<Entity, std::size_t> ranks;
+    for (std::size_t i = 0; i < acceleration.sceneEntries.size(); ++i)
+        ranks.emplace(acceleration.sceneEntries[i].payload, i);
+    // 保留旧 ColliderComponent 遍历和排序次序，包含 minimum.x 相同的物体。
     world.GetComponentManager().ForEach<ColliderComponent>(
-        [&](Entity entity, ColliderComponent&) {
-            colliders.push_back({entity, computeBounds(world, entity)});
+        [&](Entity entity, ColliderComponent&)
+        {
+            const auto found = ranks.find(entity);
+            if (found != ranks.end())
+                colliders.push_back({entity, acceleration.sceneEntries[found->second].bounds});
         });
     std::sort(colliders.begin(), colliders.end(),
               [](const BroadphaseEntry& a, const BroadphaseEntry& b)
               { return a.bounds.minimum.x < b.bounds.minimum.x; });
+    for (std::size_t i = 0; i < colliders.size(); ++i)
+        ranks[colliders[i].entity] = i;
     std::vector<std::pair<Entity, Entity>> currentPairs;
+    std::vector<std::size_t> candidates;
     for (std::size_t firstIndex = 0; firstIndex < colliders.size(); ++firstIndex)
     {
-        for (std::size_t secondIndex = firstIndex + 1; secondIndex < colliders.size(); ++secondIndex)
+        candidates.clear();
+        const auto intersects = [&](const Aabb& bounds) { return colliders[firstIndex].bounds.intersects(bounds); };
+        const auto collect = [&](std::uint64_t entity)
         {
-            if (colliders[secondIndex].bounds.minimum.x > colliders[firstIndex].bounds.maximum.x)
-                break;
+            const auto secondIndex = ranks.at(entity);
+            if (secondIndex > firstIndex)
+                candidates.push_back(secondIndex);
+            return true;
+        };
+        acceleration.staticTree.visit(intersects, collect, acceleration.statistics.sceneBoundsTests);
+        acceleration.dynamicTree.visit(intersects, collect, acceleration.statistics.sceneBoundsTests);
+        // 与原扫描保持相同的接触响应顺序；树的遍历次序不参与求解结果。
+        std::sort(candidates.begin(), candidates.end());
+        for (const std::size_t secondIndex : candidates)
+        {
             const Entity first = colliders[firstIndex].entity, second = colliders[secondIndex].entity;
             const auto* firstCollider = world.GetComponent<ColliderComponent>(first);
             const auto* secondCollider = world.GetComponent<ColliderComponent>(second);
@@ -488,27 +577,26 @@ void PhysicsWorld::step(World& world, const float fixedDeltaTime)
             if (!firstBounds.intersects(secondBounds))
                 continue;
             if (firstCollider->shape == ColliderShape::TriangleMesh &&
-                !meshTrianglesOverlapBounds(world, first, secondBounds))
+                !meshTrianglesOverlapBounds(acceleration, world, first, secondBounds))
                 continue;
             if (secondCollider->shape == ColliderShape::TriangleMesh &&
-                !meshTrianglesOverlapBounds(world, second, firstBounds))
+                !meshTrianglesOverlapBounds(acceleration, world, second, firstBounds))
                 continue;
             Vec3 meshContactNormal{};
             float meshPenetration = 0.0f;
             if (firstCollider->shape == ColliderShape::TriangleMesh && secondCollider->shape == ColliderShape::Sphere &&
-                !meshSphereContact(world, first, second, meshContactNormal, meshPenetration))
+                !meshSphereContact(acceleration, world, first, second, meshContactNormal, meshPenetration))
                 continue;
             if (secondCollider->shape == ColliderShape::TriangleMesh && firstCollider->shape == ColliderShape::Sphere &&
-                !meshSphereContact(world, second, first, meshContactNormal, meshPenetration))
+                !meshSphereContact(acceleration, world, second, first, meshContactNormal, meshPenetration))
                 continue;
             if ((firstCollider->shape == ColliderShape::ConvexHull ||
                  secondCollider->shape == ColliderShape::ConvexHull) &&
-                !convexOverlap(world, first, second))
+                !convexOverlap(acceleration, world, first, second))
                 continue;
             const auto pair = OrderedPair(first, second);
             currentPairs.push_back(pair);
-            const bool existed =
-                std::find(m_previousPairs.begin(), m_previousPairs.end(), pair) != m_previousPairs.end();
+            const bool existed = std::binary_search(m_previousPairs.begin(), m_previousPairs.end(), pair);
             m_events.push_back({first, second, existed ? CollisionEventType::Stay : CollisionEventType::Enter,
                                 firstCollider->trigger || secondCollider->trigger});
             if (firstCollider->trigger || secondCollider->trigger)
@@ -525,18 +613,15 @@ void PhysicsWorld::step(World& world, const float fixedDeltaTime)
             const float inverseMassSum = firstInverseMass + secondInverseMass;
             if (inverseMassSum > 0.0f && firstTransform && secondTransform)
             {
-                Vec3 normal{};
-                float penetration = 0.0f;
-                bool detailedContact = false;
-                if (firstCollider->shape == ColliderShape::TriangleMesh &&
-                    secondCollider->shape == ColliderShape::Sphere)
-                    detailedContact = meshSphereContact(world, first, second, normal, penetration);
-                else if (secondCollider->shape == ColliderShape::TriangleMesh &&
-                         firstCollider->shape == ColliderShape::Sphere)
-                {
-                    detailedContact = meshSphereContact(world, second, first, normal, penetration);
+                Vec3 normal = meshContactNormal;
+                float penetration = meshPenetration;
+                const bool detailedContact = (firstCollider->shape == ColliderShape::TriangleMesh &&
+                                              secondCollider->shape == ColliderShape::Sphere) ||
+                                             (secondCollider->shape == ColliderShape::TriangleMesh &&
+                                              firstCollider->shape == ColliderShape::Sphere);
+                if (secondCollider->shape == ColliderShape::TriangleMesh &&
+                    firstCollider->shape == ColliderShape::Sphere)
                     normal = normal * -1.0f;
-                }
                 if (!detailedContact)
                 {
                     const float overlapX = std::min(firstBounds.maximum.x, secondBounds.maximum.x) -
@@ -638,49 +723,61 @@ void PhysicsWorld::step(World& world, const float fixedDeltaTime)
                 connectedBody->velocity += dampingImpulse * (connectedInverseMass / sum);
             }
         });
+    std::sort(currentPairs.begin(), currentPairs.end());
     for (const auto& oldPair : m_previousPairs)
-        if (std::find(currentPairs.begin(), currentPairs.end(), oldPair) == currentPairs.end())
+        if (!std::binary_search(currentPairs.begin(), currentPairs.end(), oldPair))
             m_events.push_back({oldPair.first, oldPair.second, CollisionEventType::Exit, false});
     m_previousPairs = std::move(currentPairs);
+    std::unordered_set<Entity> collidingEntities;
+    for (const auto& pair : m_previousPairs)
+    {
+        collidingEntities.insert(pair.first);
+        collidingEntities.insert(pair.second);
+    }
     for (const auto& collider : colliders)
     {
-        const bool colliding = std::any_of(m_previousPairs.begin(), m_previousPairs.end(),
-                                           [&](const auto& pair)
-                                           { return pair.first == collider.entity || pair.second == collider.entity; });
         const auto* component = world.GetComponent<ColliderComponent>(collider.entity);
-        m_debugBoxes.push_back(
-            {collider.entity, computeBounds(world, collider.entity), colliding, component && component->trigger});
+        m_debugBoxes.push_back({collider.entity, computeBounds(world, collider.entity),
+                                collidingEntities.find(collider.entity) != collidingEntities.end(),
+                                component && component->trigger});
     }
 }
 
 bool PhysicsWorld::raycast(const World& world, const Ray& ray, const float maxDistance, RaycastHit& hit,
                            const PhysicsQuery& query) const
 {
+    auto& acceleration = accelerationState();
+    acceleration.beginOperation();
+    synchronizeScene(world);
     bool found = false;
     float closest = maxDistance;
-    for (const Entity entity : world.GetEntityManager().GetAliveEntities())
+    const auto intersects = [&](const Aabb& bounds)
+    {
+        float distance;
+        return rayAabb(ray, bounds, closest, distance);
+    };
+    const auto inspect = [&](std::uint64_t entity)
     {
         const auto* collider = world.GetComponent<ColliderComponent>(entity);
-        if (!collider || entity == query.ignoredEntity || (!query.includeTriggers && collider->trigger) ||
+        if (entity == query.ignoredEntity || (!query.includeTriggers && collider->trigger) ||
             (collider->layer & query.layerMask) == 0)
-            continue;
-        const Aabb bounds = computeBounds(world, entity);
+            return true;
         float distance = closest;
         Vec3 normal;
         const bool meshShape =
             collider->shape == ColliderShape::TriangleMesh || collider->shape == ColliderShape::ConvexHull;
-        const bool intersected = meshShape ? rayMesh(world, entity, ray, maxDistance, distance, normal)
-                                           : rayAabb(ray, bounds, closest, distance, &normal);
+        const bool intersected = meshShape ? rayMesh(acceleration, world, entity, ray, closest, distance, normal)
+                                           : rayAabb(ray, computeBounds(world, entity), closest, distance, &normal);
         if (intersected && distance < closest)
         {
             closest = distance;
-            hit.entity = entity;
-            hit.distance = distance;
-            hit.point = ray.origin + ray.direction * distance;
-            hit.normal = normal;
+            hit = {entity, ray.origin + ray.direction * distance, normal, distance};
             found = true;
         }
-    }
+        return true;
+    };
+    acceleration.staticTree.visit(intersects, inspect, acceleration.statistics.sceneBoundsTests);
+    acceleration.dynamicTree.visit(intersects, inspect, acceleration.statistics.sceneBoundsTests);
     return found;
 }
 
@@ -688,6 +785,8 @@ bool PhysicsWorld::raycast(const World& world, const Ray& ray, const float maxDi
 bool PhysicsWorld::shapeSweep(const World& world, const ShapeSweepGeometry& geometry, const Vec3& origin,
                               const Vec3& displacement, RaycastHit& hit, const PhysicsQuery& query) const
 {
+    auto& acceleration = accelerationState();
+    acceleration.beginOperation();
     const float distance = length(displacement);
     if (distance <= 0.000001f)
         return false;
@@ -699,9 +798,8 @@ bool PhysicsWorld::shapeSweep(const World& world, const ShapeSweepGeometry& geom
     else if ((geometry.shape == ColliderShape::ConvexHull || geometry.shape == ColliderShape::TriangleMesh) &&
              !geometry.meshPath.empty())
     {
-        MeshResource mesh;
-        if (mesh.load(geometry.meshPath))
-            radius = length((mesh.GetBounds().maximum - mesh.GetBounds().minimum) * 0.5f);
+        if (const auto mesh = acceleration.meshFor(geometry.meshPath))
+            radius = length((mesh->bounds.maximum - mesh->bounds.minimum) * 0.5f);
     }
     return sphereCast(world, {origin, displacement / distance}, std::max(0.001f, radius), distance, hit, query);
 }
@@ -709,16 +807,24 @@ bool PhysicsWorld::shapeSweep(const World& world, const ShapeSweepGeometry& geom
 bool PhysicsWorld::sphereCast(const World& world, const Ray& ray, const float radius, const float maxDistance,
                               RaycastHit& hit, const PhysicsQuery& query) const
 {
+    auto& acceleration = accelerationState();
+    acceleration.beginOperation();
+    synchronizeScene(world);
     bool found = false;
     float closest = maxDistance;
-    for (const Entity entity : world.GetEntityManager().GetAliveEntities())
+    const Vec3 extent{radius, radius, radius};
+    const auto intersects = [&](const Aabb& bounds)
+    {
+        float distance;
+        return rayAabb(ray, {bounds.minimum - extent, bounds.maximum + extent}, closest, distance);
+    };
+    const auto inspect = [&](std::uint64_t entity)
     {
         const auto* collider = world.GetComponent<ColliderComponent>(entity);
-        if (!collider || entity == query.ignoredEntity || (!query.includeTriggers && collider->trigger) ||
+        if (entity == query.ignoredEntity || (!query.includeTriggers && collider->trigger) ||
             (collider->layer & query.layerMask) == 0)
-            continue;
+            return true;
         Aabb bounds = computeBounds(world, entity);
-        const Vec3 extent{radius, radius, radius};
         bounds.minimum -= extent;
         bounds.maximum += extent;
         float distance = 0.0f;
@@ -729,28 +835,38 @@ bool PhysicsWorld::sphereCast(const World& world, const Ray& ray, const float ra
             hit = {entity, ray.origin + ray.direction * distance, normal, distance};
             found = true;
         }
-    }
+        return true;
+    };
+    acceleration.staticTree.visit(intersects, inspect, acceleration.statistics.sceneBoundsTests);
+    acceleration.dynamicTree.visit(intersects, inspect, acceleration.statistics.sceneBoundsTests);
     return found;
 }
 
 std::vector<Entity> PhysicsWorld::Overlap(const World& world, const Aabb& bounds, const PhysicsQuery& query) const
 {
+    auto& acceleration = accelerationState();
+    acceleration.beginOperation();
+    synchronizeScene(world);
     std::vector<Entity> result;
-    for (const Entity entity : world.GetEntityManager().GetAliveEntities())
+    const auto inspect = [&](std::uint64_t entity)
     {
         const auto* collider = world.GetComponent<ColliderComponent>(entity);
-        if (!collider || entity == query.ignoredEntity || (!query.includeTriggers && collider->trigger) ||
-            (collider->layer & query.layerMask) == 0)
-            continue;
-        if (bounds.intersects(computeBounds(world, entity)))
+        if (entity != query.ignoredEntity && (query.includeTriggers || !collider->trigger) &&
+            (collider->layer & query.layerMask) != 0)
             result.push_back(entity);
-    }
+        return true;
+    };
+    const auto intersects = [&](const Aabb& other) { return bounds.intersects(other); };
+    acceleration.staticTree.visit(intersects, inspect, acceleration.statistics.sceneBoundsTests);
+    acceleration.dynamicTree.visit(intersects, inspect, acceleration.statistics.sceneBoundsTests);
     return result;
 }
 
 Vec3 PhysicsWorld::moveCharacter(World& world, const Entity entity, const Vec3& displacement,
                                  const float skinWidth) const
 {
+    auto& acceleration = accelerationState();
+    acceleration.beginOperation();
     auto* transform = world.GetComponent<TransformComponent>(entity);
     if (!transform || !world.HasComponent<ColliderComponent>(entity))
         return {};
@@ -855,8 +971,13 @@ const std::vector<PhysicsDebugBox>& PhysicsWorld::GetDebugBoxes() const
 {
     return m_debugBoxes;
 }
+PhysicsStatistics PhysicsWorld::GetStatistics() const
+{
+    return m_acceleration ? m_acceleration->statistics : PhysicsStatistics{};
+}
 void PhysicsWorld::clear()
 {
+    m_acceleration.reset();
     m_events.clear();
     m_previousPairs.clear();
     m_debugBoxes.clear();

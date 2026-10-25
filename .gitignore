@@ -32,6 +32,7 @@
 !/tests/material_system_test.cpp
 !/tests/material_render_test.cpp
 !/tests/engine_test.cpp
+!/tests/physics_acceleration_test.cpp
 # Project SDK 玩法扩展（aster.gameplay）的宿主契约测试，由 CMakeLists 引用，必须入库。
 !/tests/project_gameplay_test.cpp
 
@@ -40,6 +41,14 @@
 /docs/*
 !/docs/guides/
 !/docs/reference/
+!/docs/superpowers/
+/docs/superpowers/*
+!/docs/superpowers/specs/
+/docs/superpowers/specs/*
+!/docs/superpowers/specs/2026-10-25-collision-acceleration-design.md
+!/docs/superpowers/plans/
+/docs/superpowers/plans/*
+!/docs/superpowers/plans/2026-10-25-collision-acceleration.md
 
 # 引擎基础素材
 !/assets/
