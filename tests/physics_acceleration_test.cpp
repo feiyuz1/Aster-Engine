@@ -444,6 +444,112 @@ void eventLifecycleAndFiltering()
           "entity deletion emits one Exit");
 }
 
+void characterBoundsAfterPositionRestore()
+{
+    for (const bool controller : {false, true})
+        for (const bool kinematic : {false, true})
+        {
+            World world;
+            PhysicsWorld physics;
+            const Entity entity = addCollider(world, {});
+            if (kinematic)
+            {
+                RigidBodyComponent body;
+                body.type = BodyType::Kinematic;
+                world.AddComponent(entity, body);
+            }
+            const Vec3 moved =
+                controller
+                    ? physics.moveCharacterController(world, entity, {10.0f, 0.0f, 0.0f}, 0.0f).appliedDisplacement
+                    : physics.moveCharacter(world, entity, {10.0f, 0.0f, 0.0f});
+            check(std::abs(moved.x - 10.0f) < 0.0001f, "unobstructed character reaches the destination");
+            world.GetComponent<TransformComponent>(entity)->position = {};
+            check(physics.Overlap(world, {{-0.25f, -0.25f, -0.25f}, {0.25f, 0.25f, 0.25f}}) ==
+                      std::vector<Entity>{entity},
+                  "restoring a moved character's position updates its scene bounds before overlap");
+            RaycastHit hit;
+            check(physics.raycast(world, {{-2.0f, 0.0f, 0.0f}, {1.0f, 0.0f, 0.0f}}, 4.0f, hit) &&
+                      hit.entity == entity && std::abs(hit.distance - 1.5f) < 0.0001f,
+                  "raycast sees the restored character at the original position");
+            check(physics.Overlap(world, {{9.75f, -0.25f, -0.25f}, {10.25f, 0.25f, 0.25f}}).empty(),
+                  "restoring a character does not leave phantom bounds at the destination");
+        }
+}
+
+void controllerReloadsMeshBeforeMoving()
+{
+    World world;
+    PhysicsWorld physics;
+    const auto path = fixtureRoot() / "controller_reload.obj";
+    check(PlatformFile::writeAllText(path, "v 21 -2 -2\nv 21 2 -2\nv 21 0 2\nf 1 2 3\n"),
+          "write distant controller obstacle");
+    ColliderComponent mesh;
+    mesh.shape = ColliderShape::TriangleMesh;
+    mesh.meshPath = path.string();
+    const Entity wall = addCollider(world, {}, mesh);
+    const Entity character = addCollider(world, {});
+    check(physics.Overlap(world, {{20.0f, -3.0f, -3.0f}, {22.0f, 3.0f, 3.0f}}) == std::vector<Entity>{wall},
+          "warm the mesh cache before moving the controller");
+    const auto before = physics.GetStatistics();
+    check(PlatformFile::writeAllText(path, "v 1 -2 -2\nv 1 2 -2\nv 1 0 2\nf 1 2 3\n# reloaded nearby wall\n"),
+          "reload the mesh into the character's path");
+    const auto result = physics.moveCharacterController(world, character, {1.0f, 0.0f, 0.0f}, 0.0f);
+    check(std::abs(result.appliedDisplacement.x) < 0.0001f,
+          "the first controller move after mesh reload is blocked by the new wall bounds");
+    const auto after = physics.GetStatistics();
+    check(after.meshLoads == before.meshLoads + 1, "controller reloads changed mesh geometry once");
+    check(after.sceneSyncs == before.sceneSyncs + 1, "controller submoves share one full scene synchronization");
+}
+
+void staticContactEvents()
+{
+    for (const bool explicitBodies : {false, true})
+    {
+        World world;
+        PhysicsWorld physics;
+        const Entity first = addCollider(world, {});
+        const Entity second = addCollider(world, {0.25f, 0.0f, 0.0f});
+        if (explicitBodies)
+        {
+            RigidBodyComponent body;
+            body.type = BodyType::Static;
+            world.AddComponent(first, body);
+            world.AddComponent(second, body);
+        }
+        physics.step(world, 0.0f);
+        check(physics.GetEvents().size() == 1 && physics.GetEvents()[0].type == CollisionEventType::Enter &&
+                  !physics.GetEvents()[0].trigger,
+              "static non-trigger contact generates Enter");
+        physics.step(world, 0.0f);
+        check(physics.GetEvents().size() == 1 && physics.GetEvents()[0].type == CollisionEventType::Stay,
+              "static non-trigger contact generates Stay");
+        world.GetComponent<TransformComponent>(second)->position.x = 10.0f;
+        physics.step(world, 0.0f);
+        check(physics.GetEvents().size() == 1 && physics.GetEvents()[0].type == CollisionEventType::Exit,
+              "moving a static collider out of contact generates Exit");
+        physics.step(world, 0.0f);
+        check(physics.GetEvents().empty(), "separated static contacts emit Exit only once");
+    }
+}
+
+void contactSurvivesStaticTypeChange()
+{
+    World world;
+    PhysicsWorld physics;
+    const Entity first = addCollider(world, {});
+    addCollider(world, {0.25f, 0.0f, 0.0f});
+    RigidBodyComponent body;
+    body.type = BodyType::Kinematic;
+    world.AddComponent(first, body);
+    physics.step(world, 0.0f);
+    check(physics.GetEvents().size() == 1 && physics.GetEvents()[0].type == CollisionEventType::Enter,
+          "kinematic contact initially enters");
+    world.GetComponent<RigidBodyComponent>(first)->type = BodyType::Static;
+    physics.step(world, 0.0f);
+    check(physics.GetEvents().size() == 1 && physics.GetEvents()[0].type == CollisionEventType::Stay,
+          "changing a touching body to Static preserves contact instead of emitting Exit");
+}
+
 void randomizedSceneReference()
 {
     World world;
@@ -701,6 +807,26 @@ int main(int argc, char** argv)
             fixedStepBudgets();
             return 0;
         }
+        if (argc > 1 && std::string(argv[1]) == "--character-restore")
+        {
+            characterBoundsAfterPositionRestore();
+            return 0;
+        }
+        if (argc > 1 && std::string(argv[1]) == "--controller-reload")
+        {
+            controllerReloadsMeshBeforeMoving();
+            return 0;
+        }
+        if (argc > 1 && std::string(argv[1]) == "--static-events")
+        {
+            staticContactEvents();
+            return 0;
+        }
+        if (argc > 1 && std::string(argv[1]) == "--static-type-change")
+        {
+            contactSurvivesStaticTypeChange();
+            return 0;
+        }
         rotatedMeshContact();
         meshCacheAndTriangleWork();
         mountedMeshInvalidation();
@@ -715,6 +841,10 @@ int main(int argc, char** argv)
         sceneTests();
         debugBoxesFollowEverySubstep();
         fixedStepBudgets();
+        characterBoundsAfterPositionRestore();
+        controllerReloadsMeshBeforeMoving();
+        staticContactEvents();
+        contactSurvivesStaticTypeChange();
         std::cout << "Physics acceleration regressions passed\n";
         return 0;
     }

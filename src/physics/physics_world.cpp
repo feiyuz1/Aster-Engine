@@ -654,8 +654,7 @@ void PhysicsWorld::step(World& world, const float fixedDeltaTime)
     {
         Entity entity;
         Aabb bounds;
-        bool movable = false;  // 非静态刚体（动态/运动学）
-        bool trigger = false;
+        bool movable = false; // 非静态刚体（动态/运动学）
     };
     synchronizeScene(world);
     std::vector<BroadphaseEntry> colliders;
@@ -664,16 +663,16 @@ void PhysicsWorld::step(World& world, const float fixedDeltaTime)
     for (std::size_t i = 0; i < acceleration.sceneEntries.size(); ++i)
         ranks.emplace(acceleration.sceneEntries[i].payload, i);
     // 保留旧 ColliderComponent 遍历和排序次序，包含 minimum.x 相同的物体。
-    // 静/动与触发器标记在这里一次性取好，配对循环里不再逐对取组件。
+    // 非静态标记在这里一次性取好，生成接触事件后可跳过双方静态的求解。
     world.GetComponentManager().ForEach<ColliderComponent>(
-        [&](Entity entity, ColliderComponent& collider)
+        [&](Entity entity, ColliderComponent&)
         {
             const auto found = ranks.find(entity);
             if (found == ranks.end())
                 return;
             const auto* body = world.GetComponent<RigidBodyComponent>(entity);
-            colliders.push_back({entity, acceleration.sceneEntries[found->second].bounds,
-                                 body && body->type != BodyType::Static, collider.trigger});
+            colliders.push_back(
+                {entity, acceleration.sceneEntries[found->second].bounds, body && body->type != BodyType::Static});
         });
     std::sort(colliders.begin(), colliders.end(),
               [](const BroadphaseEntry& a, const BroadphaseEntry& b)
@@ -699,12 +698,6 @@ void PhysicsWorld::step(World& world, const float fixedDeltaTime)
         std::sort(candidates.begin(), candidates.end());
         for (const std::size_t secondIndex : candidates)
         {
-            // 惯性-惯性对（双方静态且都非触发器）：成员恒定、永不分离、求解零位移，
-            // 事件语义上不可见（触发器对不受此影响，仍照常产生 Enter/Stay/Exit）。
-            // 大场景里贴合的地板/墙体块占配对总数的九成以上，必须在取组件前跳过。
-            if (!colliders[firstIndex].movable && !colliders[secondIndex].movable &&
-                !colliders[firstIndex].trigger && !colliders[secondIndex].trigger)
-                continue;
             const Entity first = colliders[firstIndex].entity, second = colliders[secondIndex].entity;
             const auto* firstCollider = world.GetComponent<ColliderComponent>(first);
             const auto* secondCollider = world.GetComponent<ColliderComponent>(second);
@@ -743,6 +736,9 @@ void PhysicsWorld::step(World& world, const float fixedDeltaTime)
             m_events.push_back({first, second, existed ? CollisionEventType::Stay : CollisionEventType::Enter,
                                 firstCollider->trigger || secondCollider->trigger});
             if (firstCollider->trigger || secondCollider->trigger)
+                continue;
+            // 静态接触仍维护 Enter/Stay/Exit；双方逆质量均为零，只跳过无位移的求解。
+            if (!colliders[firstIndex].movable && !colliders[secondIndex].movable)
                 continue;
 
             auto* firstBody = world.GetComponent<RigidBodyComponent>(first);
@@ -1046,6 +1042,8 @@ void PhysicsWorld::refreshMovedEntityBounds(const World& world, const Entity ent
     }
     auto& record = acceleration.sceneRecords[found->second];
     const Aabb bounds = computeBounds(world, entity);
+    // 签名和包围盒必须来自同一位置，否则外部恢复旧位置时会误走未变化快路径。
+    record.position = world.GetComponent<TransformComponent>(entity)->position;
     if (detail::sameBounds(bounds, record.bounds))
         return;
     record.bounds = bounds;
@@ -1135,6 +1133,7 @@ CharacterMoveResult PhysicsWorld::moveCharacterController(World& world, const En
     const Vec3 start = transform->position;
     // 控制器入口做唯一一次全量差异同步；后续所有子移动与探地都走已同步路径，
     // 期间只有本实体在动，由 moveCharacterInternal 内部的单实体刷新维护树的时效。
+    accelerationState().beginOperation();
     synchronizeScene(world);
     const Vec3 horizontal{displacement.x, 0.0f, displacement.z};
     Vec3 horizontalApplied = moveCharacterInternal(world, entity, horizontal, skinWidth, true);
