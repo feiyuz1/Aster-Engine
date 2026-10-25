@@ -486,13 +486,12 @@ void PhysicsWorld::synchronizeScene(const World& world) const
             const std::uint32_t previousBodyType = record.bodyType;
             const std::uint32_t newBodyType = static_cast<std::uint32_t>(body ? body->type : BodyType::Static);
             // 网格/凸包形状的包围盒依赖网格资产内容（可能热重载），不做签名缓存。
-            const bool meshShaped = (collider->shape == ColliderShape::TriangleMesh ||
-                                     collider->shape == ColliderShape::ConvexHull) &&
-                                    !collider->meshPath.empty();
-            if (!meshShaped &&
-                record.matches(transform->position, transform->rotation, transform->scale,
-                               static_cast<std::uint32_t>(collider->shape), collider->halfExtents,
-                               collider->radius, collider->height, collider->meshPath, newBodyType))
+            const bool meshShaped =
+                (collider->shape == ColliderShape::TriangleMesh || collider->shape == ColliderShape::ConvexHull) &&
+                !collider->meshPath.empty();
+            if (!meshShaped && record.matches(transform->position, transform->rotation, transform->scale,
+                                              static_cast<std::uint32_t>(collider->shape), collider->halfExtents,
+                                              collider->radius, collider->height, collider->meshPath, newBodyType))
                 continue;
             const Aabb bounds = computeBounds(world, entity);
             record.position = transform->position;
@@ -538,8 +537,8 @@ void PhysicsWorld::synchronizeScene(const World& world) const
         acceleration.sceneEntries.push_back({entity, records.back().bounds});
         index.emplace(entity, records.size() - 1);
         structural = true;
-        (records.back().bodyType != static_cast<std::uint32_t>(BodyType::Static) ? dynamicsChanged
-                                                                                : staticsChanged) = true;
+        (records.back().bodyType != static_cast<std::uint32_t>(BodyType::Static) ? dynamicsChanged : staticsChanged) =
+            true;
     }
 
     // 本轮没有出现的记录 = 实体销毁或组件被移除：交换删除，保持两侧下标对齐。
@@ -849,11 +848,9 @@ void PhysicsWorld::step(World& world, const float fixedDeltaTime)
         if (!std::binary_search(currentPairs.begin(), currentPairs.end(), oldPair))
             m_events.push_back({oldPair.first, oldPair.second, CollisionEventType::Exit, false});
     m_previousPairs = std::move(currentPairs);
-    // 调试包围盒只有调试渲染真的在轮询时才值得重建：大场景下这段每步上千次包围盒
-    // 计算与哈希集构建不可忽略（Release 同样付费）。
-    if (m_debugBoxesRequested)
+    // 仅显式启用时收集；启用后每个子步都刷新，避免一帧补多步时只保留第一步的快照。
+    if (m_debugBoxesEnabled)
     {
-        m_debugBoxesRequested = false;
         m_debugBoxes.clear();
         std::unordered_set<Entity> collidingEntities;
         for (const auto& pair : m_previousPairs)
@@ -1095,9 +1092,14 @@ const std::vector<CollisionEvent>& PhysicsWorld::GetEvents() const
 {
     return m_events;
 }
+void PhysicsWorld::setDebugBoxesEnabled(const bool enabled)
+{
+    m_debugBoxesEnabled = enabled;
+    if (!enabled)
+        m_debugBoxes.clear();
+}
 const std::vector<PhysicsDebugBox>& PhysicsWorld::GetDebugBoxes() const
 {
-    m_debugBoxesRequested = true;
     return m_debugBoxes;
 }
 PhysicsStatistics PhysicsWorld::GetStatistics() const
@@ -1106,6 +1108,7 @@ PhysicsStatistics PhysicsWorld::GetStatistics() const
 }
 void PhysicsWorld::clear()
 {
+    m_debugBoxesEnabled = false;
     m_acceleration.reset();
     m_events.clear();
     m_previousPairs.clear();

@@ -364,7 +364,7 @@ bool Engine::enterPlayMode()
         m_paused = true;
         return false;
     }
-    m_fixedAccumulator = 0.0f;
+    m_fixedAccumulator.reset();
     m_paused = false;
     m_playing = true;
     return true;
@@ -382,7 +382,7 @@ bool Engine::exitPlayMode()
     m_gameplay.stopPlay();
     const bool restored = m_sceneManager.restoreSnapshot(m_editSnapshot);
     m_editSnapshot.clear();
-    m_fixedAccumulator = 0.0f;
+    m_fixedAccumulator.reset();
     m_paused = true;
     m_playing = false;
     m_projectBridge.setWorldAccess(true, false);
@@ -469,13 +469,10 @@ void Engine::Tick(const float rawDeltaTime)
         m_vfxSystem.Update(deltaTime);
         m_projectBridge.update(deltaTime);
         const float fixedStep = m_projectSettings.fixedStep;
-        // 单帧补步上限：掉帧时宁可物理慢一拍（丢弃多余时间债），也绝不进入
-        // “帧越慢 → 补步越多 → 帧更慢”的螺旋。按步数封顶而非绝对时间，
-        // 对任何 fixedStep 都成立；代价是帧耗时超过 4 步物理量的极端场景会慢放。
-        constexpr float kMaxFixedStepsPerFrame = 4.0f;
-        m_fixedAccumulator =
-            std::min(m_fixedAccumulator + deltaTime, fixedStep * kMaxFixedStepsPerFrame);
-        while (m_fixedAccumulator >= fixedStep)
+        // 单帧按整数步数限额补步，超过预算的时间债丢弃；保留不足一步的余量。
+        constexpr std::uint32_t kMaxFixedStepsPerFrame = 4;
+        const auto fixedSteps = m_fixedAccumulator.advance(deltaTime, fixedStep, kMaxFixedStepsPerFrame);
+        for (std::uint32_t stepIndex = 0; stepIndex < fixedSteps; ++stepIndex)
         {
             if (m_useProjectCode && !m_projectModuleHost->fixedUpdate(fixedStep))
             {
@@ -485,7 +482,6 @@ void Engine::Tick(const float rawDeltaTime)
                 return;
             }
             m_physicsWorld.step(m_world, fixedStep);
-            m_fixedAccumulator -= fixedStep;
         }
         m_audioEngine.updateWorld(m_world);
         if (m_useProjectCode && !m_projectModuleHost->lateUpdate(deltaTime))

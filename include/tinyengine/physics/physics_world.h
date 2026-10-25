@@ -28,7 +28,7 @@ struct PhysicsStatistics
     std::uint64_t sceneBoundsTests = 0;
     std::uint64_t staticTreeBuilds = 0;
     std::uint64_t dynamicTreeBuilds = 0;
-    std::uint64_t sceneSyncs = 0;    // 场景同步调用总数（含快路径）
+    std::uint64_t sceneSyncs = 0;     // 场景同步调用总数（含快路径）
     std::uint64_t sceneSyncSkips = 0; // 快路径次数：自上次同步以来场景无任何变化
 };
 enum class PhysicsBackend
@@ -153,15 +153,16 @@ class PhysicsWorld
     /// @brief 获取 `Events`。
     /// @return 返回对应对象的引用；有效期不超过其所属对象。
     const std::vector<CollisionEvent>& GetEvents() const;
-    /// @brief 获取 `DebugBoxes`。
-    /// @return 返回对应对象的引用；有效期不超过其所属对象。
-    /// @note 惰性契约：本调用同时"武装"调试盒，下一次 step() 才重建内容，随后的
-    ///       读取返回该次结果；从不轮询的运行时不会支付每步重建的开销。
+    /// @brief 设置是否收集调试包围盒；默认关闭，启用后每个物理子步都会刷新。
+    /// @param enabled 是否收集；关闭时清空已有快照，下一次启用后的 step() 生成新快照。
+    void setDebugBoxesEnabled(bool enabled);
+    /// @brief 获取最近完成的物理子步生成的调试包围盒；读取不改变收集开关。
+    /// @return 快照的只读引用；后续 step()、关闭收集或 clear() 会改变其内容并使元素引用失效。
     const std::vector<PhysicsDebugBox>& GetDebugBoxes() const;
     /// @brief 获取自上次 clear() 起的碰撞加速累计统计快照。
     /// @return 包括资源加载次数、空间包围盒检查次数和三角形检查次数的值副本。
     PhysicsStatistics GetStatistics() const;
-    /// @brief 清空对象保存的状态和数据。
+    /// @brief 清空仿真缓存、事件和统计，并关闭调试包围盒收集。
     void clear();
     /// @brief 设置 `Backend`。
     /// @param backend 要使用的实现后端。
@@ -191,7 +192,7 @@ class PhysicsWorld
     std::vector<CollisionEvent> m_events;
     std::vector<std::pair<Entity, Entity>> m_previousPairs;
     std::vector<PhysicsDebugBox> m_debugBoxes;
-    mutable bool m_debugBoxesRequested = false; // 有调试渲染在轮询时才值得每步重建调试包围盒
+    bool m_debugBoxesEnabled = false;
     PhysicsBackend m_backend = PhysicsBackend::Builtin;
 };
 } // namespace tinyengine

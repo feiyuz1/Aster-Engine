@@ -7,6 +7,7 @@
 #include "tinyengine/physics/physics_world.h"
 #include "tinyengine/platform/platform.h"
 #include "tinyengine/resource/pak_archive.h"
+#include "tinyengine/runtime/fixed_step.h"
 
 #include <algorithm>
 #include <chrono>
@@ -547,6 +548,67 @@ void sceneTests()
     largeStaticCollider();
 }
 
+void debugBoxesFollowEverySubstep()
+{
+    World world;
+    PhysicsWorld physics;
+    const Entity entity = addCollider(world, {});
+    RigidBodyComponent body;
+    body.useGravity = false;
+    body.linearDamping = 0.0f;
+    body.velocity = {1.0f, 0.0f, 0.0f};
+    world.AddComponent(entity, body);
+    physics.step(world, 0.0f);
+    check(physics.GetDebugBoxes().empty(), "debug collection is disabled by default");
+    physics.step(world, 0.0f);
+    check(physics.GetDebugBoxes().empty(), "reading debug boxes does not enable collection");
+    physics.setDebugBoxesEnabled(true);
+    physics.step(world, 1.0f);
+    physics.step(world, 1.0f);
+    const auto& boxes = physics.GetDebugBoxes();
+    check(boxes.size() == 1, "enabled debug boxes include the moving body");
+    check(std::abs((boxes[0].bounds.minimum.x + boxes[0].bounds.maximum.x) * 0.5f - 2.0f) < 0.0001f,
+          "debug boxes reflect the last substep when several steps run before rendering");
+    physics.setDebugBoxesEnabled(false);
+    check(physics.GetDebugBoxes().empty(), "disabling debug collection clears the snapshot");
+    physics.step(world, 1.0f);
+    check(physics.GetDebugBoxes().empty(), "debug reads keep collection disabled across steps");
+    physics.setDebugBoxesEnabled(true);
+    physics.step(world, 1.0f);
+    const auto& resumed = physics.GetDebugBoxes();
+    check(resumed.size() == 1 &&
+              std::abs((resumed[0].bounds.minimum.x + resumed[0].bounds.maximum.x) * 0.5f - 4.0f) < 0.0001f,
+          "reenabling debug collection produces a fresh snapshot");
+    physics.clear();
+    physics.step(world, 1.0f);
+    check(physics.GetDebugBoxes().empty(), "clear disables debug collection for the next session");
+}
+
+void fixedStepBudgets()
+{
+    for (const float step : {0.016f, 0.001f, 1.0f / 60.0f})
+    {
+        FixedStepAccumulator accumulator;
+        for (int frame = 0; frame < 20; ++frame)
+            check(accumulator.advance(step * 10.0f, step, 4) == 4,
+                  "capped fixed-step frames execute all four budgeted steps without losing one to rounding");
+        check(accumulator.advance(step * 0.25f, step, 4) == 0, "capped frames discard excess time debt");
+        check(accumulator.advance(0.0f, step, 4) == 0, "zero frame time does not advance simulation");
+        accumulator.reset();
+        for (int quarter = 0; quarter < 3; ++quarter)
+            check(accumulator.advance(step * 0.25f, step, 4) == 0, "fractional fixed-step time is retained");
+        check(accumulator.advance(step * 0.25f, step, 4) == 1, "four quarter steps produce one full update");
+        check(accumulator.advance(step * 0.25f, step, 4) == 0, "partial time starts next accumulation");
+        accumulator.reset();
+        check(accumulator.advance(step * 0.75f, step, 4) == 0, "reset removes fractional time from prior session");
+        check(accumulator.advance(step * 10.0f, step, 1) == 1, "caller-selected one-step budget is preserved");
+    }
+    FixedStepAccumulator accumulator;
+    check(accumulator.advance(-1.0f, 0.016f, 4) == 0 && accumulator.advance(1.0f, 0.0f, 4) == 0 &&
+              accumulator.advance(1.0f, 0.016f, 0) == 0,
+          "invalid fixed-step input does not produce updates");
+}
+
 void benchmark()
 {
     using Clock = std::chrono::steady_clock;
@@ -629,6 +691,16 @@ int main(int argc, char** argv)
             equalXResponseOrder();
             return 0;
         }
+        if (argc > 1 && std::string(argv[1]) == "--debug-boxes")
+        {
+            debugBoxesFollowEverySubstep();
+            return 0;
+        }
+        if (argc > 1 && std::string(argv[1]) == "--fixed-step")
+        {
+            fixedStepBudgets();
+            return 0;
+        }
         rotatedMeshContact();
         meshCacheAndTriangleWork();
         mountedMeshInvalidation();
@@ -641,6 +713,8 @@ int main(int argc, char** argv)
         equalXResponseOrder();
         meshSphereResponse();
         sceneTests();
+        debugBoxesFollowEverySubstep();
+        fixedStepBudgets();
         std::cout << "Physics acceleration regressions passed\n";
         return 0;
     }

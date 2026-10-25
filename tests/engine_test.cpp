@@ -721,8 +721,8 @@ int main()
     for (int index = 0; index < 180; ++index)
         physics.step(physicsScene, 1.0f / 60.0f);
     CHECK(physicsScene.GetComponent<TransformComponent>(body)->position.y >= 0.49f);
-    // 调试盒契约：先请求武装，下一次 step 重建，再读取——不轮询的运行时零开销。
-    physics.GetDebugBoxes();
+    // 显式启用调试盒；启用后每个子步刷新，普通读取不会启用收集。
+    physics.setDebugBoxesEnabled(true);
     physics.step(physicsScene, 1.0f / 60.0f);
     RaycastHit queryHit;
     CHECK(physics.sphereCast(physicsScene, {{0.0f, 3.0f, 0.0f}, {0.0f, -1.0f, 0.0f}}, 0.25f, 10.0f, queryHit));

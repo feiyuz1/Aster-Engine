@@ -23,6 +23,7 @@
 #include "tinyengine/render/renderer.h"
 #include "tinyengine/resource/asset_streaming.h"
 #include "tinyengine/resource/resource_manager.h"
+#include "tinyengine/runtime/fixed_step.h"
 #include "tinyengine/script/script_engine.h"
 #include "tinyengine/task/job_system.h"
 #include "tinyengine/ui/ui_system.h"
@@ -178,7 +179,7 @@ class Engine : private WorldListener
     bool m_initialized = false;
     bool m_paused = false;
     float m_timeScale = 1.0f;
-    float m_fixedAccumulator = 0.0f;
+    FixedStepAccumulator m_fixedAccumulator;
     std::uint32_t m_frameIndex = 0;
     Entity m_playerEntity = kInvalidEntity;
     bool m_playing = false;
