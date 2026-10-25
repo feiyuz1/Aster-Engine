@@ -122,6 +122,10 @@ typedef struct TinyProjectGameplayAPI
      * 成功时 *out_loaded 为 1；失败（文件不存在/解析失败）返回错误码且不清空当前场景。
      * 注意：加载成功会清空 World，调用方持有的全部实体句柄随之失效。 */
     TinyProjectResult(TINY_PROJECT_CALL* load_scene)(void*, TinyProjectString path, uint32_t* out_loaded);
+
+    /* 返回宿主当前的世界纪元句柄。场景重载会开启新的世界纪元并使旧句柄失效，
+     * 调用方在 load_scene 成功后必须用本接口刷新缓存的句柄，再重新绑定实体。 */
+    TinyProjectWorld(TINY_PROJECT_CALL* current_world)(void*);
 } TinyProjectGameplayAPI;
 
 /* 老宿主（struct_size 更小）缺少该成员时返回 0，调用方必须据此降级。 */

@@ -344,6 +344,26 @@ class Context
             m_result = api->set_retro_post(api->host_context, enabled ? 1u : 0u, blockSize, colorLevels);
         return m_result == TINY_PROJECT_OK;
     }
+    /// @brief 运行时加载场景。成功后自动刷新世界纪元句柄。
+    /// @param path 项目资产相对路径（如 "saved/Demo.scene"），按进程工作目录解析。
+    /// @return 加载成功返回 `true`；宿主缺少该能力、路径非法或解析失败返回 `false`。
+    /// @note 场景加载会清空 World：调用方持有的全部实体句柄随之失效，须重新查找绑定。
+    bool loadScene(std::string_view path)
+    {
+        const auto* api = gameplay();
+        m_result = TINY_PROJECT_UNSUPPORTED;
+        if (!TINY_PROJECT_GAMEPLAY_HAS(api, load_scene))
+            return false;
+        TinyProjectString request = detail::string(path);
+        uint32_t loaded = 0;
+        m_result = api->load_scene(api->host_context, request, &loaded);
+        if (!loaded)
+            return false;
+        // 场景清空会开启新的世界纪元：不刷新句柄的话，后续所有宿主调用都会被纪元校验拒绝。
+        if (TINY_PROJECT_GAMEPLAY_HAS(api, current_world))
+            m_world = api->current_world(api->host_context);
+        return true;
+    }
 
   private:
     const TinyProjectHostAPI& m_host;

@@ -808,6 +808,11 @@ void ProjectHostBridge::buildGameplayAPI() noexcept
                 return TINY_PROJECT_OK;
             });
     };
+    // 只读查询：任何线程任何状态返回当前纪元都是安全的，不做 access 门控。
+    m_gameplay.current_world = [](void* p) -> TinyProjectWorld
+    {
+        return static_cast<ProjectHostBridge*>(p)->getWorld();
+    };
 }
 bool ProjectHostBridge::spawnBurstEmitter(const TinyProjectVec3& position, const TinyProjectColor& start,
                                           const TinyProjectColor& end, const float radius, const float lifetime,
