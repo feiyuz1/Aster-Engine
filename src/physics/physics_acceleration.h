@@ -79,6 +79,41 @@ struct MeshCacheEntry
     std::shared_ptr<const CollisionMesh> mesh;
 };
 
+/// @brief 场景差异同步的单实体记录：缓存上次同步时决定包围盒的全部输入。
+/// @note 网格/凸包形状的包围盒还依赖网格资产内容（可能热重载），不参与签名，每次重算。
+struct SceneSyncRecord
+{
+    std::uint64_t entity = 0;
+    std::uint64_t lastSeen = 0; // 最近一次同步戳；与当前戳不符即实体/组件已消失
+    Aabb bounds;
+    Vec3 position{}, rotation{}, scale{};
+    Vec3 halfExtents{};
+    float radius = 0.0f;
+    float height = 0.0f;
+    std::uint32_t shape = 0;
+    std::uint32_t bodyType = 0;
+    std::string meshPath;
+
+    /// @brief 判断自上次同步以来包围盒的输入是否完全一致。
+    bool matches(const Vec3& currentPosition, const Vec3& currentRotation, const Vec3& currentScale,
+                 std::uint32_t currentShape, const Vec3& currentHalfExtents, float currentRadius,
+                 float currentHeight, const std::string& currentMeshPath, std::uint32_t currentBodyType) const
+    {
+        return sameVec(position, currentPosition) && sameVec(rotation, currentRotation) &&
+               sameVec(scale, currentScale) && shape == currentShape &&
+               sameVec(halfExtents, currentHalfExtents) && radius == currentRadius && height == currentHeight &&
+               bodyType == currentBodyType && meshPath == currentMeshPath;
+    }
+
+  private:
+    static bool sameVec(const Vec3& left, const Vec3& right)
+    {
+        return left.x == right.x && left.y == right.y && left.z == right.z;
+    }
+
+  public:
+};
+
 struct PhysicsAcceleration
 {
     /// @brief 开始一次读取操作；每个操作内同一路径只检查一次来源元数据。
@@ -92,5 +127,10 @@ struct PhysicsAcceleration
     PhysicsStatistics statistics;
     BoundsTree staticTree, dynamicTree;
     std::vector<BoundsEntry> sceneEntries;
+    // ---- 场景差异同步状态（与 sceneEntries 同下标对齐）----
+    std::vector<SceneSyncRecord> sceneRecords;
+    std::unordered_map<std::uint64_t, std::size_t> sceneIndex;
+    std::uint64_t syncStamp = 0;
+    bool sceneStructureDirty = true; // 首次同步或实体增删后需要重建树
 };
 } // namespace tinyengine::detail

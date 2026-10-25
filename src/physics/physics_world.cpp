@@ -455,24 +455,146 @@ Aabb PhysicsWorld::computeBounds(const World& world, const Entity entity) const
     return detail::transformBounds({extent * -1.0f, extent}, matrix);
 }
 
+// 差异同步：缓存每个碰撞体"决定包围盒的全部输入"，无变化的实体零开销跳过。
+// 每帧的射线/角色移动/物理步都会调到这里；大场景下全量重算包围盒是主要帧耗，
+// 而一帧内真正移动的通常只有几个动态体。遍历次序与旧实现一致（存活实体集合次序），
+// 保证 broadphase 配对与接触求解顺序不变。
 void PhysicsWorld::synchronizeScene(const World& world) const
 {
     auto& acceleration = accelerationState();
-    std::vector<detail::BoundsEntry> statics, dynamics;
-    acceleration.sceneEntries.clear();
+    auto& records = acceleration.sceneRecords;
+    auto& index = acceleration.sceneIndex;
+    const std::uint64_t stamp = ++acceleration.syncStamp;
+    ++acceleration.statistics.sceneSyncs;
+
+    bool structural = acceleration.sceneStructureDirty;
+    bool staticsChanged = false;
+    bool dynamicsChanged = false;
+
     for (const Entity entity : world.GetEntityManager().GetAliveEntities())
     {
-        if (!world.HasComponent<ColliderComponent>(entity) || !world.HasComponent<TransformComponent>(entity))
+        const auto* collider = world.GetComponent<ColliderComponent>(entity);
+        const auto* transform = world.GetComponent<TransformComponent>(entity);
+        if (!collider || !transform)
             continue;
-        const detail::BoundsEntry entry{entity, computeBounds(world, entity)};
-        acceleration.sceneEntries.push_back(entry);
         const auto* body = world.GetComponent<RigidBodyComponent>(entity);
-        (body && body->type != BodyType::Static ? dynamics : statics).push_back(entry);
+        const auto found = index.find(entity);
+        if (found != index.end())
+        {
+            detail::SceneSyncRecord& record = records[found->second];
+            record.lastSeen = stamp;
+            const std::uint32_t previousBodyType = record.bodyType;
+            const std::uint32_t newBodyType = static_cast<std::uint32_t>(body ? body->type : BodyType::Static);
+            // 网格/凸包形状的包围盒依赖网格资产内容（可能热重载），不做签名缓存。
+            const bool meshShaped = (collider->shape == ColliderShape::TriangleMesh ||
+                                     collider->shape == ColliderShape::ConvexHull) &&
+                                    !collider->meshPath.empty();
+            if (!meshShaped &&
+                record.matches(transform->position, transform->rotation, transform->scale,
+                               static_cast<std::uint32_t>(collider->shape), collider->halfExtents,
+                               collider->radius, collider->height, collider->meshPath, newBodyType))
+                continue;
+            const Aabb bounds = computeBounds(world, entity);
+            record.position = transform->position;
+            record.rotation = transform->rotation;
+            record.scale = transform->scale;
+            record.shape = static_cast<std::uint32_t>(collider->shape);
+            record.halfExtents = collider->halfExtents;
+            record.radius = collider->radius;
+            record.height = collider->height;
+            record.meshPath = collider->meshPath;
+            record.bodyType = newBodyType;
+            bool& sideChanged =
+                newBodyType == static_cast<std::uint32_t>(BodyType::Static) ? staticsChanged : dynamicsChanged;
+            if (!detail::sameBounds(bounds, record.bounds))
+            {
+                record.bounds = bounds;
+                acceleration.sceneEntries[found->second].bounds = bounds;
+                sideChanged = true;
+            }
+            // 静/动分类变化即使包围盒不变，也要把实体在两棵树之间迁移。
+            if (previousBodyType != record.bodyType)
+            {
+                staticsChanged = true;
+                dynamicsChanged = true;
+            }
+            continue;
+        }
+        // 新出现的碰撞体：追加记录与条目，保持 records 与 sceneEntries 同下标对齐。
+        detail::SceneSyncRecord record;
+        record.entity = entity;
+        record.lastSeen = stamp;
+        record.bounds = computeBounds(world, entity);
+        record.position = transform->position;
+        record.rotation = transform->rotation;
+        record.scale = transform->scale;
+        record.shape = static_cast<std::uint32_t>(collider->shape);
+        record.halfExtents = collider->halfExtents;
+        record.radius = collider->radius;
+        record.height = collider->height;
+        record.meshPath = collider->meshPath;
+        record.bodyType = static_cast<std::uint32_t>(body ? body->type : BodyType::Static);
+        records.push_back(std::move(record));
+        acceleration.sceneEntries.push_back({entity, records.back().bounds});
+        index.emplace(entity, records.size() - 1);
+        structural = true;
+        (records.back().bodyType != static_cast<std::uint32_t>(BodyType::Static) ? dynamicsChanged
+                                                                                : staticsChanged) = true;
     }
-    if (acceleration.staticTree.update(std::move(statics)))
-        ++acceleration.statistics.staticTreeBuilds;
-    if (acceleration.dynamicTree.update(std::move(dynamics)))
-        ++acceleration.statistics.dynamicTreeBuilds;
+
+    // 本轮没有出现的记录 = 实体销毁或组件被移除：交换删除，保持两侧下标对齐。
+    for (std::size_t i = records.size(); i-- > 0;)
+    {
+        if (records[i].lastSeen == stamp)
+            continue;
+        index.erase(records[i].entity);
+        const std::size_t last = records.size() - 1;
+        if (i != last)
+        {
+            records[i] = std::move(records[last]);
+            acceleration.sceneEntries[i] = acceleration.sceneEntries[last];
+            index[records[i].entity] = i;
+        }
+        records.pop_back();
+        acceleration.sceneEntries.pop_back();
+        structural = true;
+    }
+    acceleration.sceneStructureDirty = false;
+
+    // 实体增删改变两棵树的成员集；其余情况按所属侧独立刷新。
+    if (structural)
+    {
+        staticsChanged = true;
+        dynamicsChanged = true;
+    }
+    // 快路径：自上次同步以来没有任何变化，树保持原样即可。
+    if (!staticsChanged && !dynamicsChanged)
+    {
+        ++acceleration.statistics.sceneSyncSkips;
+        return;
+    }
+
+    // 包围盒变化走 update 内部的增量 refit；实体增删交给 update 自行判断重建。
+    if (staticsChanged)
+    {
+        std::vector<detail::BoundsEntry> statics;
+        statics.reserve(records.size());
+        for (const auto& record : records)
+            if (record.bodyType == static_cast<std::uint32_t>(BodyType::Static))
+                statics.push_back({record.entity, record.bounds});
+        if (acceleration.staticTree.update(std::move(statics)))
+            ++acceleration.statistics.staticTreeBuilds;
+    }
+    if (dynamicsChanged)
+    {
+        std::vector<detail::BoundsEntry> dynamics;
+        dynamics.reserve(records.size());
+        for (const auto& record : records)
+            if (record.bodyType != static_cast<std::uint32_t>(BodyType::Static))
+                dynamics.push_back({record.entity, record.bounds});
+        if (acceleration.dynamicTree.update(std::move(dynamics)))
+            ++acceleration.statistics.dynamicTreeBuilds;
+    }
 }
 
 // 先积分动态刚体，再生成接触并修正穿透，最后与上一帧接触集合比较得到 Enter/Stay/Exit。
@@ -481,7 +603,6 @@ void PhysicsWorld::step(World& world, const float fixedDeltaTime)
     auto& acceleration = accelerationState();
     acceleration.beginOperation();
     m_events.clear();
-    m_debugBoxes.clear();
     world.GetComponentManager().ForEach<TransformComponent, RigidBodyComponent>(
         [this, &world, fixedDeltaTime](const Entity entity, TransformComponent& transform, RigidBodyComponent& body)
         {
@@ -728,18 +849,25 @@ void PhysicsWorld::step(World& world, const float fixedDeltaTime)
         if (!std::binary_search(currentPairs.begin(), currentPairs.end(), oldPair))
             m_events.push_back({oldPair.first, oldPair.second, CollisionEventType::Exit, false});
     m_previousPairs = std::move(currentPairs);
-    std::unordered_set<Entity> collidingEntities;
-    for (const auto& pair : m_previousPairs)
+    // 调试包围盒只有调试渲染真的在轮询时才值得重建：大场景下这段每步上千次包围盒
+    // 计算与哈希集构建不可忽略（Release 同样付费）。
+    if (m_debugBoxesRequested)
     {
-        collidingEntities.insert(pair.first);
-        collidingEntities.insert(pair.second);
-    }
-    for (const auto& collider : colliders)
-    {
-        const auto* component = world.GetComponent<ColliderComponent>(collider.entity);
-        m_debugBoxes.push_back({collider.entity, computeBounds(world, collider.entity),
-                                collidingEntities.find(collider.entity) != collidingEntities.end(),
-                                component && component->trigger});
+        m_debugBoxesRequested = false;
+        m_debugBoxes.clear();
+        std::unordered_set<Entity> collidingEntities;
+        for (const auto& pair : m_previousPairs)
+        {
+            collidingEntities.insert(pair.first);
+            collidingEntities.insert(pair.second);
+        }
+        for (const auto& collider : colliders)
+        {
+            const auto* component = world.GetComponent<ColliderComponent>(collider.entity);
+            m_debugBoxes.push_back({collider.entity, computeBounds(world, collider.entity),
+                                    collidingEntities.find(collider.entity) != collidingEntities.end(),
+                                    component && component->trigger});
+        }
     }
 }
 
@@ -969,6 +1097,7 @@ const std::vector<CollisionEvent>& PhysicsWorld::GetEvents() const
 }
 const std::vector<PhysicsDebugBox>& PhysicsWorld::GetDebugBoxes() const
 {
+    m_debugBoxesRequested = true;
     return m_debugBoxes;
 }
 PhysicsStatistics PhysicsWorld::GetStatistics() const

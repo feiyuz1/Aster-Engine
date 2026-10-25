@@ -28,6 +28,8 @@ struct PhysicsStatistics
     std::uint64_t sceneBoundsTests = 0;
     std::uint64_t staticTreeBuilds = 0;
     std::uint64_t dynamicTreeBuilds = 0;
+    std::uint64_t sceneSyncs = 0;    // 场景同步调用总数（含快路径）
+    std::uint64_t sceneSyncSkips = 0; // 快路径次数：自上次同步以来场景无任何变化
 };
 enum class PhysicsBackend
 {
@@ -153,6 +155,8 @@ class PhysicsWorld
     const std::vector<CollisionEvent>& GetEvents() const;
     /// @brief 获取 `DebugBoxes`。
     /// @return 返回对应对象的引用；有效期不超过其所属对象。
+    /// @note 惰性契约：本调用同时"武装"调试盒，下一次 step() 才重建内容，随后的
+    ///       读取返回该次结果；从不轮询的运行时不会支付每步重建的开销。
     const std::vector<PhysicsDebugBox>& GetDebugBoxes() const;
     /// @brief 获取自上次 clear() 起的碰撞加速累计统计快照。
     /// @return 包括资源加载次数、空间包围盒检查次数和三角形检查次数的值副本。
@@ -187,6 +191,7 @@ class PhysicsWorld
     std::vector<CollisionEvent> m_events;
     std::vector<std::pair<Entity, Entity>> m_previousPairs;
     std::vector<PhysicsDebugBox> m_debugBoxes;
+    mutable bool m_debugBoxesRequested = false; // 有调试渲染在轮询时才值得每步重建调试包围盒
     PhysicsBackend m_backend = PhysicsBackend::Builtin;
 };
 } // namespace tinyengine

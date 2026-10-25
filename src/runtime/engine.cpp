@@ -469,7 +469,12 @@ void Engine::Tick(const float rawDeltaTime)
         m_vfxSystem.Update(deltaTime);
         m_projectBridge.update(deltaTime);
         const float fixedStep = m_projectSettings.fixedStep;
-        m_fixedAccumulator = std::min(m_fixedAccumulator + deltaTime, 0.25f);
+        // 单帧补步上限：掉帧时宁可物理慢一拍（丢弃多余时间债），也绝不进入
+        // “帧越慢 → 补步越多 → 帧更慢”的螺旋。按步数封顶而非绝对时间，
+        // 对任何 fixedStep 都成立；代价是帧耗时超过 4 步物理量的极端场景会慢放。
+        constexpr float kMaxFixedStepsPerFrame = 4.0f;
+        m_fixedAccumulator =
+            std::min(m_fixedAccumulator + deltaTime, fixedStep * kMaxFixedStepsPerFrame);
         while (m_fixedAccumulator >= fixedStep)
         {
             if (m_useProjectCode && !m_projectModuleHost->fixedUpdate(fixedStep))
