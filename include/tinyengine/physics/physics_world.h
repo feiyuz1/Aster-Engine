@@ -30,6 +30,9 @@ struct PhysicsStatistics
     std::uint64_t dynamicTreeBuilds = 0;
     std::uint64_t sceneSyncs = 0;     // 场景同步调用总数（含快路径）
     std::uint64_t sceneSyncSkips = 0; // 快路径次数：自上次同步以来场景无任何变化
+    std::uint64_t sceneSyncNanoseconds = 0; // 场景同步累计耗时（诊断帧耗分布用）
+    std::uint64_t stepNanoseconds = 0;      // 物理步累计耗时
+    std::uint64_t broadphasePairs = 0;      // broadphase 生成过的接触对总数
 };
 enum class PhysicsBackend
 {
@@ -188,6 +191,16 @@ class PhysicsWorld
     /// @brief 从当前 ECS 同步静态和非静态空间树，兼容组件指针的直接修改。
     /// @param world 要读取碰撞体、变换和刚体类型的场景。
     void synchronizeScene(const World& world) const;
+    /// @brief Overlap 的树查询部分，不做场景同步；仅供已显式同步的内部路径使用。
+    std::vector<Entity> overlapTreeQuery(const World& world, const Aabb& bounds, const PhysicsQuery& query) const;
+    /// @brief 只重算一个实体的包围盒并刷新其所属侧的树；不在记录里时退回全量同步。
+    void refreshMovedEntityBounds(const World& world, Entity entity) const;
+    /// @brief moveCharacter 的内部版本；alreadySynced 时跳过入口场景差异同步。
+    Vec3 moveCharacterInternal(World& world, Entity entity, const Vec3& displacement, float skinWidth,
+                               bool alreadySynced) const;
+    /// @brief sphereCast 的内部版本；alreadySynced 时跳过场景差异同步。
+    bool sphereCastInternal(const World& world, const Ray& ray, float radius, float maxDistance, RaycastHit& hit,
+                            const PhysicsQuery& query, bool alreadySynced) const;
     mutable std::shared_ptr<detail::PhysicsAcceleration> m_acceleration;
     std::vector<CollisionEvent> m_events;
     std::vector<std::pair<Entity, Entity>> m_previousPairs;

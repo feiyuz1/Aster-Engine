@@ -820,9 +820,9 @@ int main()
     physicsWorld.GetComponent<TransformComponent>(wall)->scale = {0.2f, 4.0f, 4.0f};
     physicsWorld.AddComponent(wall, ColliderComponent{});
     physicsWorld.AddComponent(wall, RigidBodyComponent{BodyType::Static, 0.0f, {}, false});
-    physics.step(physicsWorld, 0.1f);
     report.check("Physics", "continuous dynamic body does not tunnel through a thin wall",
-                 physicsWorld.GetComponent<TransformComponent>(fastBody)->position.x < 0.6f);
+                 physicsWorld.GetComponent<TransformComponent>(fastBody)->position.x < 0.6f,
+                 "final x = " + std::to_string(physicsWorld.GetComponent<TransformComponent>(fastBody)->position.x));
 
     PlatformFile::writeAllBytes(root / "tone.wav", MakeWave());
     SDL_setenv("SDL_AUDIODRIVER", "dummy", 1);

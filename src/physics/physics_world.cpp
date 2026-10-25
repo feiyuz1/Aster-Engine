@@ -11,6 +11,7 @@
 #include "tinyengine/resource/resource.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <limits>
 #include <unordered_set>
@@ -461,6 +462,7 @@ Aabb PhysicsWorld::computeBounds(const World& world, const Entity entity) const
 // 保证 broadphase 配对与接触求解顺序不变。
 void PhysicsWorld::synchronizeScene(const World& world) const
 {
+    const auto syncStart = std::chrono::steady_clock::now();
     auto& acceleration = accelerationState();
     auto& records = acceleration.sceneRecords;
     auto& index = acceleration.sceneIndex;
@@ -560,6 +562,13 @@ void PhysicsWorld::synchronizeScene(const World& world) const
     }
     acceleration.sceneStructureDirty = false;
 
+    const auto accumulateSyncTime = [&acceleration, syncStart]()
+    {
+        acceleration.statistics.sceneSyncNanoseconds +=
+            static_cast<std::uint64_t>(
+                std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - syncStart)
+                    .count());
+    };
     // 实体增删改变两棵树的成员集；其余情况按所属侧独立刷新。
     if (structural)
     {
@@ -570,6 +579,7 @@ void PhysicsWorld::synchronizeScene(const World& world) const
     if (!staticsChanged && !dynamicsChanged)
     {
         ++acceleration.statistics.sceneSyncSkips;
+        accumulateSyncTime();
         return;
     }
 
@@ -594,11 +604,13 @@ void PhysicsWorld::synchronizeScene(const World& world) const
         if (acceleration.dynamicTree.update(std::move(dynamics)))
             ++acceleration.statistics.dynamicTreeBuilds;
     }
+    accumulateSyncTime();
 }
 
 // 先积分动态刚体，再生成接触并修正穿透，最后与上一帧接触集合比较得到 Enter/Stay/Exit。
 void PhysicsWorld::step(World& world, const float fixedDeltaTime)
 {
+    const auto stepStart = std::chrono::steady_clock::now();
     auto& acceleration = accelerationState();
     acceleration.beginOperation();
     m_events.clear();
@@ -638,11 +650,12 @@ void PhysicsWorld::step(World& world, const float fixedDeltaTime)
             else
                 transform.position += displacement;
         });
-
     struct BroadphaseEntry
     {
         Entity entity;
         Aabb bounds;
+        bool movable = false;  // 非静态刚体（动态/运动学）
+        bool trigger = false;
     };
     synchronizeScene(world);
     std::vector<BroadphaseEntry> colliders;
@@ -651,12 +664,16 @@ void PhysicsWorld::step(World& world, const float fixedDeltaTime)
     for (std::size_t i = 0; i < acceleration.sceneEntries.size(); ++i)
         ranks.emplace(acceleration.sceneEntries[i].payload, i);
     // 保留旧 ColliderComponent 遍历和排序次序，包含 minimum.x 相同的物体。
+    // 静/动与触发器标记在这里一次性取好，配对循环里不再逐对取组件。
     world.GetComponentManager().ForEach<ColliderComponent>(
-        [&](Entity entity, ColliderComponent&)
+        [&](Entity entity, ColliderComponent& collider)
         {
             const auto found = ranks.find(entity);
-            if (found != ranks.end())
-                colliders.push_back({entity, acceleration.sceneEntries[found->second].bounds});
+            if (found == ranks.end())
+                return;
+            const auto* body = world.GetComponent<RigidBodyComponent>(entity);
+            colliders.push_back({entity, acceleration.sceneEntries[found->second].bounds,
+                                 body && body->type != BodyType::Static, collider.trigger});
         });
     std::sort(colliders.begin(), colliders.end(),
               [](const BroadphaseEntry& a, const BroadphaseEntry& b)
@@ -682,6 +699,12 @@ void PhysicsWorld::step(World& world, const float fixedDeltaTime)
         std::sort(candidates.begin(), candidates.end());
         for (const std::size_t secondIndex : candidates)
         {
+            // 惯性-惯性对（双方静态且都非触发器）：成员恒定、永不分离、求解零位移，
+            // 事件语义上不可见（触发器对不受此影响，仍照常产生 Enter/Stay/Exit）。
+            // 大场景里贴合的地板/墙体块占配对总数的九成以上，必须在取组件前跳过。
+            if (!colliders[firstIndex].movable && !colliders[secondIndex].movable &&
+                !colliders[firstIndex].trigger && !colliders[secondIndex].trigger)
+                continue;
             const Entity first = colliders[firstIndex].entity, second = colliders[secondIndex].entity;
             const auto* firstCollider = world.GetComponent<ColliderComponent>(first);
             const auto* secondCollider = world.GetComponent<ColliderComponent>(second);
@@ -844,6 +867,7 @@ void PhysicsWorld::step(World& world, const float fixedDeltaTime)
             }
         });
     std::sort(currentPairs.begin(), currentPairs.end());
+    acceleration.statistics.broadphasePairs += currentPairs.size();
     for (const auto& oldPair : m_previousPairs)
         if (!std::binary_search(currentPairs.begin(), currentPairs.end(), oldPair))
             m_events.push_back({oldPair.first, oldPair.second, CollisionEventType::Exit, false});
@@ -866,6 +890,10 @@ void PhysicsWorld::step(World& world, const float fixedDeltaTime)
                                     component && component->trigger});
         }
     }
+    acceleration.statistics.stepNanoseconds +=
+        static_cast<std::uint64_t>(
+            std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - stepStart)
+                .count());
 }
 
 bool PhysicsWorld::raycast(const World& world, const Ray& ray, const float maxDistance, RaycastHit& hit,
@@ -932,9 +960,18 @@ bool PhysicsWorld::shapeSweep(const World& world, const ShapeSweepGeometry& geom
 bool PhysicsWorld::sphereCast(const World& world, const Ray& ray, const float radius, const float maxDistance,
                               RaycastHit& hit, const PhysicsQuery& query) const
 {
+    return sphereCastInternal(world, ray, radius, maxDistance, hit, query, false);
+}
+
+/// @brief sphereCast 的内部版本；alreadySynced 时跳过场景差异同步。
+/// @note 仅供角色控制器在入口同步后的连续子移动中使用：期间只有被移动的实体在变。
+bool PhysicsWorld::sphereCastInternal(const World& world, const Ray& ray, const float radius, const float maxDistance,
+                                      RaycastHit& hit, const PhysicsQuery& query, const bool alreadySynced) const
+{
     auto& acceleration = accelerationState();
     acceleration.beginOperation();
-    synchronizeScene(world);
+    if (!alreadySynced)
+        synchronizeScene(world);
     bool found = false;
     float closest = maxDistance;
     const Vec3 extent{radius, radius, radius};
@@ -967,11 +1004,11 @@ bool PhysicsWorld::sphereCast(const World& world, const Ray& ray, const float ra
     return found;
 }
 
-std::vector<Entity> PhysicsWorld::Overlap(const World& world, const Aabb& bounds, const PhysicsQuery& query) const
+// Overlap 的树查询部分，不做场景同步；供已显式同步并自行维护增量的调用方使用。
+std::vector<Entity> PhysicsWorld::overlapTreeQuery(const World& world, const Aabb& bounds,
+                                                   const PhysicsQuery& query) const
 {
     auto& acceleration = accelerationState();
-    acceleration.beginOperation();
-    synchronizeScene(world);
     std::vector<Entity> result;
     const auto inspect = [&](std::uint64_t entity)
     {
@@ -987,14 +1024,76 @@ std::vector<Entity> PhysicsWorld::Overlap(const World& world, const Aabb& bounds
     return result;
 }
 
+std::vector<Entity> PhysicsWorld::Overlap(const World& world, const Aabb& bounds, const PhysicsQuery& query) const
+{
+    auto& acceleration = accelerationState();
+    acceleration.beginOperation();
+    synchronizeScene(world);
+    return overlapTreeQuery(world, bounds, query);
+}
+
+/// @brief 只重算一个实体的包围盒并刷新其所属侧的树。
+/// @note 供 moveCharacter 在各轴之间使用：同一时刻只有被移动的实体在变，
+///       全量差异同步在这里是纯浪费。实体不在同步记录里时退回全量同步。
+void PhysicsWorld::refreshMovedEntityBounds(const World& world, const Entity entity) const
+{
+    auto& acceleration = accelerationState();
+    const auto found = acceleration.sceneIndex.find(entity);
+    if (found == acceleration.sceneIndex.end())
+    {
+        synchronizeScene(world);
+        return;
+    }
+    auto& record = acceleration.sceneRecords[found->second];
+    const Aabb bounds = computeBounds(world, entity);
+    if (detail::sameBounds(bounds, record.bounds))
+        return;
+    record.bounds = bounds;
+    acceleration.sceneEntries[found->second].bounds = bounds;
+    if (record.bodyType == static_cast<std::uint32_t>(BodyType::Static))
+    {
+        std::vector<detail::BoundsEntry> statics;
+        statics.reserve(acceleration.sceneRecords.size());
+        for (const auto& entry : acceleration.sceneRecords)
+            if (entry.bodyType == static_cast<std::uint32_t>(BodyType::Static))
+                statics.push_back({entry.entity, entry.bounds});
+        if (acceleration.staticTree.update(std::move(statics)))
+            ++acceleration.statistics.staticTreeBuilds;
+    }
+    else
+    {
+        // 动态侧通常只有寥寥数体，整表 refit 代价可忽略。
+        std::vector<detail::BoundsEntry> dynamics;
+        dynamics.reserve(acceleration.sceneRecords.size());
+        for (const auto& entry : acceleration.sceneRecords)
+            if (entry.bodyType != static_cast<std::uint32_t>(BodyType::Static))
+                dynamics.push_back({entry.entity, entry.bounds});
+        if (acceleration.dynamicTree.update(std::move(dynamics)))
+            ++acceleration.statistics.dynamicTreeBuilds;
+    }
+}
+
 Vec3 PhysicsWorld::moveCharacter(World& world, const Entity entity, const Vec3& displacement,
                                  const float skinWidth) const
+{
+    return moveCharacterInternal(world, entity, displacement, skinWidth, false);
+}
+
+/// @brief moveCharacter 的内部版本；alreadySynced 时跳过入口场景差异同步。
+/// @note 角色控制器一次移动会拆成多次子移动（抬升/跨步/落下循环/垂直），
+///       只有第一次需要全量同步，其余的场景状态由 refreshMovedEntityBounds 维护。
+Vec3 PhysicsWorld::moveCharacterInternal(World& world, const Entity entity, const Vec3& displacement,
+                                         const float skinWidth, const bool alreadySynced) const
 {
     auto& acceleration = accelerationState();
     acceleration.beginOperation();
     auto* transform = world.GetComponent<TransformComponent>(entity);
     if (!transform || !world.HasComponent<ColliderComponent>(entity))
         return {};
+    // 一次移动只在入口做一次全量差异同步；各轴之间只有本实体在动，
+    // 用单实体增量刷新代替每轴一次 O(场景) 扫描。
+    if (!alreadySynced)
+        synchronizeScene(world);
     const Vec3 start = transform->position;
     const float values[3] = {displacement.x, displacement.y, displacement.z};
     for (int axis = 0; axis < 3; ++axis)
@@ -1006,10 +1105,11 @@ Vec3 PhysicsWorld::moveCharacter(World& world, const Entity entity, const Vec3& 
             transform->position.y += values[axis];
         else
             transform->position.z += values[axis];
+        refreshMovedEntityBounds(world, entity);
         Aabb bounds = computeBounds(world, entity);
         bounds.minimum += Vec3{skinWidth, skinWidth, skinWidth};
         bounds.maximum -= Vec3{skinWidth, skinWidth, skinWidth};
-        if (!Overlap(world, bounds, {0xffffffffu, false, entity}).empty())
+        if (!overlapTreeQuery(world, bounds, {0xffffffffu, false, entity}).empty())
         {
             if (axis == 0)
                 transform->position.x = old;
@@ -1017,6 +1117,7 @@ Vec3 PhysicsWorld::moveCharacter(World& world, const Entity entity, const Vec3& 
                 transform->position.y = old;
             else
                 transform->position.z = old;
+            refreshMovedEntityBounds(world, entity);
         }
     }
     return transform->position - start;
@@ -1032,15 +1133,19 @@ CharacterMoveResult PhysicsWorld::moveCharacterController(World& world, const En
     if (!transform || !collider)
         return result;
     const Vec3 start = transform->position;
+    // 控制器入口做唯一一次全量差异同步；后续所有子移动与探地都走已同步路径，
+    // 期间只有本实体在动，由 moveCharacterInternal 内部的单实体刷新维护树的时效。
+    synchronizeScene(world);
     const Vec3 horizontal{displacement.x, 0.0f, displacement.z};
-    Vec3 horizontalApplied = moveCharacter(world, entity, horizontal, skinWidth);
+    Vec3 horizontalApplied = moveCharacterInternal(world, entity, horizontal, skinWidth, true);
     const bool blocked = std::abs(horizontalApplied.x - horizontal.x) > 0.0001f ||
                          std::abs(horizontalApplied.z - horizontal.z) > 0.0001f;
     if (blocked && stepHeight > 0.0f)
     {
         transform->position = start;
-        const Vec3 raised = moveCharacter(world, entity, {0.0f, stepHeight, 0.0f}, skinWidth);
-        const Vec3 steppedHorizontal = moveCharacter(world, entity, horizontal, skinWidth);
+        refreshMovedEntityBounds(world, entity);
+        const Vec3 raised = moveCharacterInternal(world, entity, {0.0f, stepHeight, 0.0f}, skinWidth, true);
+        const Vec3 steppedHorizontal = moveCharacterInternal(world, entity, horizontal, skinWidth, true);
         if (raised.y > stepHeight * 0.9f && std::abs(steppedHorizontal.x - horizontal.x) < 0.0001f &&
             std::abs(steppedHorizontal.z - horizontal.z) < 0.0001f)
         {
@@ -1049,7 +1154,8 @@ CharacterMoveResult PhysicsWorld::moveCharacterController(World& world, const En
             while (remainingDrop > 0.0001f)
             {
                 const float drop = std::min(dropIncrement, remainingDrop);
-                if (moveCharacter(world, entity, {0.0f, -drop, 0.0f}, skinWidth).y > -drop + 0.0001f)
+                if (moveCharacterInternal(world, entity, {0.0f, -drop, 0.0f}, skinWidth, true).y >
+                    -drop + 0.0001f)
                     break;
                 remainingDrop -= drop;
             }
@@ -1059,10 +1165,11 @@ CharacterMoveResult PhysicsWorld::moveCharacterController(World& world, const En
         else
         {
             transform->position = start;
-            horizontalApplied = moveCharacter(world, entity, horizontal, skinWidth);
+            refreshMovedEntityBounds(world, entity);
+            horizontalApplied = moveCharacterInternal(world, entity, horizontal, skinWidth, true);
         }
     }
-    const Vec3 verticalApplied = moveCharacter(world, entity, {0.0f, displacement.y, 0.0f}, skinWidth);
+    const Vec3 verticalApplied = moveCharacterInternal(world, entity, {0.0f, displacement.y, 0.0f}, skinWidth, true);
     result.hitCeiling = displacement.y > 0.0f && verticalApplied.y < displacement.y - 0.0001f;
     result.appliedDisplacement = transform->position - start;
     const float probeRadius = collider->shape == ColliderShape::Sphere || collider->shape == ColliderShape::Capsule
@@ -1074,8 +1181,9 @@ CharacterMoveResult PhysicsWorld::moveCharacterController(World& world, const En
     else if (collider->shape == ColliderShape::Box)
         probeOrigin.y -= std::max(0.0f, collider->halfExtents.y - probeRadius * 0.9f);
     RaycastHit groundHit;
-    result.grounded = sphereCast(world, {probeOrigin, {0.0f, -1.0f, 0.0f}}, probeRadius * 0.9f,
-                                 std::max(0.08f, skinWidth * 4.0f), groundHit, {0xffffffffu, false, entity});
+    result.grounded = sphereCastInternal(world, {probeOrigin, {0.0f, -1.0f, 0.0f}}, probeRadius * 0.9f,
+                                         std::max(0.08f, skinWidth * 4.0f), groundHit, {0xffffffffu, false, entity},
+                                         true);
     if (result.grounded)
     {
         result.groundNormal = groundHit.normal;

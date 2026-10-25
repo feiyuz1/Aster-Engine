@@ -244,6 +244,7 @@ void Engine::Run(const std::uint32_t maxFrames)
     m_clock.reset();
     const bool unlimited = maxFrames == 0;
     m_logger.info("Engine loop start.");
+    std::uint64_t lastSyncNanoseconds = 0, lastStepNanoseconds = 0;
     while (m_running && (unlimited || m_frameIndex < maxFrames))
     {
         const auto frameStart = std::chrono::steady_clock::now();
@@ -252,6 +253,18 @@ void Engine::Run(const std::uint32_t maxFrames)
         const float deltaTime = std::clamp(m_clock.Tick(), 0.0f, 0.25f);
         Tick(deltaTime);
         ++m_frameIndex;
+        if (maxFrames != 0 && m_frameIndex % 120 == 0)
+        {
+            const auto stats = m_physicsWorld.GetStatistics();
+            const auto& profile = m_renderer.GetLastFrameProfile();
+            m_logger.info("FRAME " + std::to_string(m_frameIndex) +
+                          " delta_ms=" + std::to_string(deltaTime * 1000.0f) +
+                          " render_ms=" + std::to_string(profile.totalMilliseconds) +
+                          " sync_ms=" + std::to_string((stats.sceneSyncNanoseconds - lastSyncNanoseconds) / 1000000) +
+                          " step_ms=" + std::to_string((stats.stepNanoseconds - lastStepNanoseconds) / 1000000));
+            lastSyncNanoseconds = stats.sceneSyncNanoseconds;
+            lastStepNanoseconds = stats.stepNanoseconds;
+        }
         const auto elapsed = std::chrono::steady_clock::now() - frameStart;
         constexpr auto kMinimumFrame = std::chrono::milliseconds(1);
         if (elapsed < kMinimumFrame)
@@ -259,6 +272,13 @@ void Engine::Run(const std::uint32_t maxFrames)
     }
     m_running = false;
     m_logger.info("Engine loop end.");
+    // 物理耗时分布一览（诊断大场景帧耗用）：同步毫秒 / 步进毫秒 / 接触对 / 步数与同步次数。
+    const auto stats = m_physicsWorld.GetStatistics();
+    m_logger.info("PHYSICS_STATS sync_ms=" + std::to_string(stats.sceneSyncNanoseconds / 1000000) +
+                  " step_ms=" + std::to_string(stats.stepNanoseconds / 1000000) +
+                  " pairs=" + std::to_string(stats.broadphasePairs) +
+                  " steps_syncs=" + std::to_string(stats.sceneSyncs) + " sync_skips=" +
+                  std::to_string(stats.sceneSyncSkips));
 }
 
 // 先停止产生新工作的上层系统，再等待作业和资源，最后销毁平台/渲染后端。
