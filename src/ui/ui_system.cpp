@@ -4,8 +4,12 @@
 // 类型：实现文件。
 
 #include "tinyengine/ui/ui_system.h"
+#include "tinyengine/text/unicode.h"
 
 #include <algorithm>
+#include <cmath>
+#include <iomanip>
+#include <sstream>
 
 namespace tinyengine
 {
@@ -77,6 +81,7 @@ UIWidget* UISystem::Find(const std::string& id)
 }
 void UISystem::Remove(const std::string& id)
 {
+    m_textLayouts.erase(id);
     m_widgets.erase(
         std::remove_if(m_widgets.begin(), m_widgets.end(), [&](const UIWidget& widget) { return widget.id == id; }),
         m_widgets.end());
@@ -88,6 +93,8 @@ void UISystem::clear()
     m_widgets.clear();
     m_drawList.clear();
     m_focusedId.clear();
+    m_textLayouts.clear();
+    m_focusedCaretRect = {0, 0, 0, 0};
 }
 // 输入按最终布局后的逆绘制顺序命中，保证视觉上位于上层的控件优先接收事件。
 void UISystem::Update(const float cursorX, const float cursorY, const bool primaryDown)
@@ -104,9 +111,24 @@ void UISystem::Update(const float cursorX, const float cursorY, const bool prima
                 !rect->second.contains(cursorX, cursorY))
                 continue;
             for (auto& widget : m_widgets)
+            {
                 widget.focused = false;
+                if (widget.id != it->id)
+                {
+                    widget.compositionText.clear();
+                    widget.compositionCursor = widget.compositionSelection = 0;
+                }
+            }
             it->focused = true;
             m_focusedId = it->id;
+            if (it->type == UIWidgetType::InputField && !it->password)
+            {
+                const auto layout = layoutText(*it, it->text, rect->second.width);
+                const float top = rect->second.y + std::max(0.0f, (rect->second.height - layout->height) * 0.5f);
+                const auto caret = layout->hitTestCaret(cursorX - rect->second.x + it->textScrollX, cursorY - top);
+                setSelection(it->id, caret.sourceOffset, caret.sourceOffset);
+                setVisualCaret(*it, *layout, caret, false);
+            }
             if (it->type == UIWidgetType::Dropdown)
                 it->expanded = !it->expanded;
             if ((it->type == UIWidgetType::List || (it->type == UIWidgetType::Dropdown && it->expanded)) &&
@@ -125,26 +147,256 @@ void UISystem::Update(const float cursorX, const float cursorY, const bool prima
 }
 bool UISystem::inputText(const std::string& utf8)
 {
-    UIWidget* focused = Find(m_focusedId);
-    if (!focused || focused->type != UIWidgetType::InputField || !focused->enabled || utf8.empty())
+    UIWidget* focused = editableFocused();
+    if (!focused || utf8.empty() || !Unicode::decode(utf8).valid)
         return false;
-    focused->text += utf8;
+    eraseSelection(*focused);
+    focused->text.insert(focused->caretOffset, utf8);
+    focused->caretOffset += utf8.size();
+    focused->selectionAnchor = focused->caretOffset;
+    focused->caretTrailing = focused->selectionTrailing = false;
+    focused->compositionText.clear();
     if (focused->onTextChanged)
         focused->onTextChanged(focused->text);
     return true;
 }
 bool UISystem::backspace()
 {
-    UIWidget* focused = Find(m_focusedId);
-    if (!focused || focused->type != UIWidgetType::InputField || focused->text.empty())
+    UIWidget* focused = editableFocused();
+    if (!focused || !focused->compositionText.empty())
         return false;
-    std::size_t offset = focused->text.size() - 1;
-    while (offset > 0 && (static_cast<unsigned char>(focused->text[offset]) & 0xC0u) == 0x80u)
-        --offset;
-    focused->text.erase(offset);
+    if (!eraseSelection(*focused))
+    {
+        if (focused->caretOffset == 0)
+            return false;
+        const auto offset = Unicode::previousGrapheme(focused->text, focused->caretOffset);
+        focused->text.erase(offset, focused->caretOffset - offset);
+        focused->caretOffset = focused->selectionAnchor = offset;
+    }
     if (focused->onTextChanged)
         focused->onTextChanged(focused->text);
     return true;
+}
+void UISystem::normalizeSelection(UIWidget& widget)
+{
+    const auto edges = Unicode::graphemeBoundaries(widget.text);
+    const auto snap = [&](const std::size_t offset)
+    {
+        const auto found = std::upper_bound(edges.begin(), edges.end(), std::min(offset, widget.text.size()));
+        return found == edges.begin() ? std::size_t{0} : *std::prev(found);
+    };
+    widget.caretOffset = snap(widget.caretOffset);
+    widget.selectionAnchor = snap(widget.selectionAnchor);
+}
+UIWidget* UISystem::editableFocused()
+{
+    auto* widget = Find(m_focusedId);
+    if (!widget || widget->type != UIWidgetType::InputField || !widget->enabled || !widget->visible)
+        return nullptr;
+    normalizeSelection(*widget);
+    return widget;
+}
+bool UISystem::eraseSelection(UIWidget& widget)
+{
+    normalizeSelection(widget);
+    const auto begin = std::min(widget.caretOffset, widget.selectionAnchor);
+    const auto end = std::max(widget.caretOffset, widget.selectionAnchor);
+    if (begin == end)
+        return false;
+    widget.text.erase(begin, end - begin);
+    widget.caretOffset = widget.selectionAnchor = begin;
+    widget.caretTrailing = widget.selectionTrailing = false;
+    return true;
+}
+bool UISystem::deleteForward()
+{
+    auto* widget = editableFocused();
+    if (!widget || !widget->compositionText.empty())
+        return false;
+    if (!eraseSelection(*widget))
+    {
+        const auto next = Unicode::nextGrapheme(widget->text, widget->caretOffset);
+        if (next == widget->caretOffset)
+            return false;
+        widget->text.erase(widget->caretOffset, next - widget->caretOffset);
+    }
+    if (widget->onTextChanged)
+        widget->onTextChanged(widget->text);
+    return true;
+}
+bool UISystem::setSelection(const std::string& id, const std::size_t anchor, const std::size_t caret)
+{
+    auto* widget = Find(id);
+    if (!widget || widget->type != UIWidgetType::InputField)
+        return false;
+    widget->selectionAnchor = anchor;
+    widget->caretOffset = caret;
+    widget->caretTrailing = widget->selectionTrailing = false;
+    normalizeSelection(*widget);
+    widget->compositionText.clear();
+    return true;
+}
+bool UISystem::selectAll()
+{
+    auto* widget = editableFocused();
+    return widget && setSelection(widget->id, 0, widget->text.size());
+}
+bool UISystem::moveCursor(const int direction, const bool extend)
+{
+    auto* widget = editableFocused();
+    if (!widget || direction == 0 || !widget->compositionText.empty())
+        return false;
+    if (widget->password)
+    {
+        widget->caretOffset = direction < 0 ? Unicode::previousGrapheme(widget->text, widget->caretOffset)
+                                            : Unicode::nextGrapheme(widget->text, widget->caretOffset);
+    }
+    else
+    {
+        const auto layout = layoutText(*widget, widget->text, 0.0f);
+        const auto current = layout->getCaret(widget->caretOffset, widget->caretTrailing);
+        if (!extend && widget->selectionAnchor != widget->caretOffset)
+        {
+            const auto anchor = layout->getCaret(widget->selectionAnchor, widget->selectionTrailing);
+            const bool anchorFirst =
+                anchor.line < current.line || (anchor.line == current.line && anchor.x < current.x);
+            setVisualCaret(*widget, *layout, (direction < 0) == anchorFirst ? anchor : current, false);
+            return true;
+        }
+        auto positions = layout->carets;
+        std::stable_sort(positions.begin(), positions.end(),
+                         [](const auto& first, const auto& second)
+                         { return first.line == second.line ? first.x < second.x : first.line < second.line; });
+        positions.erase(std::unique(positions.begin(), positions.end(),
+                                    [](const auto& first, const auto& second)
+                                    {
+                                        return first.sourceOffset == second.sourceOffset && first.line == second.line &&
+                                               std::abs(first.x - second.x) < 0.01f;
+                                    }),
+                        positions.end());
+        auto position = std::find_if(positions.begin(), positions.end(),
+                                     [&](const auto& caret)
+                                     {
+                                         return caret.sourceOffset == widget->caretOffset &&
+                                                caret.line == current.line && std::abs(caret.x - current.x) < 0.01f;
+                                     });
+        if (position != positions.end())
+        {
+            if (direction < 0 && position != positions.begin())
+                --position;
+            else if (direction > 0 && std::next(position) != positions.end())
+                ++position;
+            setVisualCaret(*widget, *layout, *position, extend);
+        }
+    }
+    if (!extend)
+    {
+        widget->selectionAnchor = widget->caretOffset;
+        widget->selectionTrailing = widget->caretTrailing;
+    }
+    return true;
+}
+bool UISystem::moveCursorToLineBoundary(const bool end, const bool extend)
+{
+    auto* widget = editableFocused();
+    if (!widget || !widget->compositionText.empty())
+        return false;
+    const auto layout = layoutText(*widget, widget->text, 0.0f);
+    const auto caret = layout->getCaret(widget->caretOffset, widget->caretTrailing);
+    setVisualCaret(*widget, *layout, layout->hitTestCaret(end ? std::numeric_limits<float>::max() : -1.0f, caret.y),
+                   extend);
+    return true;
+}
+void UISystem::setVisualCaret(UIWidget& widget, const TextLayoutResult& layout, const TextCaret& caret,
+                              const bool extend)
+{
+    widget.caretOffset = caret.sourceOffset;
+    const auto trailing = layout.getCaret(caret.sourceOffset, true);
+    widget.caretTrailing = trailing.line == caret.line && std::abs(trailing.x - caret.x) < 0.01f;
+    if (!extend)
+    {
+        widget.selectionAnchor = widget.caretOffset;
+        widget.selectionTrailing = widget.caretTrailing;
+    }
+}
+bool UISystem::setComposition(const std::string& text, const int cursor, const int selectionLength)
+{
+    auto* widget = editableFocused();
+    if (!widget || !Unicode::decode(text).valid)
+        return false;
+    widget->compositionText = text;
+    const auto decoded = Unicode::decode(text);
+    const auto at = [&](const std::size_t index)
+    { return index < decoded.codepoints.size() ? decoded.codepoints[index].byteOffset : text.size(); };
+    const auto first = static_cast<std::size_t>(std::max(0, cursor));
+    widget->compositionCursor = at(first);
+    widget->compositionSelection =
+        at(first + static_cast<std::size_t>(std::max(0, selectionLength))) - widget->compositionCursor;
+    return true;
+}
+void UISystem::processTextEvents(const std::vector<TextInputEvent>& events)
+{
+    for (const auto& event : events)
+        if (event.type == TextInputEvent::Type::Commit)
+            inputText(event.text);
+        else
+            setComposition(event.text, event.cursor, event.length);
+}
+void UISystem::setFontManager(FontManager* fonts)
+{
+    m_fonts = fonts;
+    m_textLayouts.clear();
+}
+FontManager* UISystem::getFontManager() const
+{
+    return m_fonts ? m_fonts : &FontManager::defaultManager();
+}
+UIRect UISystem::getFocusedCaretRect() const
+{
+    return m_focusedCaretRect;
+}
+std::size_t UISystem::getTextLayoutBuildCount() const
+{
+    return m_textLayoutBuildCount;
+}
+std::shared_ptr<const TextLayoutResult> UISystem::layoutText(const UIWidget& widget, const std::string& text,
+                                                             const float width)
+{
+    TextStyle style;
+    style.size = widget.fontSize * m_dpiScale;
+    style.font = widget.font;
+    TextLayoutOptions options;
+    options.maximumWidth = width;
+    if (widget.type == UIWidgetType::InputField)
+    {
+        options.wrap = false;
+        if (options.maximumWidth <= 0)
+        {
+            const auto found = m_resolvedRects.find(widget.id);
+            options.maximumWidth =
+                found == m_resolvedRects.end() ? widget.rect.width * m_dpiScale : found->second.width;
+        }
+    }
+    options.direction = widget.textDirection;
+    options.alignment = widget.type == UIWidgetType::Button && widget.textAlignment == TextAlignment::Start
+                            ? TextAlignment::Center
+                            : widget.textAlignment;
+    options.richText = widget.richText && widget.type != UIWidgetType::InputField;
+    std::ostringstream key;
+    key << std::setprecision(std::numeric_limits<float>::max_digits10) << std::quoted(text) << ':' << style.size << ':'
+        << std::quoted(style.font.family) << ':' << style.font.weight << ':' << style.font.italic << ':'
+        << std::quoted(style.font.language) << ':' << options.maximumWidth << ':' << static_cast<int>(options.direction)
+        << ':' << static_cast<int>(options.alignment) << ':' << options.richText << ':' << options.wrap << ':'
+        << getFontManager()->getRevision();
+    auto& cached = m_textLayouts[widget.id];
+    const auto cacheKey = key.str();
+    if (!cached.layout || cached.key != cacheKey)
+    {
+        cached.layout = std::make_shared<TextLayoutResult>(TextLayout::layout(text, options, style, getFontManager()));
+        cached.key = cacheKey;
+        ++m_textLayoutBuildCount;
+    }
+    return cached.layout;
 }
 bool UISystem::selectItem(const std::string& id, const int index)
 {
@@ -336,15 +588,20 @@ void UISystem::focusNext()
         std::find_if(focusable.begin(), focusable.end(), [&](UIWidget* widget) { return widget->id == m_focusedId; });
     UIWidget* next = found == focusable.end() || ++found == focusable.end() ? focusable.front() : *found;
     for (auto& widget : m_widgets)
+    {
         widget.focused = false;
+        widget.compositionText.clear();
+        widget.compositionCursor = widget.compositionSelection = 0;
+    }
     next->focused = true;
     m_focusedId = next->id;
 }
 const std::vector<UIDrawCommand>& UISystem::BuildDrawList()
 {
     m_drawList.clear();
+    m_focusedCaretRect = {0, 0, 0, 0};
     resolveLayout();
-    for (const auto& widget : m_widgets)
+    for (auto& widget : m_widgets)
     {
         if (!widget.visible)
             continue;
@@ -373,6 +630,8 @@ const std::vector<UIDrawCommand>& UISystem::BuildDrawList()
             clip.height = std::max(0.0f, bottom - clip.y);
             current = Find(current->parentId);
         }
+        if (clip.width <= 0.0f || clip.height <= 0.0f)
+            continue;
         if (widget.type == UIWidgetType::ProgressBar)
         {
             m_drawList.push_back(
@@ -385,12 +644,41 @@ const std::vector<UIDrawCommand>& UISystem::BuildDrawList()
             continue;
         }
         std::string displayText = widget.text;
+        std::vector<std::size_t> passwordEdges;
+        std::size_t caretPosition = 0, selectionBegin = 0, selectionEnd = 0;
+        std::size_t compositionBegin = 0, compositionEnd = 0;
         if (widget.type == UIWidgetType::InputField)
         {
+            normalizeSelection(widget);
+            caretPosition = widget.caretOffset;
+            selectionBegin = std::min(widget.caretOffset, widget.selectionAnchor);
+            selectionEnd = std::max(widget.caretOffset, widget.selectionAnchor);
+            if (widget.focused && !widget.compositionText.empty())
+            {
+                displayText.replace(selectionBegin, selectionEnd - selectionBegin, widget.compositionText);
+                compositionBegin = selectionBegin;
+                compositionEnd = selectionBegin + widget.compositionText.size();
+                caretPosition = selectionBegin + widget.compositionCursor;
+                selectionBegin = caretPosition;
+                selectionEnd = caretPosition + widget.compositionSelection;
+            }
+            if (widget.password)
+            {
+                passwordEdges = Unicode::graphemeBoundaries(displayText);
+                const auto masked = [&](const std::size_t offset)
+                {
+                    return static_cast<std::size_t>(
+                        std::lower_bound(passwordEdges.begin(), passwordEdges.end(), offset) - passwordEdges.begin());
+                };
+                caretPosition = masked(caretPosition);
+                selectionBegin = masked(selectionBegin);
+                selectionEnd = masked(selectionEnd);
+                compositionBegin = masked(compositionBegin);
+                compositionEnd = masked(compositionEnd);
+                displayText.assign(passwordEdges.size() - 1, '*');
+            }
             if (displayText.empty())
                 displayText = widget.placeholder;
-            else if (widget.password)
-                displayText.assign(displayText.size(), '*');
         }
         else if (widget.type == UIWidgetType::Dropdown && widget.selectedIndex >= 0 &&
                  widget.selectedIndex < static_cast<int>(widget.items.size()))
@@ -402,6 +690,49 @@ const std::vector<UIDrawCommand>& UISystem::BuildDrawList()
                                widget.items[index];
         m_drawList.push_back(
             {widget.type, rect->second, color, displayText, widget.imagePath, widget.fontSize * m_dpiScale, clip});
+        auto& command = m_drawList.back();
+        command.font = widget.font;
+        command.textColor = widget.textColor;
+        command.font.size = command.fontSize;
+        if (!displayText.empty() || widget.type == UIWidgetType::InputField)
+        {
+            command.textLayout = layoutText(widget, displayText, command.rect.width);
+            const auto& layout = *command.textLayout;
+            const float vertical = std::max(0.0f, (command.rect.height - layout.height) * 0.5f);
+            if (widget.type == UIWidgetType::InputField)
+            {
+                widget.textScrollX = std::clamp(widget.textScrollX, 0.0f,
+                                                std::max(0.0f, layout.width - command.rect.width + 3.0f * m_dpiScale));
+                command.textOffset.x = -widget.textScrollX;
+            }
+            if (widget.type == UIWidgetType::InputField && widget.focused && widget.enabled)
+            {
+                const auto caret = layout.getCaret(caretPosition, widget.caretTrailing);
+                const float margin = 3.0f * m_dpiScale;
+                if (caret.x - widget.textScrollX > command.rect.width - margin)
+                    widget.textScrollX = caret.x - std::max(0.0f, command.rect.width - margin);
+                else if (caret.x - widget.textScrollX < margin)
+                    widget.textScrollX = std::max(0.0f, caret.x - margin);
+                command.textOffset.x = -widget.textScrollX;
+                const auto toRect = [&](const TextBounds& bounds)
+                {
+                    return UIRect{command.rect.x + command.textOffset.x + bounds.x,
+                                  command.rect.y + vertical + bounds.y, bounds.width, bounds.height};
+                };
+                for (const auto& bounds : layout.getSelectionRects(selectionBegin, selectionEnd))
+                    command.selectionRects.push_back(toRect(bounds));
+                for (const auto& bounds : layout.getSelectionRects(compositionBegin, compositionEnd))
+                {
+                    auto underline = toRect(bounds);
+                    underline.y += std::max(0.0f, underline.height - 2.0f * m_dpiScale);
+                    underline.height = m_dpiScale;
+                    command.compositionRects.push_back(underline);
+                }
+                command.caretRect = {command.rect.x + command.textOffset.x + caret.x,
+                                     command.rect.y + vertical + caret.y, std::max(1.0f, m_dpiScale), caret.height};
+                m_focusedCaretRect = command.caretRect;
+            }
+        }
     }
     return m_drawList;
 }

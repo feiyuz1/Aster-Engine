@@ -877,9 +877,14 @@ int main()
     report.check("Input", "SDL virtual controller hotplug and removal", controllerDeviceReady && virtualHotplug);
 
     const std::string multilingual = "[b]office[/b] Tiny引擎 مرحبا שלום";
-    const auto shaped = TextLayout::shape(multilingual, 90.0f, {}, TextDirection::Auto, true);
-    const bool hasLigature = std::any_of(shaped.glyphs.begin(), shaped.glyphs.end(),
-                                         [](const ShapedGlyph& glyph) { return glyph.codepoint == 0xfb01; });
+    FontManager layoutFonts;
+    layoutFonts.registerFamily("fixture", {layoutFonts.loadFace("tests/fixtures/fonts/noto_sans.ttf")});
+    layoutFonts.setDefaultFamily("fixture");
+    const auto shaped = TextLayout::shape(multilingual, 90.0f, {}, TextDirection::Auto, true, &layoutFonts);
+    const bool hasLigature =
+        std::any_of(shaped.glyphs.begin(), shaped.glyphs.end(),
+                    [](const ShapedGlyph& glyph)
+                    { return glyph.codepoint == 'f' && glyph.glyphId != 0 && glyph.clusterEnd >= glyph.cluster + 2; });
     const bool hasBold = std::any_of(shaped.glyphs.begin(), shaped.glyphs.end(),
                                      [](const ShapedGlyph& glyph) { return glyph.style.bold; });
     report.check("Runtime UI", "Unicode/BiDi/ligature/rich-text/wrapping pipeline",

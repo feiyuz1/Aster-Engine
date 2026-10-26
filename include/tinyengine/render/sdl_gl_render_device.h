@@ -6,6 +6,7 @@
 #pragma once
 
 #include "tinyengine/render/renderer.h"
+#include "tinyengine/text/glyph_atlas.h"
 
 #include <functional>
 #include <memory>
@@ -119,6 +120,9 @@ class SdlGlRenderDevice final : public RenderDevice
     void setEventCallback(std::function<void(const void*)> callback);
     /// @brief 只在需要编辑文字时启用系统输入法，避免游戏按键被输入法接管。
     void setTextInputEnabled(bool enabled);
+    /// @brief 设置输入法候选框的光标区域，输入为当前 UI 视口物理像素。
+    void setTextInputRect(const UIRect& rect);
+    GlyphAtlasStats getGlyphAtlasStats() const;
     /// @brief 设置窗口关闭请求处理器；未设置时保持运行时直接退出行为。
     void setCloseRequestCallback(std::function<void()> callback);
     /// @brief 启用 `SceneRenderTarget`。

@@ -60,6 +60,7 @@ struct EngineContext
     WorldPartition* worldPartition = nullptr;
     ModuleManager* moduleManager = nullptr;
     PluginManager* pluginManager = nullptr;
+    FontManager* fontManager = nullptr;
 };
 
 // 引擎总控对象。它按照依赖顺序启动模块，以固定步长更新物理，并在每帧末提交渲染与诊断数据。
@@ -158,6 +159,8 @@ class Engine : private WorldListener
     PhysicsWorld m_physicsWorld;
     AudioEngine m_audioEngine;
     ScriptEngine m_scriptEngine;
+    FontManager m_fontManager;
+    std::string m_textInputFocus;
     UISystem m_uiSystem;
     GameplayFramework m_gameplay;
     DiagnosticsService m_diagnostics;

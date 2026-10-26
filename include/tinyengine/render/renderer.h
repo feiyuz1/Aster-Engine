@@ -51,6 +51,12 @@ struct InputState
     static constexpr std::size_t kMaxScancodes = 512;
     std::array<bool, kMaxScancodes> keysDown{};
     std::array<bool, kMaxScancodes> keysPressed{};
+    bool compositionChanged = false;
+    std::string compositionText;
+    int compositionCursor = 0, compositionLength = 0;
+    bool uiDelete = false, uiCursorLeft = false, uiCursorRight = false;
+    bool uiHome = false, uiEnd = false, uiSelectAll = false, uiExtendSelection = false;
+    std::vector<TextInputEvent> textEvents;
 };
 
 enum class RenderPath

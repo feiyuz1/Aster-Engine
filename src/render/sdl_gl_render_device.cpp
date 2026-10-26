@@ -9,6 +9,7 @@
 #include "tinyengine/platform/platform.h"
 #include "tinyengine/render/builtin_shaders.h"
 #include "tinyengine/render/shader_pipeline.h"
+#include "tinyengine/text/glyph_atlas.h"
 #include "tinyengine/ui/text_layout.h"
 #include "tinyengine/vfx/particle_system.h"
 
@@ -33,10 +34,6 @@
 #include <string>
 #include <unordered_map>
 #include <utility>
-#ifdef TINYENGINE_HAS_FREETYPE
-#include <ft2build.h>
-#include FT_FREETYPE_H
-#endif
 
 namespace tinyengine
 {
@@ -861,18 +858,11 @@ struct SdlGlRenderDevice::Impl
            gtaoProgram = 0, gtaoFilterProgram = 0, bloomProgram = 0, taaProgram = 0, gpuCullProgram = 0, uiProgram = 0,
            particleProgram = 0, gpuParticleProgram = 0, retroProgram = 0, fullScreenVao = 0,
            particleInstanceBuffer = 0;
-    GLuint uiVao = 0, uiVertexBuffer = 0, uiIndexBuffer = 0, fontAtlas = 0;
-    struct Glyph
-    {
-        float u0 = 0.0f, v0 = 0.0f, u1 = 0.0f, v1 = 0.0f;
-        float advance = 0.62f;
-    };
-    std::unordered_map<std::uint32_t, Glyph> glyphs;
-    int nextGlyph = 0;
-#ifdef TINYENGINE_HAS_FREETYPE
-    FT_Library freeType = nullptr;
-    FT_Face freeTypeFace = nullptr;
-#endif
+    GLuint uiVao = 0, uiVertexBuffer = 0, uiIndexBuffer = 0;
+    GlyphAtlas glyphAtlas;
+    std::vector<GLuint> fontTextures;
+    std::vector<std::uint64_t> fontPageRevisions;
+    std::uint64_t fontGeneration = 0;
     GLuint sceneFramebuffer = 0, toneFramebuffer = 0, postFramebuffer = 0, sceneHdrColor = 0, sceneColor = 0,
            sceneDepth = 0, sceneVelocity = 0, sceneAmbient = 0, historyHdrColor = 0, gtaoTexture = 0,
            gtaoRawTexture = 0, retroTexture = 0, retroFramebuffer = 0;
@@ -1450,114 +1440,45 @@ struct SdlGlRenderDevice::Impl
 
     bool createFontAtlas()
     {
-        constexpr int kWidth = 1024, kHeight = 1024;
-        std::vector<std::uint8_t> pixels(static_cast<std::size_t>(kWidth) * kHeight * 4, 0);
-#ifdef TINYENGINE_HAS_FREETYPE
-        if (FT_Init_FreeType(&freeType) != 0)
-            return false;
-        const char* configured = std::getenv("TINYENGINE_FONT_PATH");
-        const char* candidates[] = {configured, "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-                                    "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
-                                    "/Library/Fonts/Arial Unicode.ttf"};
-        for (const char* candidate : candidates)
-            if (candidate && FT_New_Face(freeType, candidate, 0, &freeTypeFace) == 0)
-                break;
-        if (!freeTypeFace)
-            return false;
-        FT_Set_Pixel_Sizes(freeTypeFace, 0, 36);
-#endif
-        glGenTextures(1, &fontAtlas);
-        glBindTexture(GL_TEXTURE_2D, fontAtlas);
-        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, kWidth, kHeight, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-        glBindTexture(GL_TEXTURE_2D, 0);
-        return fontAtlas != 0;
+        glyphAtlas.clear();
+        return true;
     }
 
-    const Glyph& getGlyph(const std::uint32_t requestedCodepoint)
+    void uploadFontPages()
     {
-        auto found = glyphs.find(requestedCodepoint);
-        if (found != glyphs.end())
-            return found->second;
-        constexpr int kAtlasSize = 1024, kCell = 48, kColumns = kAtlasSize / kCell;
-        std::uint32_t codepoint = requestedCodepoint;
-        if (nextGlyph >= kColumns * kColumns)
-            codepoint = '?';
-        if (const auto fallback = glyphs.find(codepoint); fallback != glyphs.end())
-            return fallback->second;
-        const int slot = nextGlyph++, cellX = slot % kColumns * kCell, cellY = slot / kColumns * kCell;
-        std::vector<std::uint8_t> pixels(static_cast<std::size_t>(kCell) * kCell * 4, 255);
-        for (std::size_t index = 0; index < static_cast<std::size_t>(kCell) * kCell; ++index)
-            pixels[index * 4 + 3] = 0;
-        float advance = 0.62f;
-#ifdef _WIN32
-        BITMAPINFO info{};
-        info.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
-        info.bmiHeader.biWidth = kCell;
-        info.bmiHeader.biHeight = -kCell;
-        info.bmiHeader.biPlanes = 1;
-        info.bmiHeader.biBitCount = 32;
-        info.bmiHeader.biCompression = BI_RGB;
-        void* bitmapPixels = nullptr;
-        HDC device = CreateCompatibleDC(nullptr);
-        HBITMAP bitmap = device ? CreateDIBSection(device, &info, DIB_RGB_COLORS, &bitmapPixels, nullptr, 0) : nullptr;
-        HFONT font = CreateFontW(-36, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
-                                 CLIP_DEFAULT_PRECIS, ANTIALIASED_QUALITY, DEFAULT_PITCH, L"Microsoft YaHei UI");
-        if (device && bitmap && bitmapPixels && font)
+        const auto generation = glyphAtlas.getStats().generation;
+        if (generation != fontGeneration)
         {
-            const HGDIOBJ oldBitmap = SelectObject(device, bitmap), oldFont = SelectObject(device, font);
-            std::fill_n(static_cast<std::uint8_t*>(bitmapPixels), static_cast<std::size_t>(kCell) * kCell * 4,
-                        static_cast<std::uint8_t>(0));
-            SetBkColor(device, RGB(0, 0, 0));
-            SetTextColor(device, RGB(255, 255, 255));
-            SetBkMode(device, OPAQUE);
-            wchar_t utf16[2]{};
-            int count = 1;
-            if (codepoint <= 0xFFFF)
-                utf16[0] = static_cast<wchar_t>(codepoint);
-            else
-            {
-                const std::uint32_t value = codepoint - 0x10000;
-                utf16[0] = static_cast<wchar_t>(0xD800 + (value >> 10u));
-                utf16[1] = static_cast<wchar_t>(0xDC00 + (value & 0x3FFu));
-                count = 2;
-            }
-            TextOutW(device, 3, 3, utf16, count);
-            SIZE extent{};
-            GetTextExtentPoint32W(device, utf16, count, &extent);
-            advance = std::max(0.2f, static_cast<float>(extent.cx) / 36.0f);
-            const auto* source = static_cast<const std::uint8_t*>(bitmapPixels);
-            for (std::size_t index = 0; index < static_cast<std::size_t>(kCell) * kCell; ++index)
-                pixels[index * 4 + 3] =
-                    std::max(source[index * 4], std::max(source[index * 4 + 1], source[index * 4 + 2]));
-            SelectObject(device, oldFont);
-            SelectObject(device, oldBitmap);
+            if (!fontTextures.empty())
+                glDeleteTextures(static_cast<GLsizei>(fontTextures.size()), fontTextures.data());
+            fontTextures.clear();
+            fontPageRevisions.clear();
+            fontGeneration = generation;
         }
-        if (font)
-            DeleteObject(font);
-        if (bitmap)
-            DeleteObject(bitmap);
-        if (device)
-            DeleteDC(device);
-#elif defined(TINYENGINE_HAS_FREETYPE)
-        if (freeTypeFace && FT_Load_Char(freeTypeFace, codepoint, FT_LOAD_RENDER) == 0)
+        const auto& pages = glyphAtlas.getPages();
+        while (fontTextures.size() < pages.size())
         {
-            const FT_GlyphSlot glyph = freeTypeFace->glyph;
-            advance = std::max(0.2f, static_cast<float>(glyph->advance.x) / (64.0f * 36.0f));
-            for (unsigned int y = 0; y < glyph->bitmap.rows && y + 5 < static_cast<unsigned int>(kCell); ++y)
-                for (unsigned int x = 0; x < glyph->bitmap.width && x + 3 < static_cast<unsigned int>(kCell); ++x)
-                    pixels[((y + 5) * kCell + x + 3) * 4 + 3] = glyph->bitmap.buffer[y * glyph->bitmap.pitch + x];
+            GLuint texture = 0;
+            glGenTextures(1, &texture);
+            fontTextures.push_back(texture);
+            fontPageRevisions.push_back(0);
         }
-#endif
-        glBindTexture(GL_TEXTURE_2D, fontAtlas);
-        glTexSubImage2D(GL_TEXTURE_2D, 0, cellX, cellY, kCell, kCell, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
+        ActiveTexture(GL_TEXTURE0);
+        for (std::size_t index = 0; index < pages.size(); ++index)
+        {
+            if (fontPageRevisions[index] == pages[index].revision)
+                continue;
+            const auto& page = pages[index];
+            glBindTexture(GL_TEXTURE_2D, fontTextures[index]);
+            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, page.width, page.height, 0, GL_RGBA, GL_UNSIGNED_BYTE,
+                         page.pixels.data());
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+            fontPageRevisions[index] = page.revision;
+        }
         glBindTexture(GL_TEXTURE_2D, 0);
-        Glyph glyph{(cellX + 0.5f) / kAtlasSize, (cellY + 0.5f) / kAtlasSize, (cellX + kCell - 0.5f) / kAtlasSize,
-                    (cellY + kCell - 0.5f) / kAtlasSize, advance};
-        return glyphs.emplace(codepoint, glyph).first->second;
     }
 
     std::shared_ptr<const MaterialRenderProxy> errorMaterial;
@@ -2251,23 +2172,12 @@ void SdlGlRenderDevice::shutdown()
             glDeleteTextures(1, &pair.second);
         m_impl->textures.clear();
         m_impl->textureBytes.clear();
-        if (m_impl->fontAtlas)
-        {
-            glDeleteTextures(1, &m_impl->fontAtlas);
-            m_impl->fontAtlas = 0;
-        }
-#ifdef TINYENGINE_HAS_FREETYPE
-        if (m_impl->freeTypeFace)
-        {
-            FT_Done_Face(m_impl->freeTypeFace);
-            m_impl->freeTypeFace = nullptr;
-        }
-        if (m_impl->freeType)
-        {
-            FT_Done_FreeType(m_impl->freeType);
-            m_impl->freeType = nullptr;
-        }
-#endif
+        if (!m_impl->fontTextures.empty())
+            glDeleteTextures(static_cast<GLsizei>(m_impl->fontTextures.size()), m_impl->fontTextures.data());
+        m_impl->fontTextures.clear();
+        m_impl->fontPageRevisions.clear();
+        m_impl->glyphAtlas.clear();
+        m_impl->fontGeneration = 0;
         if (m_impl->program)
         {
             m_impl->DeleteProgram(m_impl->program);
@@ -2384,7 +2294,12 @@ bool SdlGlRenderDevice::pumpEvents()
     m_impl->checkShaderHotReload();
     m_impl->input.mouseX = m_impl->input.mouseY = 0.0f;
     m_impl->input.textInput.clear();
+    m_impl->input.textEvents.clear();
     m_impl->input.uiBackspace = false;
+    m_impl->input.compositionChanged = false;
+    m_impl->input.uiDelete = false;
+    m_impl->input.uiCursorLeft = m_impl->input.uiCursorRight = false;
+    m_impl->input.uiHome = m_impl->input.uiEnd = m_impl->input.uiSelectAll = false;
     bool mousePressed = false;
     std::array<bool, SDL_NUM_SCANCODES> pressedThisFrame{};
     // 按下沿单独记录并过滤系统按键重复，避免按住换弹/暂停键每帧反复触发。
@@ -2424,7 +2339,21 @@ bool SdlGlRenderDevice::pumpEvents()
             pressY = event.button.y;
         }
         if (event.type == SDL_TEXTINPUT)
+        {
             m_impl->input.textInput += event.text.text;
+            m_impl->input.textEvents.push_back({TextInputEvent::Type::Commit, event.text.text});
+            m_impl->input.compositionText.clear();
+            m_impl->input.compositionChanged = true;
+        }
+        if (event.type == SDL_TEXTEDITING)
+        {
+            m_impl->input.compositionText = event.edit.text;
+            m_impl->input.textEvents.push_back(
+                {TextInputEvent::Type::Composition, event.edit.text, event.edit.start, event.edit.length});
+            m_impl->input.compositionCursor = event.edit.start;
+            m_impl->input.compositionLength = event.edit.length;
+            m_impl->input.compositionChanged = true;
+        }
         if (event.type == SDL_KEYDOWN && event.key.keysym.scancode >= 0 &&
             event.key.keysym.scancode < SDL_NUM_SCANCODES)
         {
@@ -2434,6 +2363,18 @@ bool SdlGlRenderDevice::pumpEvents()
         }
         if (event.type == SDL_KEYDOWN && event.key.keysym.scancode == SDL_SCANCODE_BACKSPACE && event.key.repeat == 0)
             m_impl->input.uiBackspace = true;
+        if (event.type == SDL_KEYDOWN)
+        {
+            const auto code = event.key.keysym.scancode;
+            m_impl->input.uiDelete = m_impl->input.uiDelete || code == SDL_SCANCODE_DELETE;
+            m_impl->input.uiCursorLeft = m_impl->input.uiCursorLeft || code == SDL_SCANCODE_LEFT;
+            m_impl->input.uiCursorRight = m_impl->input.uiCursorRight || code == SDL_SCANCODE_RIGHT;
+            m_impl->input.uiHome = m_impl->input.uiHome || code == SDL_SCANCODE_HOME;
+            m_impl->input.uiEnd = m_impl->input.uiEnd || code == SDL_SCANCODE_END;
+            m_impl->input.uiSelectAll =
+                m_impl->input.uiSelectAll || (code == SDL_SCANCODE_A && (event.key.keysym.mod & KMOD_CTRL) != 0);
+            m_impl->input.uiExtendSelection = (event.key.keysym.mod & KMOD_SHIFT) != 0;
+        }
         if (event.type == SDL_CONTROLLERDEVICEADDED && !m_impl->controller)
             m_impl->controller = SDL_GameControllerOpen(event.cdevice.which);
         if (event.type == SDL_CONTROLLERDEVICEREMOVED && m_impl->controller &&
@@ -3535,6 +3476,27 @@ void SdlGlRenderDevice::drawUi(const std::vector<UIDrawCommand>& commands)
         m_impl->BindFramebuffer(GL_FRAMEBUFFER, 0);
         SDL_GL_GetDrawableSize(m_impl->window, &width, &height);
     }
+    m_impl->glyphAtlas.beginFrame();
+    std::vector<std::shared_ptr<const TextLayoutResult>> layouts;
+    layouts.reserve(commands.size());
+    for (const auto& command : commands)
+    {
+        auto layout = command.textLayout;
+        if (!layout && !command.text.empty())
+        {
+            TextStyle style;
+            style.size = std::max(1.0f, command.fontSize);
+            style.font = command.font;
+            layout = std::make_shared<TextLayoutResult>(TextLayout::shape(command.text, command.rect.width, style,
+                                                                          TextDirection::Auto,
+                                                                          command.type != UIWidgetType::InputField));
+        }
+        if (layout)
+            for (const auto& glyph : layout->glyphs)
+                m_impl->glyphAtlas.getGlyph(glyph.face, glyph.glyphId, glyph.style.size);
+        layouts.push_back(std::move(layout));
+    }
+    m_impl->uploadFontPages();
     glViewport(0, 0, width, height);
     glDisable(GL_DEPTH_TEST);
     // UI 坐标向下递增，三角形朝向与 3D 剔除约定相反，因此绘制时关闭背面剔除。
@@ -3552,8 +3514,9 @@ void SdlGlRenderDevice::drawUi(const std::vector<UIDrawCommand>& commands)
         vertices.push_back({{rect.x, rect.y + rect.height}, {u0, v1}});
         indices.insert(indices.end(), {base, base + 1, base + 2, base, base + 2, base + 3});
     };
-    for (const auto& command : commands)
+    for (std::size_t commandIndex = 0; commandIndex < commands.size(); ++commandIndex)
     {
+        const auto& command = commands[commandIndex];
         if (command.rect.width <= 0.0f || command.rect.height <= 0.0f)
             continue;
         const UIRect clip =
@@ -3569,52 +3532,74 @@ void SdlGlRenderDevice::drawUi(const std::vector<UIDrawCommand>& commands)
                 command.type == UIWidgetType::Image ? m_impl->getOrCreateUiTexture(command.imagePath) : 0;
             m_impl->drawUiGeometry(vertices, indices, command.color, image, width, height);
         }
-        if (!command.text.empty() && command.type != UIWidgetType::Image && command.type != UIWidgetType::Panel &&
+        const auto drawSolid = [&](const UIRect& rect, const Vec4& color)
+        {
+            if (rect.width <= 0 || rect.height <= 0)
+                return;
+            std::vector<Impl::UiVertex> vertices;
+            std::vector<std::uint32_t> indices;
+            appendQuad(vertices, indices, rect, 0, 0, 1, 1);
+            m_impl->drawUiGeometry(vertices, indices, color, 0, width, height);
+        };
+        for (const auto& rect : command.selectionRects)
+            drawSolid(rect, {0.16f, 0.38f, 0.72f, 0.8f});
+        if (layouts[commandIndex] && command.type != UIWidgetType::Image && command.type != UIWidgetType::Panel &&
             command.type != UIWidgetType::ProgressBar)
         {
-            struct TextBatch
+            const auto& layout = *layouts[commandIndex];
+            const float originX = command.rect.x + command.textOffset.x;
+            const float originY =
+                command.rect.y + command.textOffset.y + std::max(0.0f, (command.rect.height - layout.height) * 0.5f);
+            GLuint texture = 0;
+            Vec4 color{};
+            std::vector<Impl::UiVertex> vertices;
+            std::vector<std::uint32_t> indices;
+            const auto flush = [&]()
             {
-                Vec4 color;
-                std::vector<Impl::UiVertex> vertices;
-                std::vector<std::uint32_t> indices;
+                m_impl->drawUiGeometry(vertices, indices, color, texture, width, height);
+                vertices.clear();
+                indices.clear();
             };
-            std::vector<TextBatch> batches;
-            const float glyphSize = std::max(6.0f, command.fontSize);
-            const TextLayoutResult layout = TextLayout::shape(command.text, std::max(0.0f, command.rect.width),
-                                                              {{1.0f, 1.0f, 1.0f, 1.0f}, glyphSize});
-            float cursorX = command.rect.x;
-            if (command.type == UIWidgetType::Button)
-                cursorX += std::max(0.0f, (command.rect.width - layout.width) * 0.5f);
-            const float cursorY = command.rect.y + std::max(0.0f, (command.rect.height - layout.height) * 0.5f);
             for (const auto& shaped : layout.glyphs)
             {
-                if (shaped.codepoint != ' ')
+                const auto glyph = m_impl->glyphAtlas.getGlyph(shaped.face, shaped.glyphId, shaped.style.size);
+                if (!glyph)
                 {
-                    const auto& glyph = m_impl->getGlyph(shaped.codepoint);
-                    const Vec4 base =
-                        command.type == UIWidgetType::Button ? Vec4{1.0f, 1.0f, 1.0f, command.color.w} : command.color;
-                    const Vec4 color{base.x * shaped.style.color.x, base.y * shaped.style.color.y,
-                                     base.z * shaped.style.color.z, base.w * shaped.style.color.w};
-                    auto batch = std::find_if(batches.begin(), batches.end(),
-                                              [&](const TextBatch& candidate)
-                                              {
-                                                  return candidate.color.x == color.x && candidate.color.y == color.y &&
-                                                         candidate.color.z == color.z && candidate.color.w == color.w;
-                                              });
-                    if (batch == batches.end())
-                    {
-                        batches.push_back({color});
-                        batch = std::prev(batches.end());
-                    }
-                    appendQuad(batch->vertices, batch->indices,
-                               {cursorX + shaped.x, cursorY + shaped.y,
-                                std::max(shaped.advance, shaped.style.size * glyph.advance), shaped.style.size * 1.2f},
-                               glyph.u0, glyph.v0, glyph.u1, glyph.v1);
+                    flush();
+                    drawSolid({originX + shaped.x, originY + shaped.y - shaped.style.size * 0.7f,
+                               std::max(1.0f, shaped.advance * 0.7f), shaped.style.size * 0.7f},
+                              {0.65f, 0.18f, 0.18f, command.color.w});
+                    continue;
                 }
+                if (glyph->width <= 0 || glyph->height <= 0 || glyph->page >= m_impl->fontTextures.size())
+                    continue;
+                const auto& page = m_impl->glyphAtlas.getPages()[glyph->page];
+                const auto nextTexture = m_impl->fontTextures[glyph->page];
+                const Vec4 base = command.type == UIWidgetType::Label
+                                      ? command.color
+                                      : Vec4{command.textColor.x, command.textColor.y, command.textColor.z,
+                                             command.textColor.w * command.color.w};
+                const Vec4 nextColor{base.x * shaped.style.color.x, base.y * shaped.style.color.y,
+                                     base.z * shaped.style.color.z, base.w * shaped.style.color.w};
+                if (nextTexture != texture || nextColor.x != color.x || nextColor.y != color.y ||
+                    nextColor.z != color.z || nextColor.w != color.w)
+                {
+                    flush();
+                    texture = nextTexture;
+                    color = nextColor;
+                }
+                appendQuad(vertices, indices,
+                           {originX + shaped.x + glyph->bearingX, originY + shaped.y - glyph->bearingY,
+                            static_cast<float>(glyph->width), static_cast<float>(glyph->height)},
+                           static_cast<float>(glyph->x) / page.width, static_cast<float>(glyph->y) / page.height,
+                           static_cast<float>(glyph->x + glyph->width) / page.width,
+                           static_cast<float>(glyph->y + glyph->height) / page.height);
             }
-            for (const auto& batch : batches)
-                m_impl->drawUiGeometry(batch.vertices, batch.indices, batch.color, m_impl->fontAtlas, width, height);
+            flush();
         }
+        for (const auto& rect : command.compositionRects)
+            drawSolid(rect, {0.8f, 0.85f, 1.0f, 1.0f});
+        drawSolid(command.caretRect, {1.0f, 1.0f, 1.0f, 1.0f});
     }
     glDisable(GL_SCISSOR_TEST);
     glDisable(GL_BLEND);
@@ -3629,7 +3614,27 @@ void SdlGlRenderDevice::present()
 
 std::size_t SdlGlRenderDevice::getResidentGpuBytes() const
 {
-    return m_impl ? m_impl->getResidentBytes() : 0;
+    return m_impl ? m_impl->getResidentBytes() + m_impl->glyphAtlas.getStats().byteSize : 0;
+}
+
+GlyphAtlasStats SdlGlRenderDevice::getGlyphAtlasStats() const
+{
+    return m_impl ? m_impl->glyphAtlas.getStats() : GlyphAtlasStats{};
+}
+
+void SdlGlRenderDevice::setTextInputRect(const UIRect& rect)
+{
+    if (!m_impl || !m_impl->window || rect.width <= 0 || rect.height <= 0)
+        return;
+    int windowWidth = 0, windowHeight = 0;
+    SDL_GetWindowSize(m_impl->window, &windowWidth, &windowHeight);
+    const auto viewport = getViewportSize();
+    const float scaleX = static_cast<float>(windowWidth) / std::max(1.0f, viewport.x);
+    const float scaleY = static_cast<float>(windowHeight) / std::max(1.0f, viewport.y);
+    SDL_Rect inputRect{static_cast<int>(rect.x * scaleX), static_cast<int>(rect.y * scaleY),
+                       std::max(1, static_cast<int>(rect.width * scaleX)),
+                       std::max(1, static_cast<int>(rect.height * scaleY))};
+    SDL_SetTextInputRect(&inputRect);
 }
 
 void SdlGlRenderDevice::setGpuMemoryBudget(const std::size_t bytes)

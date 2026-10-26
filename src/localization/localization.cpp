@@ -1,4 +1,4 @@
-﻿// 文件：src/localization/localization.cpp
+// 文件：src/localization/localization.cpp
 // 作用：提供中英文界面文本表、语言切换和键值回退机制。
 // 约定：文本键是稳定标识；缺失翻译时回退而不是返回空字符串。
 // 类型：实现文件。
@@ -11,17 +11,6 @@
 #include <cstdlib>
 #include <iomanip>
 #include <sstream>
-
-#ifdef _WIN32
-#ifndef NOMINMAX
-#define NOMINMAX
-#endif
-#ifdef TINYENGINE_HAS_FREETYPE
-#include <ft2build.h>
-#include FT_FREETYPE_H
-#endif
-#include <Windows.h>
-#endif
 
 namespace tinyengine
 {
@@ -96,120 +85,6 @@ std::string Utf8::encode(const std::vector<std::uint32_t>& codepoints)
         }
     }
     return result;
-}
-
-bool FontFace::load(const std::filesystem::path& path)
-{
-    m_path.clear();
-    m_data = PlatformFile::ReadAllBytes(path);
-    if (m_data.size() < 12)
-        return false;
-    const bool trueType = m_data[0] == 0 && m_data[1] == 1 && m_data[2] == 0 && m_data[3] == 0;
-    const bool openType = std::equal(m_data.begin(), m_data.begin() + 4, "OTTO");
-    if (!trueType && !openType)
-    {
-        m_data.clear();
-        return false;
-    }
-    m_path = path;
-    return true;
-}
-
-bool FontFace::isLoaded() const
-{
-    return !m_data.empty();
-}
-
-const std::vector<std::uint8_t>& FontFace::GetData() const
-{
-    return m_data;
-}
-
-const std::filesystem::path& FontFace::GetPath() const
-{
-    return m_path;
-}
-
-bool FontRasterizer::rasterizeSystemGlyph(const std::uint32_t codepoint, const int pixelHeight, RasterizedGlyph& glyph,
-                                          const std::wstring& fontName)
-{
-    glyph = {};
-#ifdef _WIN32
-    if (codepoint > 0xffff || (codepoint >= 0xd800 && codepoint <= 0xdfff) || pixelHeight <= 0)
-        return false;
-    HDC device = CreateCompatibleDC(nullptr);
-    HFONT font = CreateFontW(-pixelHeight, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_TT_PRECIS,
-                             CLIP_DEFAULT_PRECIS, ANTIALIASED_QUALITY, DEFAULT_PITCH, fontName.c_str());
-    if (!device || !font)
-    {
-        if (font)
-            DeleteObject(font);
-        if (device)
-            DeleteDC(device);
-        return false;
-    }
-    const HGDIOBJ previous = SelectObject(device, font);
-    MAT2 transform{{0, 1}, {0, 0}, {0, 0}, {0, 1}};
-    GLYPHMETRICS metrics{};
-    const DWORD size = GetGlyphOutlineW(device, codepoint, GGO_GRAY8_BITMAP, &metrics, 0, nullptr, &transform);
-    if (size != GDI_ERROR)
-    {
-        glyph.pixels.resize(size);
-        if (size > 0)
-            GetGlyphOutlineW(device, codepoint, GGO_GRAY8_BITMAP, &metrics, size, glyph.pixels.data(), &transform);
-        glyph.width = static_cast<int>(metrics.gmBlackBoxX);
-        glyph.height = static_cast<int>(metrics.gmBlackBoxY);
-        glyph.bearingX = metrics.gmptGlyphOrigin.x;
-        glyph.bearingY = metrics.gmptGlyphOrigin.y;
-        glyph.advance = metrics.gmCellIncX;
-    }
-    SelectObject(device, previous);
-    DeleteObject(font);
-    DeleteDC(device);
-    return size != GDI_ERROR;
-#else
-    (void)fontName;
-#ifdef TINYENGINE_HAS_FREETYPE
-    if (codepoint > 0x10ffff || pixelHeight <= 0)
-        return false;
-    FT_Library library = nullptr;
-    FT_Face face = nullptr;
-    if (FT_Init_FreeType(&library) != 0)
-        return false;
-    const char* configured = std::getenv("TINYENGINE_FONT_PATH");
-    const char* candidates[] = {configured, "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-                                "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
-                                "/Library/Fonts/Arial Unicode.ttf"};
-    for (const char* candidate : candidates)
-        if (candidate && FT_New_Face(library, candidate, 0, &face) == 0)
-            break;
-    bool success = false;
-    if (face && FT_Set_Pixel_Sizes(face, 0, static_cast<FT_UInt>(pixelHeight)) == 0 &&
-        FT_Load_Char(face, codepoint, FT_LOAD_RENDER) == 0)
-    {
-        const FT_GlyphSlot slot = face->glyph;
-        glyph.width = static_cast<int>(slot->bitmap.width);
-        glyph.height = static_cast<int>(slot->bitmap.rows);
-        glyph.bearingX = slot->bitmap_left;
-        glyph.bearingY = slot->bitmap_top;
-        glyph.advance = static_cast<int>(slot->advance.x / 64);
-        glyph.pixels.resize(static_cast<std::size_t>(glyph.width) * glyph.height);
-        for (int y = 0; y < glyph.height; ++y)
-            std::copy_n(slot->bitmap.buffer + static_cast<std::ptrdiff_t>(y) * slot->bitmap.pitch, glyph.width,
-                        glyph.pixels.data() + static_cast<std::ptrdiff_t>(y) * glyph.width);
-        success = true;
-    }
-    if (face)
-        FT_Done_Face(face);
-    FT_Done_FreeType(library);
-    return success;
-#else
-    (void)codepoint;
-    (void)pixelHeight;
-    (void)fontName;
-    return false;
-#endif
-#endif
 }
 
 bool StringTable::load(const std::filesystem::path& path)

@@ -12,6 +12,7 @@
 
 #include "tinyengine/platform/platform.h"
 #include <algorithm>
+#include <charconv>
 #include <unordered_map>
 #include <unordered_set>
 
@@ -29,6 +30,25 @@ bool ProjectSettings::load(const std::filesystem::path& path)
     if ((!nextCodeModule.empty() && (nextProjectId.empty() || nextManifest.empty())) ||
         (nextCodeModule.empty() && (!nextManifest.empty() || nextRequired)))
         return false;
+    // 必须先验证完整的回退列表，再提交设置，损坏配置不能破坏当前项目。
+    constexpr std::size_t maxFallbackFonts = 64;
+    std::vector<std::filesystem::path> nextFallbackFonts;
+    if (const auto countEntry = config.GetValues().find("text.fallbackFontCount");
+        countEntry != config.GetValues().end())
+    {
+        std::size_t count = 0;
+        const auto& value = countEntry->second;
+        const auto parsed = std::from_chars(value.data(), value.data() + value.size(), count);
+        if (parsed.ec != std::errc{} || parsed.ptr != value.data() + value.size() || count > maxFallbackFonts)
+            return false;
+        for (std::size_t index = 0; index < count; ++index)
+        {
+            const auto font = config.getString("text.fallbackFont." + std::to_string(index));
+            if (font.empty())
+                return false;
+            nextFallbackFonts.push_back(fromUtf8Path(font));
+        }
+    }
     projectId = nextProjectId;
     codeModule = nextCodeModule;
     codeManifest = fromUtf8Path(nextManifest);
@@ -41,12 +61,20 @@ bool ProjectSettings::load(const std::filesystem::path& path)
     packageArchive = fromUtf8Path(config.getString("project.package", ""));
     inputBindings = fromUtf8Path(config.getString("input.bindings", toUtf8Path(inputBindings)));
     environmentTexture = fromUtf8Path(config.getString("render.environment", toUtf8Path(environmentTexture)));
+    defaultFont = fromUtf8Path(config.getString("text.font"));
+    defaultFontBold = fromUtf8Path(config.getString("text.fontBold"));
+    defaultFontItalic = fromUtf8Path(config.getString("text.fontItalic"));
+    defaultFontBoldItalic = fromUtf8Path(config.getString("text.fontBoldItalic"));
+    fallbackFonts = std::move(nextFallbackFonts);
     fixedStep = std::max(0.001f, config.getFloat("physics.fixedStep", fixedStep));
     return true;
 }
 
 bool ProjectSettings::Save(const std::filesystem::path& path) const
 {
+    if (fallbackFonts.size() > 64 ||
+        std::any_of(fallbackFonts.begin(), fallbackFonts.end(), [](const auto& font) { return font.empty(); }))
+        return false;
     Config config;
     config.set("project.name", name);
     if (!projectId.empty())
@@ -66,6 +94,17 @@ bool ProjectSettings::Save(const std::filesystem::path& path) const
         config.set("input.bindings", toUtf8GenericPath(inputBindings));
     if (!environmentTexture.empty())
         config.set("render.environment", toUtf8GenericPath(environmentTexture));
+    if (!defaultFont.empty())
+        config.set("text.font", toUtf8GenericPath(defaultFont));
+    if (!defaultFontBold.empty())
+        config.set("text.fontBold", toUtf8GenericPath(defaultFontBold));
+    if (!defaultFontItalic.empty())
+        config.set("text.fontItalic", toUtf8GenericPath(defaultFontItalic));
+    if (!defaultFontBoldItalic.empty())
+        config.set("text.fontBoldItalic", toUtf8GenericPath(defaultFontBoldItalic));
+    config.set("text.fallbackFontCount", std::to_string(fallbackFonts.size()));
+    for (std::size_t index = 0; index < fallbackFonts.size(); ++index)
+        config.set("text.fallbackFont." + std::to_string(index), toUtf8GenericPath(fallbackFonts[index]));
     config.set("physics.fixedStep", std::to_string(fixedStep));
     return config.Save(toUtf8Path(path));
 }

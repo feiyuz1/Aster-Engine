@@ -6,9 +6,13 @@
 #pragma once
 
 #include "tinyengine/math/math.h"
+#include "tinyengine/text/text_input.h"
+#include "tinyengine/ui/text_layout.h"
 
 #include <cstdint>
 #include <functional>
+#include <limits>
+#include <memory>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -62,6 +66,13 @@ struct UIDrawCommand
     std::string imagePath;
     float fontSize = 18.0f;
     UIRect clipRect;
+    FontStyle font;
+    std::shared_ptr<const TextLayoutResult> textLayout;
+    Vec2 textOffset{};
+    std::vector<UIRect> selectionRects;
+    std::vector<UIRect> compositionRects;
+    UIRect caretRect{0, 0, 0, 0};
+    Vec4 textColor{1, 1, 1, 1};
 };
 
 struct UIWidget
@@ -97,6 +108,18 @@ struct UIWidget
     std::function<void(float)> onValueChanged;
     // Internal session ownership; a host replacement with the same id remains unowned.
     std::uint64_t ownerToken = 0;
+    FontStyle font;
+    TextDirection textDirection = TextDirection::Auto;
+    TextAlignment textAlignment = TextAlignment::Start;
+    bool richText = true;
+    std::size_t caretOffset = std::numeric_limits<std::size_t>::max();
+    std::size_t selectionAnchor = std::numeric_limits<std::size_t>::max();
+    bool caretTrailing = false, selectionTrailing = false;
+    std::string compositionText;
+    std::size_t compositionCursor = 0;
+    std::size_t compositionSelection = 0;
+    float textScrollX = 0.0f;
+    Vec4 textColor{1, 1, 1, 1};
 };
 
 class UISystem
@@ -179,6 +202,23 @@ class UISystem
     /// @brief 删除输入文本中的前一个 Unicode 字符。
     /// @return 操作成功时返回 `true`，否则返回 `false`。
     bool backspace();
+    /// @brief 删除光标后的完整字素，或当前选区。
+    bool deleteForward();
+    /// @brief 按可见顺序移动光标；extend 保留选区锚点。
+    bool moveCursor(int direction, bool extend = false);
+    bool moveCursorToLineBoundary(bool end, bool extend = false);
+    bool selectAll();
+    /// @brief 以 UTF-8 字节索引设置选区，自动对齐字素边界。
+    bool setSelection(const std::string& id, std::size_t anchor, std::size_t caret);
+    /// @brief 更新输入法预编辑文本；cursor 和 selectionLength 是 Unicode 码点数量。
+    bool setComposition(const std::string& text, int cursor = 0, int selectionLength = 0);
+    /// @brief 按平台事件顺序更新提交和预编辑状态。
+    void processTextEvents(const std::vector<TextInputEvent>& events);
+    /// @brief 注入字体服务；调用方保证服务比 UISystem 活得更久。
+    void setFontManager(FontManager* fonts);
+    FontManager* getFontManager() const;
+    UIRect getFocusedCaretRect() const;
+    std::size_t getTextLayoutBuildCount() const;
     /// @brief 选择 `Item`。
     /// @param id 目标对象、消息或任务标识符。
     /// @param index 目标元素或骨骼索引。
@@ -247,6 +287,21 @@ class UISystem
     float m_viewportHeight = 720.0f;
     bool m_wasPrimaryDown = false;
     float m_dpiScale = 1.0f;
+    FontManager* m_fonts = nullptr;
+    struct CachedText
+    {
+        std::string key;
+        std::shared_ptr<const TextLayoutResult> layout;
+    };
+    std::unordered_map<std::string, CachedText> m_textLayouts;
+    std::size_t m_textLayoutBuildCount = 0;
+    UIRect m_focusedCaretRect{0, 0, 0, 0};
+
+    std::shared_ptr<const TextLayoutResult> layoutText(const UIWidget& widget, const std::string& text, float width);
+    static void normalizeSelection(UIWidget& widget);
+    static void setVisualCaret(UIWidget& widget, const TextLayoutResult& layout, const TextCaret& caret, bool extend);
+    UIWidget* editableFocused();
+    bool eraseSelection(UIWidget& widget);
 
     /// @brief 解析 `Layout`。
     void resolveLayout();

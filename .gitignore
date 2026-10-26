@@ -133,3 +133,12 @@
 !/tests/import_compatibility_test.cpp
 !/tests/material_migration_test.py
 /scripts/**/__pycache__/
+
+# 字体系统行为与渲染回归，以及可再分发的固定字体输入。
+!/tests/font_test.cpp
+!/tests/text_layout_test.cpp
+!/tests/glyph_atlas_test.cpp
+!/tests/font_render_test.cpp
+!/tests/font_ui_test.cpp
+!/tests/font_project_test.cpp
+!/tests/fixtures/fonts/

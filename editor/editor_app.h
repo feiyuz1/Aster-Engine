@@ -5,8 +5,8 @@
 
 #pragma once
 
-#include "asset_reference_graph.h"
 #include "animation_asset_editor.h"
+#include "asset_reference_graph.h"
 #include "material_asset_editor.h"
 #include "material_graph_editor.h"
 #include "tinyengine/ai/behavior_tree.h"
@@ -16,6 +16,7 @@
 #include "tinyengine/project/solution_generator.h"
 #include "tinyengine/render/material_graph.h"
 #include "tinyengine/runtime/engine.h"
+#include "tinyengine/text/font.h"
 #include "tinyengine/vfx/particle_system.h"
 #ifdef TINYENGINE_HAS_ASSIMP
 #include "tinyengine/import/assimp_importer.h"
@@ -121,6 +122,8 @@ class EditorApp
     void drawSceneOpenDialog();
     /// @brief 绘制 `Assets`。
     void drawAssets();
+    /// @brief 用运行时字体服务的真实字形绘制有界资产预览，不改动 ImGui 字体图集。
+    void drawFontAssetPreview(const std::filesystem::path& path);
     void drawAssetCreationMenu(const std::filesystem::path& directory);
     void drawAssetFolderDialog();
     void requestDeleteAssets();
@@ -400,6 +403,21 @@ class EditorApp
     std::vector<Entity> m_lastPickHits;
     std::size_t m_lastPickIndex = 0;
     std::string m_selectedAsset;
+    struct FontPreviewRun
+    {
+        float x = 0, y = 0, width = 0;
+        std::uint8_t alpha = 0;
+    };
+    std::array<char, 512> m_fontPreviewSample{};
+    bool m_fontPreviewSampleInitialized = false;
+    float m_fontPreviewSize = 28.0f;
+    int m_fontPreviewFaceIndex = 0;
+    std::string m_fontPreviewCacheKey, m_fontPreviewError;
+    FontMetrics m_fontPreviewMetrics;
+    std::vector<FontPreviewRun> m_fontPreviewRuns;
+    float m_fontPreviewWidth = 0, m_fontPreviewHeight = 0;
+    std::size_t m_fontPreviewGlyphs = 0, m_fontPreviewMissing = 0;
+    bool m_fontPreviewClipped = false;
     std::vector<std::string> m_selectedAssets;
     std::string m_editingAsset;
     std::string m_previewAsset;

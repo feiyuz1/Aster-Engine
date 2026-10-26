@@ -12,6 +12,7 @@
 #include "tinyengine/render/sdl_gl_render_device.h"
 #include "tinyengine/resource/asset_maintenance.h"
 #include "tinyengine/resource/material_asset_references.h"
+#include "tinyengine/ui/text_layout.h"
 #ifdef TINYENGINE_HAS_ASSIMP
 #include "tinyengine/import/assimp_importer.h"
 #include <SDL.h>
@@ -21,6 +22,7 @@
 #endif
 #include <algorithm>
 #include <cctype>
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <fstream>
@@ -827,6 +829,135 @@ void EditorApp::drawAssetFolderDialog()
     if (ImGui::Button(localize("Cancel", "取消")))
         ImGui::CloseCurrentPopup();
     ImGui::EndPopup();
+}
+
+void EditorApp::drawFontAssetPreview(const std::filesystem::path& assetPath)
+{
+    constexpr float canvasWidth = 600.0f, canvasHeight = 240.0f;
+    constexpr std::size_t maximumRuns = 12000, maximumGlyphs = 512;
+    const auto path = assetPath.is_absolute() ? assetPath : m_engine.getProjectSettings().resolve(assetPath);
+    if (!m_fontPreviewSampleInitialized)
+    {
+        std::snprintf(m_fontPreviewSample.data(), m_fontPreviewSample.size(), "%s",
+                      "office AV fi 123\n中文字体 é\nالعربية 123");
+        m_fontPreviewSampleInitialized = true;
+    }
+    ImGui::SeparatorText(localize("Font Preview", "字体预览"));
+    ImGui::TextWrapped(localize("File: %s", "文件：%s"), toUtf8GenericPath(path).c_str());
+    ImGui::TextWrapped(localize("Preview family alias: %s (selected asset only)", "预览家族别名：%s（仅所选资产）"),
+                       toUtf8Path(path.stem()).c_str());
+    ImGui::SetNextItemWidth(180.0f);
+    ImGui::SliderFloat(localize("Pixel size", "像素字号"), &m_fontPreviewSize, 12.0f, 48.0f, "%.0f");
+    m_fontPreviewSize = std::isfinite(m_fontPreviewSize) ? std::clamp(m_fontPreviewSize, 12.0f, 48.0f) : 28.0f;
+    ImGui::SetNextItemWidth(120.0f);
+    ImGui::InputInt(localize("Collection face", "集合字体索引"), &m_fontPreviewFaceIndex);
+    m_fontPreviewFaceIndex = std::clamp(m_fontPreviewFaceIndex, 0, 255);
+    ImGui::InputTextMultiline(localize("Sample (UTF-8)", "示例文本（UTF-8）"), m_fontPreviewSample.data(),
+                              m_fontPreviewSample.size(), {canvasWidth, 80.0f});
+    const auto key = PlatformFile::getReadCacheKey(path) + ":" + std::to_string(m_fontPreviewFaceIndex) + ":" +
+                     std::to_string(m_fontPreviewSize) + ":" + m_fontPreviewSample.data();
+    if (key != m_fontPreviewCacheKey)
+    {
+        m_fontPreviewCacheKey = key;
+        m_fontPreviewError.clear();
+        m_fontPreviewRuns.clear();
+        m_fontPreviewMetrics = {};
+        m_fontPreviewWidth = m_fontPreviewHeight = 0;
+        m_fontPreviewGlyphs = m_fontPreviewMissing = 0;
+        m_fontPreviewClipped = false;
+        FontManager fonts;
+        auto face = fonts.loadFace(path, m_fontPreviewFaceIndex);
+        if (!face)
+            m_fontPreviewError = localize("Cannot load font or collection face.", "无法读取字体或集合字体索引。");
+        else
+        {
+            fonts.registerFamily("asset-preview", {face, {}, {}, {}});
+            fonts.setDefaultFamily("asset-preview");
+            m_fontPreviewMetrics = face->getMetrics(m_fontPreviewSize);
+            TextStyle style;
+            style.size = m_fontPreviewSize;
+            style.font.family = "asset-preview";
+            const auto layout = TextLayout::shape(m_fontPreviewSample.data(), canvasWidth - 16.0f, style,
+                                                  TextDirection::Auto, false, &fonts);
+            m_fontPreviewWidth = layout.width;
+            m_fontPreviewHeight = layout.height;
+            m_fontPreviewGlyphs = layout.glyphs.size();
+            for (std::size_t glyphIndex = 0; glyphIndex < layout.glyphs.size(); ++glyphIndex)
+            {
+                const auto& glyph = layout.glyphs[glyphIndex];
+                if (glyph.glyphId == 0)
+                    ++m_fontPreviewMissing;
+                if (glyphIndex >= maximumGlyphs || m_fontPreviewRuns.size() >= maximumRuns)
+                {
+                    m_fontPreviewClipped = true;
+                    continue;
+                }
+                RasterizedGlyph bitmap;
+                if (!glyph.face || !glyph.face->rasterizeGlyph(glyph.glyphId, m_fontPreviewSize, bitmap))
+                    continue;
+                if (bitmap.width < 0 || bitmap.height < 0 || bitmap.width > 1024 || bitmap.height > 384 ||
+                    bitmap.pixels.size() != static_cast<std::size_t>(bitmap.width) * bitmap.height)
+                {
+                    m_fontPreviewClipped = true;
+                    continue;
+                }
+                const int left = static_cast<int>(std::floor(glyph.x)) + bitmap.bearingX + 8;
+                const int top = static_cast<int>(std::floor(glyph.y)) - bitmap.bearingY + 8;
+                for (int row = 0; row < bitmap.height && m_fontPreviewRuns.size() < maximumRuns; ++row)
+                {
+                    if (top + row < 0 || top + row >= canvasHeight)
+                    {
+                        m_fontPreviewClipped = true;
+                        continue;
+                    }
+                    for (int column = 0; column < bitmap.width && m_fontPreviewRuns.size() < maximumRuns;)
+                    {
+                        const auto alpha = static_cast<std::uint8_t>(
+                            (bitmap.pixels[static_cast<std::size_t>(row) * bitmap.width + column] / 17) * 17);
+                        const int start = column++;
+                        while (column < bitmap.width &&
+                               (bitmap.pixels[static_cast<std::size_t>(row) * bitmap.width + column] / 17) * 17 ==
+                                   alpha)
+                            ++column;
+                        if (!alpha)
+                            continue;
+                        const int x = std::max(0, left + start);
+                        const int end = std::min(static_cast<int>(canvasWidth), left + column);
+                        if (x < end)
+                            m_fontPreviewRuns.push_back({static_cast<float>(x), static_cast<float>(top + row),
+                                                         static_cast<float>(end - x), alpha});
+                        if (left + start < 0 || left + column > canvasWidth)
+                            m_fontPreviewClipped = true;
+                    }
+                }
+                m_fontPreviewClipped = m_fontPreviewClipped || m_fontPreviewRuns.size() >= maximumRuns;
+            }
+        }
+    }
+    if (!m_fontPreviewError.empty())
+    {
+        ImGui::TextColored({1.0f, .45f, .3f, 1.0f}, "%s", m_fontPreviewError.c_str());
+        return;
+    }
+    ImGui::Text(localize("Ascent %.1f  Descent %.1f  Line height %.1f px", "上伸 %.1f  下伸 %.1f  行高 %.1f 像素"),
+                m_fontPreviewMetrics.ascender, m_fontPreviewMetrics.descender, m_fontPreviewMetrics.lineHeight);
+    ImGui::Text(localize("Layout %.1f x %.1f px; glyphs %zu; missing %zu", "排版 %.1f x %.1f 像素；字形 %zu；缺字 %zu"),
+                m_fontPreviewWidth, m_fontPreviewHeight, m_fontPreviewGlyphs, m_fontPreviewMissing);
+    ImGui::TextWrapped("%s", localize("Selected font raster, no fallback; editor labels use the editor font.",
+                                      "下方为所选字体的真实栅格结果，不启用回退；界面标签使用编辑器字体。"));
+    const ImVec2 origin = ImGui::GetCursorScreenPos();
+    auto* draw = ImGui::GetWindowDrawList();
+    draw->AddRectFilled(origin, {origin.x + canvasWidth, origin.y + canvasHeight}, IM_COL32(24, 27, 32, 255));
+    draw->PushClipRect(origin, {origin.x + canvasWidth, origin.y + canvasHeight}, true);
+    for (const auto& run : m_fontPreviewRuns)
+        draw->AddRectFilled({origin.x + run.x, origin.y + run.y},
+                            {origin.x + run.x + run.width, origin.y + run.y + 1.0f},
+                            IM_COL32(235, 239, 245, run.alpha));
+    draw->PopClipRect();
+    ImGui::Dummy({canvasWidth, canvasHeight});
+    if (m_fontPreviewClipped)
+        ImGui::TextWrapped("%s",
+                           localize("Preview clipped to its canvas or raster budget.", "预览已按画布或栅格预算裁剪。"));
 }
 
 void EditorApp::drawAssets()
@@ -1690,6 +1821,8 @@ void EditorApp::drawAssets()
             if (ImGui::SmallButton(localize("Regenerate Thumbnail", "重新生成缩略图")))
                 requestThumbnail(*preview, true);
             ImGui::EndGroup();
+            if (preview->type == "Font")
+                drawFontAssetPreview(fromUtf8Path(preview->path));
             auto& registry = m_engine.GetContext().resourceManager->getAssetRegistry();
             for (const auto& issue : AssetMaintenance::FindMissingDependencies(registry))
                 if (issue.owner == preview->path)

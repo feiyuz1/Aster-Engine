@@ -19,3 +19,6 @@ target_link_libraries(tinyengine_commandlet PRIVATE tinyengine)
 foreach(target tinyengine_asset_tool tinyengine_scene_tool tinyengine_package_tool tinyengine_commandlet)
     set_target_properties(${target} PROPERTIES FOLDER programs RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}")
 endforeach()
+
+# 构建事件必须在目标定义目录注册，确保单独构建工具时也携带文字库和发布清单。
+tinyengine_stage_text_runtime_targets()

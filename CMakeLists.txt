@@ -24,6 +24,9 @@ set(TINYENGINE_IMGUI_DIR "" CACHE PATH "Optional path to a Dear ImGui docking so
 set(TINYENGINE_JOLT_DIR "" CACHE PATH "Path to the Jolt Physics source tree")
 set(TINYENGINE_STB_DIR "" CACHE PATH "Path to stb single-header libraries")
 
+if(NOT DEFINED FETCHCONTENT_BASE_DIR)
+    set(FETCHCONTENT_BASE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/intermediate/Dependencies" CACHE PATH "Dependency download directory")
+endif()
 include(FetchContent)
 
 set(CMAKE_CXX_STANDARD 20)
@@ -96,9 +99,7 @@ if(NOT EXISTS "${TINYENGINE_STB_DIR}/stb_vorbis.c")
 endif()
 
 find_package(OpenGL REQUIRED)
-if(NOT WIN32)
-    find_package(Freetype REQUIRED)
-endif()
+include(cmake/TextDependencies.cmake)
 
 if(TINYENGINE_ENABLE_JOLT)
     if(NOT EXISTS "${TINYENGINE_JOLT_DIR}/Build/CMakeLists.txt")
@@ -177,6 +178,9 @@ add_library(tinyengine STATIC
     src/script/script_engine.cpp
     src/ui/ui_system.cpp
     src/ui/text_layout.cpp
+    src/text/font.cpp
+    src/text/unicode.cpp
+    src/text/glyph_atlas.cpp
     src/runtime/engine.cpp
 )
 
@@ -218,16 +222,16 @@ endif()
 if(WIN32)
     target_link_libraries(tinyengine PUBLIC windowscodecs ole32 gdi32 dbghelp ws2_32)
 endif()
-if(NOT WIN32)
-    target_link_libraries(tinyengine PUBLIC Freetype::Freetype)
-    target_compile_definitions(tinyengine PUBLIC TINYENGINE_HAS_FREETYPE=1)
-endif()
+target_link_libraries(tinyengine PRIVATE Freetype::Freetype harfbuzz::harfbuzz ICU::uc ICU::i18n ICU::data)
+target_compile_definitions(tinyengine PRIVATE TINYENGINE_HAS_FREETYPE=1)
 if(TINYENGINE_ENABLE_JOLT)
     target_link_libraries(tinyengine PUBLIC Jolt)
     target_compile_definitions(tinyengine PUBLIC TINYENGINE_HAS_JOLT=1)
 endif()
 
 if(MSVC)
+    # 公开头文件含中文注释，消费目标必须使用相同编码；不会反向影响第三方依赖。
+    target_compile_options(tinyengine PUBLIC /utf-8)
     target_compile_options(tinyengine PRIVATE /W4 /permissive-)
     set_source_files_properties(src/audio/stb_vorbis.cpp PROPERTIES COMPILE_OPTIONS "/w")
 else()
@@ -326,6 +330,17 @@ if(TINYENGINE_BUILD_GAME)
 endif()
 
 if(TINYENGINE_BUILD_TESTS)
+    foreach(text_test font text_layout glyph_atlas font_project font_ui font_render)
+        add_executable(tinyengine_${text_test}_tests tests/${text_test}_test.cpp)
+        target_link_libraries(tinyengine_${text_test}_tests PRIVATE tinyengine)
+        target_include_directories(tinyengine_${text_test}_tests PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
+        if(MSVC)
+            target_compile_options(tinyengine_${text_test}_tests PRIVATE /utf-8 /FS)
+        endif()
+        add_test(NAME tinyengine_${text_test} COMMAND tinyengine_${text_test}_tests)
+        set_tests_properties(tinyengine_${text_test} PROPERTIES
+            WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR} TIMEOUT 60)
+    endforeach()
     enable_testing()
     if(WIN32)
         find_program(TINYENGINE_POWERSHELL NAMES pwsh powershell REQUIRED)
@@ -470,6 +485,7 @@ if(TINYENGINE_BUILD_TESTS)
     set_tests_properties(tinyengine_material_cpu PROPERTIES WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
     add_executable(tinyengine_tests tests/engine_test.cpp)
     target_link_libraries(tinyengine_tests PRIVATE tinyengine)
+    target_include_directories(tinyengine_tests PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
     add_executable(tinyengine_physics_acceleration_tests tests/physics_acceleration_test.cpp)
     target_link_libraries(tinyengine_physics_acceleration_tests PRIVATE tinyengine)
     add_test(NAME tinyengine_physics_acceleration COMMAND tinyengine_physics_acceleration_tests)
@@ -588,6 +604,7 @@ if(MSVC)
 endif()
 
 include(GNUInstallDirs)
+tinyengine_stage_text_runtime()
 include(cmake/InstallHostRuntime.cmake)
 install(TARGETS tinyengine ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR})
 if(TINYENGINE_BUILD_DEMO)

@@ -375,7 +375,7 @@ std::optional<std::filesystem::path> OpenTinyProjectDialog(const HWND owner)
 }
 #endif
 
-bool loadChineseEditorFont(ImGuiIO& io)
+bool loadChineseEditorFont(ImGuiIO& io, const ProjectSettings& project)
 {
     static constexpr const char* kFontCandidates[] = {
 #ifdef _WIN32
@@ -387,15 +387,55 @@ bool loadChineseEditorFont(ImGuiIO& io)
         "/usr/share/fonts/truetype/wqy/wqy-microhei.ttc",
 #endif
     };
-    ImFontConfig config;
-    config.OversampleH = 2;
-    config.OversampleV = 1;
-    for (const char* path : kFontCandidates)
-        if (std::filesystem::is_regular_file(path) &&
-            io.Fonts->AddFontFromFileTTF(path, 16.0f, &config, io.Fonts->GetGlyphRangesChineseFull()))
-            return true;
-    io.Fonts->AddFontDefault();
-    return false;
+    bool loaded = false;
+    bool chinese = false;
+    std::size_t loadedBytes = 0;
+    const auto add = [&](const std::filesystem::path& path)
+    {
+        if (path.empty())
+            return false;
+        FontFace face;
+        if (!face.load(path) || face.GetData().size() > 128u * 1024u * 1024u - loadedBytes)
+            return false;
+        ImFontConfig config;
+        config.OversampleH = 2;
+        config.OversampleV = 1;
+        config.MergeMode = loaded;
+        const auto& bytes = face.GetData();
+        auto* copy = IM_ALLOC(bytes.size());
+        if (!copy)
+            return false;
+        std::memcpy(copy, bytes.data(), bytes.size());
+        // 仅在创建 ImGui 上下文后、第一帧前加入字体；数据由 atlas 接管。
+        if (!io.Fonts->AddFontFromMemoryTTF(copy, static_cast<int>(bytes.size()), 16.0f, &config,
+                                            io.Fonts->GetGlyphRangesChineseFull()))
+        {
+            IM_FREE(copy);
+            return false;
+        }
+        loadedBytes += bytes.size();
+        loaded = true;
+        chinese = chinese || face.getGlyphIndex(0x4e2d) != 0;
+        return true;
+    };
+    // 字重变体只用于常规体缺失时的启动回退，不将粗体覆盖到常规体上。
+    for (const auto* path :
+         {&project.defaultFont, &project.defaultFontBold, &project.defaultFontItalic, &project.defaultFontBoldItalic})
+        if (!path->empty() && add(project.resolve(*path)))
+            break;
+    for (const auto& path : project.fallbackFonts)
+    {
+        if (chinese)
+            break;
+        add(project.resolve(path));
+    }
+    if (!chinese)
+        for (const char* path : kFontCandidates)
+            if (add(fromUtf8Path(path)) && chinese)
+                break;
+    if (!loaded)
+        io.Fonts->AddFontDefault();
+    return chinese;
 }
 
 std::string translateUi(const std::string_view text, const bool simplifiedChinese)
@@ -703,7 +743,7 @@ bool EditorApp::initialize(const std::filesystem::path& projectFile)
     std::filesystem::create_directories(fromUtf8Path(m_workspaceIniPath).parent_path(), layoutError);
     io.IniFilename = m_workspaceIniPath.c_str();
     // ImGui 逻辑坐标与 96 DPI 保持一致；高分屏清晰度由 DPI 缩放模式和字体栅格密度自动保证。
-    const bool chineseFontLoaded = loadChineseEditorFont(io);
+    const bool chineseFontLoaded = loadChineseEditorFont(io, m_engine.getProjectSettings());
     applyEditorStyle();
     if (!ImGui_ImplSDL2_InitForOpenGL(static_cast<SDL_Window*>(m_device->getNativeWindow()),
                                       m_device->getGlContext()) ||

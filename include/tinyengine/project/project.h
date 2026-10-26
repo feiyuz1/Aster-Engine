@@ -31,6 +31,12 @@ struct ProjectSettings
     std::filesystem::path packageArchive;
     std::filesystem::path inputBindings = "assets/default.input";
     std::filesystem::path environmentTexture;
+    // 字体路径相对项目根目录；留空时使用平台默认字体发现。
+    std::filesystem::path defaultFont;
+    std::filesystem::path defaultFontBold;
+    std::filesystem::path defaultFontItalic;
+    std::filesystem::path defaultFontBoldItalic;
+    std::vector<std::filesystem::path> fallbackFonts;
     float fixedStep = 1.0f / 60.0f;
 
     /// @brief 加载数据或资源。

@@ -6,8 +6,10 @@
 #pragma once
 
 #include "tinyengine/math/math.h"
+#include "tinyengine/text/font.h"
 
 #include <cstdint>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -26,6 +28,26 @@ struct TextStyle
     float size = 18.0f;
     bool bold = false;
     bool italic = false;
+    FontStyle font;
+};
+
+enum class TextAlignment
+{
+    Start,
+    Center,
+    End,
+    Left,
+    Right
+};
+
+struct TextLayoutOptions
+{
+    float maximumWidth = 0.0f;
+    TextDirection direction = TextDirection::Auto;
+    bool richText = true;
+    TextAlignment alignment = TextAlignment::Start;
+    float lineSpacing = 1.0f;
+    bool wrap = true;
 };
 
 // 排版后的字形位置使用像素坐标；cluster 保留到原始 UTF-8 文本的逻辑索引。
@@ -37,6 +59,35 @@ struct ShapedGlyph
     float y = 0.0f;
     float advance = 0.0f;
     TextStyle style;
+    std::shared_ptr<FontFace> face;
+    std::uint32_t glyphId = 0;
+    std::size_t clusterEnd = 0;
+    bool rightToLeft = false;
+};
+
+struct TextBounds
+{
+    float x = 0.0f, y = 0.0f, width = 0.0f, height = 0.0f;
+};
+
+struct TextLine
+{
+    std::size_t sourceBegin = 0, sourceEnd = 0;
+    float y = 0.0f, baseline = 0.0f, width = 0.0f, height = 0.0f;
+    bool rightToLeft = false;
+};
+
+struct TextCaret
+{
+    std::size_t sourceOffset = 0, line = 0;
+    float x = 0.0f, y = 0.0f, height = 0.0f;
+};
+
+struct TextClusterBox
+{
+    std::size_t sourceBegin = 0, sourceEnd = 0, line = 0;
+    TextBounds bounds;
+    bool rightToLeft = false;
 };
 
 struct TextLayoutResult
@@ -45,9 +96,22 @@ struct TextLayoutResult
     float width = 0.0f;
     float height = 0.0f;
     std::size_t lineCount = 0;
+    TextBounds inkBounds;
+    std::vector<TextLine> lines;
+    std::vector<TextCaret> carets;
+    std::vector<TextClusterBox> clusters;
+    bool missingGlyphs = false;
+
+    /// @brief 将坐标映射到原始 UTF-8 字节位置，结果落在字素边界。
+    std::size_t hitTest(float x, float y) const;
+    TextCaret hitTestCaret(float x, float y) const;
+    /// @brief 查询光标几何；换行和双向边界可用 trailing 选择后一个位置。
+    TextCaret getCaret(std::size_t sourceOffset, bool trailing = false) const;
+    /// @brief 查询选区的可视矩形，支持跨行和混合文字方向。
+    std::vector<TextBounds> getSelectionRects(std::size_t begin, std::size_t end) const;
 };
 
-// 文本布局前端：先解码与塑形，再执行 BiDi、换行和对齐；字形纹理由 UISystem 缓存。
+// CPU 排版结果拥有字体引用；渲染只消费 glyphId、基线坐标和样式。
 class TextLayout
 {
   public:
@@ -67,6 +131,10 @@ class TextLayout
     /// @param richText 要处理的输入或输出数据。
     /// @return 返回接口计算或查询得到的结果。
     static TextLayoutResult shape(const std::string& text, float maximumWidth, const TextStyle& style = {},
-                                  TextDirection direction = TextDirection::Auto, bool richText = true);
+                                  TextDirection direction = TextDirection::Auto, bool richText = true,
+                                  FontManager* fonts = nullptr);
+    /// @brief 按真实字体度量塑形、断行并生成绘制及编辑几何。
+    static TextLayoutResult layout(const std::string& text, const TextLayoutOptions& options,
+                                   const TextStyle& style = {}, FontManager* fonts = nullptr);
 };
 } // namespace tinyengine

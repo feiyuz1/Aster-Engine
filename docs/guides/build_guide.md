@@ -35,10 +35,22 @@ Windows 推荐环境：
 - stb_vorbis：优先使用 `TINYENGINE_STB_DIR`；没有时由 FetchContent 获取 stb。
 - Assimp：Editor/Importer 构建必须提供源码目录，不自动下载。
 - Dear ImGui：Editor 默认通过 FetchContent 获取固定提交的 docking 版本并校验 SHA-256。`TINYENGINE_IMGUI_DIR` 可指定 1.92.8 或更新的 docking 源码；普通 master 或旧版本会回退到项目内固定版本。
-- FreeType：非 Windows 构建必须能被 `find_package(Freetype)` 找到。
+- 字体系统：全部平台使用 FreeType 2.13.3、HarfBuzz 10.2.0、ICU 76.1。默认自动获取并校验固定 SHA-256 的 FreeType/HarfBuzz 源码，静态构建；FreeType 关闭 HarfBuzz 依赖，HarfBuzz 启用 FreeType 接口。
+- Windows x64/MSVC 默认获取 ICU 76.1 官方 MSVC 2022 二进制包。Linux、macOS、Windows ARM64/其他工具链须预装 ICU 76.1 开发包，通过 `ICU_ROOT` 或 `CMAKE_PREFIX_PATH` 指定。ICU 只使用 C API；官方 Release DLL 也用于 Debug 引擎。
 - Jolt：默认关闭；启用时必须提供 `TINYENGINE_JOLT_DIR`。
 
-首次配置可能需要访问网络下载 SDL2、stb 或 Dear ImGui。完全离线构建时，请预先安装 SDL2，将 `TINYENGINE_STB_DIR` 指向包含 `stb_vorbis.c` 的本地目录，并将 `TINYENGINE_IMGUI_DIR` 指向本地 docking 源码。
+首次配置可能需要访问网络下载 SDL2、stb、Dear ImGui 和字体依赖。完全离线构建时，请预先安装 SDL2，将 `TINYENGINE_STB_DIR` 指向包含 `stb_vorbis.c` 的本地目录，并将 `TINYENGINE_IMGUI_DIR` 指向本地 docking 源码。
+
+字体依赖可用本地原版归档（仍验证同一 SHA-256）：
+
+```powershell
+cmake --preset editor `
+  -DTINYENGINE_FREETYPE_ARCHIVE=<归档目录>/freetype-2.13.3.zip `
+  -DTINYENGINE_HARFBUZZ_ARCHIVE=<归档目录>/harfbuzz-10.2.0.zip `
+  -DTINYENGINE_ICU_ARCHIVE=<归档目录>/icu4c-76_1-Win64-MSVC2022.zip
+```
+
+也可通过 `FETCHCONTENT_SOURCE_DIR_TINYENGINE_FREETYPE`、`FETCHCONTENT_SOURCE_DIR_TINYENGINE_HARFBUZZ`、`FETCHCONTENT_SOURCE_DIR_TINYENGINE_ICU` 指定解压源码/ICU 包。解压目录覆盖不再校验归档，版本和内容由提供者负责。ICU 安装包优先用 `-DICU_ROOT=<包根目录>`，自定义版本可设 `-DTINYENGINE_ICU_VERSION=<精确版本>`。需要使用已安装的 FreeType/HarfBuzz 时设 `-DTINYENGINE_TEXT_USE_SYSTEM_LIBS=ON`（至少 2.13.3/10.2.0，HarfBuzz 必须启用 FreeType）；这一路径的版本由包管理器锁定。所有本机路径只放在命令行或未跟踪的 `CMakeUserPresets.json`。
 
 ## 2. 完整开发构建
 
@@ -73,6 +85,12 @@ cmake --build build --config Release -j 8
 | `TINYENGINE_IMGUI_DIR` | 空（自动获取） | 可选 Dear ImGui docking 源码根目录 |
 | `TINYENGINE_JOLT_DIR` | 空，启用时显式指定 | Jolt Physics 源码根目录 |
 | `TINYENGINE_STB_DIR` | 空，自动获取 | 包含 `stb_vorbis.c` 的目录 |
+| `TINYENGINE_TEXT_USE_SYSTEM_LIBS` | OFF | 改用已安装的 FreeType/HarfBuzz 开发包 |
+| `TINYENGINE_ICU_VERSION` | 76.1 | `find_package(ICU)` 要求的精确版本 |
+| `TINYENGINE_ICU_STATIC` | OFF | 使用调用者提供的静态 ICU 包并定义 `U_STATIC_IMPLEMENTATION` |
+| `ICU_ROOT` | 空 | ICU 开发包根目录；Windows x64/MSVC 未指定时获取固定包 |
+| `TINYENGINE_FREETYPE_ARCHIVE` / `TINYENGINE_HARFBUZZ_ARCHIVE` / `TINYENGINE_ICU_ARCHIVE` | 固定上游 URL | 原版归档 URL 或本地文件 |
+| `TINYENGINE_TEXT_RUNTIME_FILES` | 空，Windows ICU 自动发现 | 额外字体共享库文件列表；分号分隔，构建/安装时一起复制 |
 
 只构建最小 Runtime 时可以关闭 Editor 和 Importer：
 
@@ -121,6 +139,12 @@ cpack --config build/CPackConfig.cmake -C Release
 
 安装内容包括核心库、公开头文件、已启用的可执行目标、示例资产和项目文件。Importer 头文件不作为 Runtime SDK 安装。
 
+默认 Windows 字体依赖中，FreeType/HarfBuzz 静态链接；`icuuc76.dll`、`icuin76.dll`、`icudt76.dll` 会复制到所有工具、游戏、编辑器和测试 EXE 旁，并进入 `ProjectRuntime` / `EditorRuntime` 安装组件的 `bin/<配置>`。ICU 数据位于 `icudt76.dll`，无需额外 `.dat` 文件。使用自定义共享依赖时，CMake 能建模的 Windows DLL 自动随构建暂存；额外 DLL 用 `TINYENGINE_TEXT_RUNTIME_FILES` 补充。其他平台应使用系统包或部署相应共享库，并配置运行时查找路径。
+
+默认字体库许可也暂存于 EXE 旁（`freetype-LICENSE.txt`、`harfbuzz-LICENSE.txt`、`icu-LICENSE.txt`），项目打包时与依赖文件一并复制。静态 ICU 设置 `TINYENGINE_ICU_STATIC=ON` 并提供相应开发包；此时不获取 Windows 动态包。
+
+直接链接安装的 `tinyengine` 静态归档的使用者仍须链接匹配的 FreeType、HarfBuzz、ICU `uc/i18n/data`；Project SDK 的游戏模块通过宿主 ABI 使用引擎，无需引入字体第三方头文件。默认字体依赖许可证安装到 `share/tinyengine/licenses`；自定义包须同时分发其上游许可证。
+
 ## 7. 常见问题
 
 - `Assimp source tree not found`：修正 `TINYENGINE_ASSIMP_DIR`，或关闭 `TINYENGINE_BUILD_IMPORTERS`。
@@ -128,5 +152,6 @@ cpack --config build/CPackConfig.cmake -C Release
 - OpenGL 初始化失败：更新显卡驱动，并确认设备支持 OpenGL 4.3 Core；不支持 Compute Shader 的旧设备不在 0.27 默认后端范围内。
 - Windows `.pdb/.ilk` 无法打开：停止重复的 MSBuild、测试或 Demo 进程后串行重建。
 - Package Tool 报构建信息缺失或不兼容：确认 Game EXE 旁存在同名 `.buildinfo`，并用同一源码、配置和编译器重建 `tinyengine_game` 与 `tinyengine_package_tool`。
-- 非 Windows 找不到 FreeType：安装开发包并确保 CMake 可以发现 `Freetype::Freetype`。
+- 找不到 ICU：安装所要求精确版本的开发包并设置 `ICU_ROOT`；更换版本时显式设置 `TINYENGINE_ICU_VERSION`，勿混用不同版本头文件/库/DLL。
+- Windows 程序找不到 ICU DLL：重建该 EXE 以触发暂存；发布时确保三个 ICU DLL 都位于 EXE 旁。
 - 离线环境获取 SDL/stb 失败：改用系统 SDL2 Package，并设置本地 `TINYENGINE_STB_DIR`。

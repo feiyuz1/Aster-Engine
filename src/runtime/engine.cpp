@@ -82,6 +82,49 @@ bool Engine::initialize(const std::filesystem::path& projectFile, const bool sta
                                                : std::filesystem::path{"assets"},
                                  projectLoaded ? m_projectSettings.assetDirectory : std::filesystem::path{"assets"});
     m_assetStreaming.initialize(&m_resourceManager);
+    m_fontManager.clear();
+    m_uiSystem.setFontManager(&m_fontManager);
+    const auto loadFont = [&](const std::filesystem::path& path)
+    {
+        return path.empty() ? std::shared_ptr<FontFace>{}
+                            : m_fontManager.loadFace(m_projectPakMounted ? path : m_projectSettings.resolve(path));
+    };
+    if (!m_projectSettings.defaultFont.empty())
+    {
+        FontFamily family{loadFont(m_projectSettings.defaultFont), loadFont(m_projectSettings.defaultFontBold),
+                          loadFont(m_projectSettings.defaultFontItalic),
+                          loadFont(m_projectSettings.defaultFontBoldItalic)};
+        if (!family.regular || (!m_projectSettings.defaultFontBold.empty() && !family.bold) ||
+            (!m_projectSettings.defaultFontItalic.empty() && !family.italic) ||
+            (!m_projectSettings.defaultFontBoldItalic.empty() && !family.boldItalic))
+        {
+            m_logger.error("Cannot load project font family.");
+            shutdown();
+            return false;
+        }
+        m_fontManager.registerFamily("project", std::move(family));
+        m_fontManager.setDefaultFamily("project");
+    }
+    else
+        m_fontManager.resolve({});
+    if (!m_projectSettings.fallbackFonts.empty())
+    {
+        std::vector<std::string> fallbacks;
+        for (const auto& path : m_projectSettings.fallbackFonts)
+        {
+            const auto face = loadFont(path);
+            if (!face)
+            {
+                m_logger.error("Cannot load project fallback font: " + toUtf8Path(path));
+                shutdown();
+                return false;
+            }
+            const auto name = "fallback_" + std::to_string(fallbacks.size());
+            m_fontManager.registerFamily(name, {face});
+            fallbacks.push_back(name);
+        }
+        m_fontManager.setFallbackFamilies(std::move(fallbacks));
+    }
     if (projectLoaded && !m_projectSettings.inputBindings.empty())
     {
         const auto inputPath = m_projectPakMounted ? m_projectSettings.inputBindings
@@ -117,6 +160,7 @@ bool Engine::initialize(const std::filesystem::path& projectFile, const bool sta
     {
         // Project code owns gameplay keys such as Escape; SDL_QUIT still closes the standalone host.
         device->setEscapeQuits(!m_useProjectCode);
+        m_uiSystem.setDpiScale(device->getDpiScale());
         m_inputSystem.setHapticCallback([device](const float low, const float high, const std::uint32_t milliseconds)
                                         { return device->rumbleController(low, high, milliseconds); });
     }
@@ -178,11 +222,11 @@ bool Engine::initialize(const std::filesystem::path& projectFile, const bool sta
                                     device->trimGpuResources();
                                 return std::string{"GPU resource caches cleared"};
                             });
-    m_context = {&m_logger,       &m_memoryManager,   &m_jobSystem,    &m_resourceManager, &m_world,
-                 &m_renderer,     &m_inputSystem,     &m_physicsWorld, &m_audioEngine,     &m_scriptEngine,
-                 &m_sceneManager, &m_projectSettings, &m_uiSystem,     &m_assetStreaming,  &m_gameplay,
-                 &m_diagnostics,  &m_vfxSystem,       &m_navigation,   &m_worldPartition,  &m_moduleManager,
-                 &m_pluginManager};
+    m_context = {&m_logger,        &m_memoryManager,   &m_jobSystem,    &m_resourceManager, &m_world,
+                 &m_renderer,      &m_inputSystem,     &m_physicsWorld, &m_audioEngine,     &m_scriptEngine,
+                 &m_sceneManager,  &m_projectSettings, &m_uiSystem,     &m_assetStreaming,  &m_gameplay,
+                 &m_diagnostics,   &m_vfxSystem,       &m_navigation,   &m_worldPartition,  &m_moduleManager,
+                 &m_pluginManager, &m_fontManager};
     m_pluginManager.setLogCallback(
         [this](const TinyPluginLogLevel level, const std::string& message)
         {
@@ -301,6 +345,9 @@ void Engine::shutdown()
     m_audioEngine.shutdown();
     m_renderer.setMouseCapture(false);
     m_renderer.shutdown();
+    m_uiSystem.clear();
+    m_fontManager.clear();
+    m_textInputFocus.clear();
     m_physicsWorld.clear();
     m_world.shutdown();
     m_world.removeListener(this);
@@ -452,20 +499,44 @@ void Engine::Tick(const float rawDeltaTime)
 {
     const float deltaTime = m_paused ? 0.0f : rawDeltaTime * m_timeScale;
     const InputState& input = m_renderer.GetInputState();
+    if ((m_frameIndex % 60) == 0)
+        m_fontManager.reloadChanged();
     m_uiSystem.Update(input.cursorX, input.cursorY, input.primaryAction);
     if (m_textInputManagedByUi)
     {
         if (auto* device = dynamic_cast<SdlGlRenderDevice*>(m_renderer.getDevice()))
         {
             const auto* focused = m_uiSystem.Find(m_uiSystem.GetFocusedId());
+            if (m_textInputFocus != m_uiSystem.GetFocusedId())
+            {
+                device->setTextInputEnabled(false);
+                m_textInputFocus = m_uiSystem.GetFocusedId();
+            }
             device->setTextInputEnabled(focused && focused->type == UIWidgetType::InputField && focused->visible &&
                                         focused->enabled);
         }
     }
-    if (!input.textInput.empty())
-        m_uiSystem.inputText(input.textInput);
+    if (!input.textEvents.empty())
+    {
+        m_uiSystem.processTextEvents(input.textEvents);
+    }
+    else
+    {
+        if (input.compositionChanged)
+            m_uiSystem.setComposition(input.compositionText, input.compositionCursor, input.compositionLength);
+        if (!input.textInput.empty())
+            m_uiSystem.inputText(input.textInput);
+    }
     if (input.uiBackspace)
         m_uiSystem.backspace();
+    if (input.uiDelete)
+        m_uiSystem.deleteForward();
+    if (input.uiSelectAll)
+        m_uiSystem.selectAll();
+    if (input.uiCursorLeft || input.uiCursorRight)
+        m_uiSystem.moveCursor(input.uiCursorLeft ? -1 : 1, input.uiExtendSelection);
+    if (input.uiHome || input.uiEnd)
+        m_uiSystem.moveCursorToLineBoundary(input.uiEnd, input.uiExtendSelection);
     if (input.uiNavigateNext)
         m_uiSystem.focusNext();
     if (input.uiAccept)
@@ -513,6 +584,9 @@ void Engine::Tick(const float rawDeltaTime)
         }
     }
     m_renderer.renderFrame(m_world);
+    if (m_textInputManagedByUi)
+        if (auto* device = dynamic_cast<SdlGlRenderDevice*>(m_renderer.getDevice()))
+            device->setTextInputRect(m_uiSystem.getFocusedCaretRect());
     const auto& profile = m_renderer.GetLastFrameProfile();
     auto& stats = m_diagnostics.GetStats();
     stats.set("frame.delta_ms", rawDeltaTime * 1000.0);
@@ -524,6 +598,15 @@ void Engine::Tick(const float rawDeltaTime)
     stats.set("render.gpu_resident_bytes",
               m_renderer.getDevice() ? static_cast<double>(m_renderer.getDevice()->getResidentGpuBytes()) : 0.0);
     stats.set("asset.resident_bytes", static_cast<double>(m_assetStreaming.getResidentBytes()));
+    stats.set("text.layout_builds", static_cast<double>(m_uiSystem.getTextLayoutBuildCount()));
+    if (const auto* device = dynamic_cast<SdlGlRenderDevice*>(m_renderer.getDevice()))
+    {
+        const auto atlas = device->getGlyphAtlasStats();
+        stats.set("text.atlas_pages", static_cast<double>(atlas.pageCount));
+        stats.set("text.atlas_bytes", static_cast<double>(atlas.byteSize));
+        stats.set("text.atlas_glyphs", static_cast<double>(atlas.glyphCount));
+        stats.set("text.atlas_overflows", static_cast<double>(atlas.overflows));
+    }
     stats.set("job.outstanding", static_cast<double>(m_jobSystem.getOutstandingJobCount()));
     m_memoryManager.resetFrame();
     if ((m_frameIndex % 60) == 0)

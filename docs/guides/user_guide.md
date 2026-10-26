@@ -80,7 +80,9 @@ TE-QA-001/002 已于 2026-08-10 修复。现在可以使用 `文件 > 新建场�
 
 Aster-Engine 编辑器支持简体中文和 English，首次启动默认使用简体中文。通过 `编辑 > 设置... > 界面语言`（英文界面为 `Edit > Settings... > Interface Language`）可以即时切换；选择会保存到当前项目的 `saved/EditorSettings.ini`，下次打开该项目时自动恢复。
 
-Windows 优先加载微软雅黑，并依次回退到黑体和宋体；Linux 优先使用 Noto Sans CJK 或文泉驿微米黑，因此运行中切换为中文不需要重启。系统缺少中文字体时会回退到 ImGui 默认字体，并在控制台输出警告。
+编辑器启动时优先使用项目 `text.font` 指定的常规字体；缺失时尝试 `text.fontBold`、`text.fontItalic`、`text.fontBoldItalic`。中文缺字时按项目 `text.fallback.N` 顺序补充字体，再尝试系统中文字体（Windows：微软雅黑、黑体、宋体；Linux：Noto Sans CJK、文泉驿微米黑）。字体路径相对于项目目录；更改项目字体设置后重新打开编辑器。运行中切换界面语言无需重启。系统和项目均缺少中文字体时显示警告。编辑器的 ImGui 字体与游戏 UI 的运行时排版独立，不能用编辑器标签的外观判断游戏实际字体。
+
+在 Assets 中右键字体资产，打开“详情 / 预览”可查看所选 TTF/OTF/TTC 文件的真实像素字形。预览提供 12–48 像素字号、TTC 集合索引、可编辑多语言示例、上伸/下伸/行高、排版尺寸及缺字数量。示例由运行时 FreeType/HarfBuzz/ICU 服务塑形和栅格化，再交给编辑器绘制；仅使用所选字体，不启用项目回退，便于直接检查缺字。家族别名显示资产文件名，并非字体文件内的名称表。界面标签仍使用编辑器字体。预览缓存随文件、索引、字号或示例变化失效；为避免大文本阻塞编辑器，示例最多 511 个 UTF-8 字节，画布和栅格绘制预算有限，超限时会显示裁剪提示。
 
 默认工作区将层级、场景和属性放在上方，资产、控制台、性能合并为底部标签。拖动面板标签可重新停靠、合并或浮动，拖动分隔线调整大小；关闭的面板通过“视图”菜单重新打开。布局自动按项目保存；“视图 > 保存当前布局 / 载入已保存布局 / 恢复默认布局”管理布局快照。`F11` 放大场景并保留原停靠关系，再按一次还原。设置中的“界面缩放”可在 85%～150% 间调整字号和间距。
 
@@ -551,7 +553,7 @@ auto &button = context.uiSystem->AddButton(
 context.uiSystem->setAnchor(button.id, tinyengine::UIAnchor::Center);
 ```
 
-每帧把窗口逻辑尺寸传给 `SetViewportSize()`，DPI 变化时调用 `SetDpiScale()`；鼠标/触摸状态传给 `Update()`，键盘或手柄导航使用 `FocusNext()` 与 `ActivateFocused()`。UTF-8 文本会经过动态 Glyph Atlas、BiDi、连字、断行和富文本管线，但当前不是完整 HarfBuzz/OpenType 实现，复杂文字脚本必须用目标语言样本验收。
+每帧把可绘制视口的物理像素尺寸传给 `setViewportSize()`，DPI 变化时调用 `setDpiScale()`；鼠标/触摸状态传给 `Update()`，键盘或手柄导航使用 `focusNext()` 与 `activateFocused()`。运行时使用 FreeType、HarfBuzz 和 ICU 完成真实字体度量、塑形、双向排版、字素编辑和换行，字形按字体与字号缓存在多页图集中。项目字体设置、富文本、IME 和缓存诊断见[字体系统参考](../reference/font_system.md)。复杂文字仍应使用目标语言样本验收。
 
 ### 9.5 导航、AI 与联网
 

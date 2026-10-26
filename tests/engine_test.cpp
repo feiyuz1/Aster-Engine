@@ -46,6 +46,7 @@
 #include "tinyengine/serialization/archive.h"
 #include "tinyengine/task/job_system.h"
 #include "tinyengine/terrain/height_field.h"
+#include "tinyengine/text/runtime_dependencies.h"
 #include "tinyengine/ui/text_layout.h"
 #include "tinyengine/ui/ui_system.h"
 #include "tinyengine/vfx/particle_system.h"
@@ -59,6 +60,7 @@
 #include <cmath>
 #include <iostream>
 #include <memory>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <unordered_map>
@@ -125,7 +127,7 @@ void check(const bool condition, const char* expression, const int line)
 } // namespace
 #define CHECK(value) check((value), #value, __LINE__)
 
-int main()
+int main(int argc, char** argv)
 {
     using namespace tinyengine;
 
@@ -594,6 +596,24 @@ int main()
     const auto packedMesh = PakArchive::ReadFile("saved/Test.tpak", "player.mesh");
     CHECK(packedMesh.has_value() && !packedMesh->empty());
     CHECK(PlatformFile::writeAllBytes("saved/FakeGame.exe", {0x4d, 0x5a, 0x00, 0x00}));
+    const auto testExecutable = std::filesystem::absolute(fromUtf8Path(argc > 0 ? argv[0] : ""));
+    const auto runtimeManifest =
+        PlatformFile::readAllText(fromUtf8Path(toUtf8Path(testExecutable) + std::string(text_runtime::manifestName)));
+    CHECK(!runtimeManifest.empty());
+    std::istringstream runtimeEntries(runtimeManifest);
+    std::string runtimeName;
+    std::getline(runtimeEntries, runtimeName);
+    while (std::getline(runtimeEntries, runtimeName))
+    {
+        if (!runtimeName.empty() && runtimeName.back() == '\r')
+            runtimeName.pop_back();
+        if (!runtimeName.empty())
+            CHECK(PlatformFile::writeAllBytes(
+                std::filesystem::path("saved") / fromUtf8Path(runtimeName),
+                PlatformFile::ReadAllBytes(testExecutable.parent_path() / fromUtf8Path(runtimeName))));
+    }
+    CHECK(PlatformFile::writeAllText(fromUtf8Path("saved/FakeGame.exe" + std::string(text_runtime::manifestName)),
+                                     runtimeManifest));
     CHECK(
         BuildCompatibility::Save(BuildCompatibility::sidecarPath("saved/FakeGame.exe"), BuildCompatibility::current()));
     const auto package =
@@ -950,10 +970,16 @@ int main()
         TextLayout::encodeUtf8({'T', 'i', 'n', 'y', 0x5f15, 0x64ce, ' ', 0x0645, 0x0631, 0x062d, 0x0628, 0x0627});
     const auto decodedText = TextLayout::DecodeUtf8(layoutUnicode);
     CHECK(decodedText.size() == 12 && TextLayout::encodeUtf8(decodedText) == layoutUnicode);
-    const auto shapedText = TextLayout::shape("[b]office[/b] " + layoutUnicode, 80.0f, {{1, 1, 1, 1}, 18.0f});
+    FontManager layoutFonts;
+    layoutFonts.registerFamily("fixture", {layoutFonts.loadFace("tests/fixtures/fonts/noto_sans.ttf")});
+    layoutFonts.setDefaultFamily("fixture");
+    const auto shapedText = TextLayout::shape("[b]office[/b] " + layoutUnicode, 80.0f, {{1, 1, 1, 1}, 18.0f},
+                                              TextDirection::Auto, true, &layoutFonts);
     CHECK(!shapedText.glyphs.empty() && shapedText.lineCount > 1 &&
           std::any_of(shapedText.glyphs.begin(), shapedText.glyphs.end(),
-                      [](const ShapedGlyph& glyph) { return glyph.codepoint == 0xfb01; }));
+                      [](const ShapedGlyph& glyph) {
+                          return glyph.codepoint == 'f' && glyph.glyphId != 0 && glyph.clusterEnd >= glyph.cluster + 2;
+                      }));
 
     MaterialGraph materialGraph;
     const auto constantNode = materialGraph.addNode(MaterialNodeType::Constant, "Albedo");

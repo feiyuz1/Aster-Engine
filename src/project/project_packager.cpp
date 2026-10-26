@@ -11,9 +11,14 @@
 #include "tinyengine/platform/platform.h"
 #include "tinyengine/project/project.h"
 #include "tinyengine/resource/pak_archive.h"
+#include "tinyengine/text/font.h"
+#include "tinyengine/text/runtime_dependencies.h"
 
 #include <algorithm>
 #include <cctype>
+#include <fstream>
+#include <set>
+#include <sstream>
 #include <system_error>
 
 namespace tinyengine
@@ -58,6 +63,110 @@ bool isAuthoringOnly(const std::filesystem::path& path)
                    [](const unsigned char value) { return static_cast<char>(std::tolower(value)); });
     return extension == ".meta" || extension == ".fbx" || extension == ".obj" || extension == ".dae" ||
            extension == ".3ds" || extension == ".blend" || extension == ".gltf" || extension == ".glb";
+}
+
+std::filesystem::path textRuntimeManifestPath(const std::filesystem::path& executable)
+{
+    return fromUtf8Path(toUtf8Path(executable) + std::string(text_runtime::manifestName));
+}
+
+bool collectTextRuntimeFiles(const std::filesystem::path& executable, std::vector<std::filesystem::path>& files,
+                             PackageResult& result)
+{
+    constexpr std::uintmax_t maximumBytes = 65536;
+    constexpr std::size_t maximumEntries = 256;
+    const auto manifest = textRuntimeManifestPath(executable);
+    std::error_code error;
+    const auto bytes = std::filesystem::file_size(manifest, error);
+    if (error || bytes == 0 || bytes > maximumBytes || !isInside(manifest, executable.parent_path()))
+    {
+        result.errors.emplace_back("Text runtime manifest is missing or invalid: " + toUtf8GenericPath(manifest));
+        return false;
+    }
+    std::ifstream file(manifest, std::ios::binary);
+    std::string contents(maximumBytes + 1, '\0');
+    file.read(contents.data(), static_cast<std::streamsize>(contents.size()));
+    const auto readBytes = static_cast<std::size_t>(file.gcount());
+    if (file.bad() || readBytes == 0 || readBytes > maximumBytes)
+    {
+        result.errors.emplace_back("Cannot read bounded text runtime manifest");
+        return false;
+    }
+    contents.resize(readBytes);
+    std::istringstream input(contents);
+    std::string line;
+    const auto trimCarriageReturn = [](std::string& value)
+    {
+        if (!value.empty() && value.back() == '\r')
+            value.pop_back();
+    };
+    if (!std::getline(input, line))
+    {
+        result.errors.emplace_back("Text runtime manifest has an unsupported version");
+        return false;
+    }
+    trimCarriageReturn(line);
+    if (line != text_runtime::manifestVersion)
+    {
+        result.errors.emplace_back("Text runtime manifest has an unsupported version");
+        return false;
+    }
+    std::set<std::string> names;
+    std::size_t consumed = line.size() + 1;
+    while (std::getline(input, line))
+    {
+        consumed += line.size() + 1;
+        trimCarriageReturn(line);
+        if (consumed > maximumBytes || names.size() >= maximumEntries || line.empty() || line.size() > 255 ||
+            line == "." || line == ".." || line.back() == '.' || line.front() == ' ' || line.back() == ' ' ||
+            line.find_first_of("/\\:") != std::string::npos ||
+            std::any_of(line.begin(), line.end(), [](unsigned char value) { return value < 32 || value == 127; }))
+        {
+            result.errors.emplace_back("Text runtime manifest contains an invalid filename or too many entries");
+            return false;
+        }
+        std::string normalized = line;
+        std::transform(normalized.begin(), normalized.end(), normalized.begin(),
+                       [](unsigned char value) { return static_cast<char>(std::tolower(value)); });
+        if (!names.insert(normalized).second)
+        {
+            result.errors.emplace_back("Text runtime manifest contains duplicate filenames");
+            return false;
+        }
+        std::filesystem::path source;
+        try
+        {
+            source = executable.parent_path() / fromUtf8Path(line);
+        }
+        catch (const std::exception&)
+        {
+            result.errors.emplace_back("Text runtime manifest contains an invalid UTF-8 filename");
+            return false;
+        }
+        if (!std::filesystem::is_regular_file(source, error) || error || !isInside(source, executable.parent_path()))
+        {
+            result.errors.emplace_back("Required text runtime file not found beside Game executable: " + line);
+            return false;
+        }
+        files.push_back(std::move(source));
+    }
+    if (input.bad())
+    {
+        result.errors.emplace_back("Cannot read text runtime manifest");
+        return false;
+    }
+    for (const auto required : text_runtime::fileNames)
+    {
+        std::string normalized(required);
+        std::transform(normalized.begin(), normalized.end(), normalized.begin(),
+                       [](unsigned char value) { return static_cast<char>(std::tolower(value)); });
+        if (!names.contains(normalized))
+        {
+            result.errors.emplace_back("Text runtime manifest omits a required dependency: " + std::string(required));
+            return false;
+        }
+    }
+    return true;
 }
 
 bool copyFile(const std::filesystem::path& source, const std::filesystem::path& destination, PackageResult& result)
@@ -156,6 +265,68 @@ PackageResult ProjectPackager::package(const PackageOptions& options)
         return result;
     }
 
+    // 字体必须位于将被归档的资产树中；先完成验证，失败时不创建发布目录。
+    std::vector<std::filesystem::path> configuredFonts = {project.defaultFont, project.defaultFontBold,
+                                                          project.defaultFontItalic, project.defaultFontBoldItalic};
+    configuredFonts.insert(configuredFonts.end(), project.fallbackFonts.begin(), project.fallbackFonts.end());
+    for (const auto& font : configuredFonts)
+    {
+        if (font.empty())
+            continue;
+        const auto source = project.resolve(font);
+        const bool traverses = std::any_of(font.begin(), font.end(), [](const auto& part) { return part == ".."; });
+        if (!isSafeRelativePath(font) || font.has_root_name() || traverses || !isInside(source, assetSource))
+        {
+            result.errors.emplace_back("Configured font must be relative and inside the asset directory: " +
+                                       toUtf8GenericPath(font));
+            return result;
+        }
+        if (!std::filesystem::is_regular_file(source))
+        {
+            result.errors.emplace_back("Configured font not found: " + toUtf8GenericPath(font));
+            return result;
+        }
+        FontFace face;
+        if (!face.load(source))
+        {
+            result.errors.emplace_back("Configured font is invalid: " + toUtf8GenericPath(font));
+            return result;
+        }
+    }
+
+    std::vector<std::filesystem::path> runtimeFiles;
+    if (!collectTextRuntimeFiles(options.gameExecutable, runtimeFiles, result))
+        return result;
+    const std::string packageName = safeFileName(project.name);
+#ifdef _WIN32
+    const std::string executableName = packageName + ".exe";
+#else
+    const std::string executableName = packageName;
+#endif
+    std::set<std::string> reservedNames = {executableName,
+                                           executableName + ".buildinfo",
+                                           executableName + std::string(text_runtime::manifestName),
+                                           packageName + ".tinyproject",
+                                           "Package.manifest",
+                                           "RUN_GAME.txt",
+                                           "Content"};
+    const auto foldCase = [](std::string name)
+    {
+        std::transform(name.begin(), name.end(), name.begin(),
+                       [](unsigned char value) { return static_cast<char>(std::tolower(value)); });
+        return name;
+    };
+    std::set<std::string> normalizedReserved;
+    for (const auto& name : reservedNames)
+        normalizedReserved.insert(foldCase(name));
+    for (const auto& runtimeFile : runtimeFiles)
+        if (normalizedReserved.contains(foldCase(toUtf8Path(runtimeFile.filename()))))
+        {
+            result.errors.emplace_back("Text runtime filename collides with a package file: " +
+                                       toUtf8GenericPath(runtimeFile.filename()));
+            return result;
+        }
+
     const auto output = std::filesystem::absolute(options.outputDirectory).lexically_normal();
     if (output == output.root_path() || output == projectRoot || isInside(output, assetSource))
     {
@@ -199,17 +370,16 @@ PackageResult ProjectPackager::package(const PackageOptions& options)
     result.archiveBytes = std::filesystem::file_size(result.archive, error);
     std::filesystem::remove_all(stage, error);
 
-    const std::string packageName = safeFileName(project.name);
-#ifdef _WIN32
-    const std::string executableName = packageName + ".exe";
-#else
-    const std::string executableName = packageName;
-#endif
     result.executable = output / executableName;
     if (!copyFile(options.gameExecutable, result.executable, result))
         return result;
     result.buildInfo = BuildCompatibility::sidecarPath(result.executable);
     if (!copyFile(sourceBuildInfo, result.buildInfo, result))
+        return result;
+    for (const auto& runtimeFile : runtimeFiles)
+        if (!copyFile(runtimeFile, output / runtimeFile.filename(), result))
+            return result;
+    if (!copyFile(textRuntimeManifestPath(options.gameExecutable), textRuntimeManifestPath(result.executable), result))
         return result;
 
     ProjectSettings shippingProject = project;
