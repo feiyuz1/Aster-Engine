@@ -77,13 +77,15 @@ tinyengine_package_tool <project.tinyproject> <output-directory> [game-executabl
 
 ```text
 tinyengine_demo [maximum-frames]
-tinyengine_game <project.tinyproject> [--frames=N]
-tinyengine_editor [project.tinyproject] [--frames=N]
+tinyengine_game <project.tinyproject> [--frames=N] [--renderer=opengl|vulkan]
+tinyengine_editor [project.tinyproject] [--frames=N] [--renderer=opengl|vulkan]
 ```
 
 - Demo 没有帧数参数时持续运行。
 - Game 必须能找到项目文件；`--frames=N` 用于冒烟测试。
-- Editor 省略项目时使用默认项目查找逻辑；`--frames=N` 用于有界 OpenGL/ImGui 冒烟测试。
+- Editor 省略项目时使用默认项目查找逻辑；`--frames=N` 用于有界编辑器冒烟测试。
+- Game 与 Editor 默认使用 OpenGL。`--renderer=vulkan` 选择编译时启用的原生 Vulkan 后端；不支持或初始化失败时报告错误，不会自动切换。未知后端名返回参数错误。
+- `TINYENGINE_VULKAN_VALIDATION=1` 启用 Khronos validation layer 和同步验证，缺少 layer 时初始化失败。构建、测试和依赖说明见[构建指南](../guides/build_guide.md#vulkan-构建启动与验证)。
 
 ## CMake 辅助目标
 

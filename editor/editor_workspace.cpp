@@ -1,5 +1,5 @@
 #include "editor_app.h"
-#include "tinyengine/render/sdl_gl_render_device.h"
+#include "tinyengine/render/renderer.h"
 #include <algorithm>
 #include <fstream>
 #include <imgui.h>

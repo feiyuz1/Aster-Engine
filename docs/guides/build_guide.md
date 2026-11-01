@@ -26,6 +26,7 @@ Windows 推荐环境：
 - Visual Studio 2022，安装“使用 C++ 的桌面开发”和 Windows SDK。
 - CMake 3.21 或更高版本。
 - 支持 OpenGL 4.3 Core、Compute Shader 和 Shader Storage Buffer 的显卡驱动。
+- 可选 Vulkan 后端需要 Vulkan 1.3 开发包和支持 Vulkan 1.3、dynamic rendering、synchronization2 的驱动。Windows 推荐安装完整 Vulkan SDK；OpenGL 仍为默认启动后端，当前构建仍保留 OpenGL 依赖。
 - 启用模型导入时提供 Assimp 源码目录，例如 `D:/Dependencies/assimp`。
 - 编辑器默认自动获取固定的 Dear ImGui `v1.92.8-docking`；离线构建可提供本地 docking 源码目录。
 
@@ -38,8 +39,9 @@ Windows 推荐环境：
 - 字体系统：全部平台使用 FreeType 2.13.3、HarfBuzz 10.2.0、ICU 76.1。默认自动获取并校验固定 SHA-256 的 FreeType/HarfBuzz 源码，静态构建；FreeType 关闭 HarfBuzz 依赖，HarfBuzz 启用 FreeType 接口。
 - Windows x64/MSVC 默认获取 ICU 76.1 官方 MSVC 2022 二进制包。Linux、macOS、Windows ARM64/其他工具链须预装 ICU 76.1 开发包，通过 `ICU_ROOT` 或 `CMAKE_PREFIX_PATH` 指定。ICU 只使用 C API；官方 Release DLL 也用于 Debug 引擎。
 - Jolt：默认关闭；启用时必须提供 `TINYENGINE_JOLT_DIR`。
+- Vulkan：首次配置发现 Vulkan 开发包且 `VULKAN_SDK/Source/SPIRV-Reflect/spirv_reflect.c` 存在时默认启用。启用后从固定、校验 SHA-256 的 glslang 16.4.0 源码编译静态库，并从 SDK 源码构建 SPIRV-Reflect；不链接 SDK 自带的 glslang C++ 二进制库。关闭后不获取这两项依赖。
 
-首次配置可能需要访问网络下载 SDL2、stb、Dear ImGui 和字体依赖。完全离线构建时，请预先安装 SDL2，将 `TINYENGINE_STB_DIR` 指向包含 `stb_vorbis.c` 的本地目录，并将 `TINYENGINE_IMGUI_DIR` 指向本地 docking 源码。
+首次配置可能需要访问网络下载 SDL2、stb、Dear ImGui 和字体依赖；启用 Vulkan 时还会获取固定的 glslang 源码。完全离线构建时，请预先安装 SDL2，将 `TINYENGINE_STB_DIR` 指向包含 `stb_vorbis.c` 的本地目录，并将 `TINYENGINE_IMGUI_DIR` 指向本地 docking 源码。
 
 字体依赖可用本地原版归档（仍验证同一 SHA-256）：
 
@@ -81,6 +83,9 @@ cmake --build build --config Release -j 8
 | `TINYENGINE_BUILD_EDITOR` | ON | 构建 Dear ImGui 编辑器 |
 | `TINYENGINE_BUILD_IMPORTERS` | ON | 构建 Assimp 导入库和模型导入命令 |
 | `TINYENGINE_ENABLE_JOLT` | OFF | 链接可选 Jolt 后端 |
+| `TINYENGINE_ENABLE_VULKAN` | 首次配置自动检测 SDK | 编译原生 Vulkan 1.3 后端；不改变默认启动后端 |
+| `TINYENGINE_SPIRV_REFLECT_DIR` | `$ENV{VULKAN_SDK}/Source/SPIRV-Reflect` | 包含 `spirv_reflect.c`、`spirv_reflect.h` 与 `include/` 的源码目录 |
+| `TINYENGINE_GLSLANG_SOURCE_DIR` | 空（获取固定 16.4.0） | 可选 glslang 16.4.0 本地源码覆盖；覆盖内容由提供者验证 |
 | `TINYENGINE_ASSIMP_DIR` | 空，启用时显式指定 | Assimp 源码根目录 |
 | `TINYENGINE_IMGUI_DIR` | 空（自动获取） | 可选 Dear ImGui docking 源码根目录 |
 | `TINYENGINE_JOLT_DIR` | 空，启用时显式指定 | Jolt Physics 源码根目录 |
@@ -130,6 +135,43 @@ cmake --build build-runtime --config Release -j 8
 .\build\Debug\tinyengine_commandlet.exe ValidateAssets assets
 ```
 
+### Vulkan 构建、启动与验证
+
+Windows 示例使用 Vulkan SDK 1.4.357.0；安装位置由本机决定。设置 `VULKAN_SDK` 后重新配置，已有 CMake 缓存中的开关不会随 SDK 安装自动改变：
+
+```powershell
+$env:VULKAN_SDK = 'D:/VulkanSDK/1.4.357.0'
+cmake --preset editor -DTINYENGINE_ENABLE_VULKAN=ON
+cmake --build --preset editor-debug --target tinyengine_editor tinyengine_game `
+  tinyengine_vulkan_shader_tests tinyengine_vulkan_context_tests tinyengine_vulkan_render_tests
+
+.\intermediate\Build\Editor\Debug\tinyengine_editor.exe Aster-Engine.tinyproject --renderer=vulkan --frames=30
+.\intermediate\Build\Editor\Debug\tinyengine_game.exe Aster-Engine.tinyproject --renderer=vulkan --frames=30
+```
+
+离线构建时追加 `-DTINYENGINE_GLSLANG_SOURCE_DIR=<glslang-16.4.0源码目录>`，并按前文准备其他离线依赖。SPIRV-Reflect 可通过 `-DTINYENGINE_SPIRV_REFLECT_DIR=<源码目录>` 单独覆盖。SDK 的 glslang 预编译库可能使用比引擎更新的 MSVC STL；源码构建让编译器、Debug/Release 和 CRT 与引擎一致，不要手工改回 SDK 的 `glslang.lib`。
+
+CPU shader 回归调用 SDK 的 `spirv-val` 检查生成的 SPIR-V，不需要 GPU；配置时须能从 `PATH` 或 SDK `Bin` 找到该程序。GPU 回归需要真实 Vulkan 设备、窗口系统和 Khronos validation layer，并启用同步验证：
+
+```powershell
+ctest --test-dir intermediate/Build/Editor -C Debug -R '^tinyengine_vulkan_shader$' --output-on-failure
+$env:TINYENGINE_VULKAN_VALIDATION = '1'
+ctest --test-dir intermediate/Build/Editor -C Debug -R '^tinyengine_vulkan_(context|render)$' --output-on-failure
+.\intermediate\Build\Editor\Debug\tinyengine_editor.exe Aster-Engine.tinyproject --renderer=vulkan --frames=120
+Remove-Item Env:TINYENGINE_VULKAN_VALIDATION
+```
+
+`TINYENGINE_VULKAN_VALIDATION=1` 也适用于独立游戏。请求验证但未安装 layer 时初始化失败；GPU 回归缺少设备时返回失败，不能记作 GPU 验证通过。发布运行不要求 validation layer。上述命令是验证入口，不代表当前机器已经执行或通过全部验收。
+
+不带 `--renderer` 或指定 `--renderer=opengl` 使用 OpenGL；显式选择 Vulkan 失败会报告原因，不会自动切换。需要完全关闭 Vulkan 时重新配置并构建：
+
+```powershell
+cmake --preset editor -DTINYENGINE_ENABLE_VULKAN=OFF
+cmake --build --preset editor-debug
+```
+
+CI 将关闭后端的 core 构建与启用 Vulkan 的 Debug/Release 编译检查分开；托管 runner 只运行 CPU shader 回归，GPU 与编辑器交互验收须在具备设备的环境执行。
+
 ## 6. 安装与 CPack
 
 ```powershell
@@ -145,11 +187,17 @@ cpack --config build/CPackConfig.cmake -C Release
 
 直接链接安装的 `tinyengine` 静态归档的使用者仍须链接匹配的 FreeType、HarfBuzz、ICU `uc/i18n/data`；Project SDK 的游戏模块通过宿主 ABI 使用引擎，无需引入字体第三方头文件。默认字体依赖许可证安装到 `share/tinyengine/licenses`；自定义包须同时分发其上游许可证。
 
+启用 Vulkan 时，运行时通过静态链接的 glslang 将共享/内嵌 GLSL 编译为 SPIR-V，再由静态链接的 SPIRV-Reflect 读取布局。当前没有随包安装预编译内置 SPIR-V 的步骤；内嵌源码提供基础 shader 回退，项目自己的 shader 与 include 仍应随资产 Cook/TPAK 保留。不启动 `glslc`、`glslangValidator` 或 `spirv-val` 子进程，也不要求玩家安装开发 SDK；`spirv-val` 仅用于测试。目标机器的 Vulkan loader 与设备驱动由显卡驱动提供。
+
+发布时同时保留 [glslang 与 SPIRV-Reflect 许可证](../reference/third_party_dependencies.md)。Project SDK 导出的 `tinyengine::project_sdk` 不链接 Vulkan 或 shader 编译器；直接使用完整 `tinyengine` 静态归档的消费者须自行链接启用的 Vulkan、glslang 和 SPIRV-Reflect 依赖。
+
 ## 7. 常见问题
 
 - `Assimp source tree not found`：修正 `TINYENGINE_ASSIMP_DIR`，或关闭 `TINYENGINE_BUILD_IMPORTERS`。
 - `Dear ImGui source tree not found`：修正 `TINYENGINE_IMGUI_DIR`，或关闭 `TINYENGINE_BUILD_EDITOR`。
 - OpenGL 初始化失败：更新显卡驱动，并确认设备支持 OpenGL 4.3 Core；不支持 Compute Shader 的旧设备不在 0.27 默认后端范围内。
+- Vulkan 配置失败：确认 `VULKAN_SDK` 指向 SDK 根目录、版本至少 1.3，且包含 SPIRV-Reflect 源码；仅安装驱动不包含构建所需的头文件、导入库和源码。
+- Vulkan 初始化失败：检查驱动的 Vulkan 1.3 与功能支持；验证模式还要求 `VK_LAYER_KHRONOS_validation`。可显式使用 `--renderer=opengl`。
 - Windows `.pdb/.ilk` 无法打开：停止重复的 MSBuild、测试或 Demo 进程后串行重建。
 - Package Tool 报构建信息缺失或不兼容：确认 Game EXE 旁存在同名 `.buildinfo`，并用同一源码、配置和编译器重建 `tinyengine_game` 与 `tinyengine_package_tool`。
 - 找不到 ICU：安装所要求精确版本的开发包并设置 `ICU_ROOT`；更换版本时显式设置 `TINYENGINE_ICU_VERSION`，勿混用不同版本头文件/库/DLL。

@@ -142,3 +142,8 @@
 !/tests/font_ui_test.cpp
 !/tests/font_project_test.cpp
 !/tests/fixtures/fonts/
+# Vulkan and shared SDL regressions
+!/tests/vulkan_shader_test.cpp
+!/tests/vulkan_context_test.cpp
+!/tests/vulkan_render_test.cpp
+!/tests/sdl_window_test.cpp

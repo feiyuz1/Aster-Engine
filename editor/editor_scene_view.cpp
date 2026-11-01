@@ -2,7 +2,7 @@
 #include "tinyengine/ecs/components.h"
 #include "tinyengine/ecs/scene_serializer.h"
 #include "tinyengine/project/project.h"
-#include "tinyengine/render/sdl_gl_render_device.h"
+#include "tinyengine/render/renderer.h"
 #include <imgui.h>
 
 #include "tinyengine/platform/platform.h"
@@ -470,7 +470,7 @@ void EditorApp::drawSceneView()
               targetHeight = std::max(1, static_cast<int>(available.y * m_dpiScale));
     m_device->resizeSceneRenderTarget(targetWidth, targetHeight);
     const ImVec2 imageMinimum = ImGui::GetCursorScreenPos();
-    ImGui::Image(ImTextureRef(static_cast<ImTextureID>(m_device->getSceneColorTexture())), available, {0, 1}, {1, 0});
+    ImGui::Image(ImTextureRef(static_cast<ImTextureID>(m_guiRenderer.sceneTexture())), available, {0, 1}, {1, 0});
     const bool hovered = ImGui::IsItemHovered(m_viewCubeActive ? ImGuiHoveredFlags_AllowWhenBlockedByActiveItem
                                                                : ImGuiHoveredFlags_None);
     if (hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left))

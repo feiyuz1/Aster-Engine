@@ -36,6 +36,7 @@ static int RunMain(int argc, char** argv)
         std::filesystem::absolute(tinyengine::fromUtf8Path(argv[0])).parent_path().lexically_normal();
     std::filesystem::path projectFile;
     std::uint32_t maxFrames = 0;
+    auto renderBackend = tinyengine::RenderBackend::OpenGL;
     for (int index = 1; index < argc; ++index)
     {
         const std::string argument = argv[index];
@@ -44,6 +45,19 @@ static int RunMain(int argc, char** argv)
             const auto value = std::strtoul(argument.c_str() + 9, nullptr, 10);
             if (value <= static_cast<unsigned long>(std::numeric_limits<std::uint32_t>::max()))
                 maxFrames = static_cast<std::uint32_t>(value);
+        }
+        else if (argument.rfind("--renderer=", 0) == 0)
+        {
+            const auto backend = argument.substr(11);
+            if (backend == "vulkan")
+                renderBackend = tinyengine::RenderBackend::Vulkan;
+            else if (backend == "opengl")
+                renderBackend = tinyengine::RenderBackend::OpenGL;
+            else
+            {
+                std::cerr << "Unknown renderer: " << backend << ". Use opengl or vulkan.\n";
+                return 2;
+            }
         }
         else if (projectFile.empty())
             projectFile = tinyengine::fromUtf8Path(argument).is_absolute()
@@ -54,11 +68,12 @@ static int RunMain(int argc, char** argv)
         projectFile = findProject(executableDirectory);
     if (projectFile.empty() || !std::filesystem::is_regular_file(projectFile))
     {
-        std::cerr << "Usage: tinyengine_game <project.tinyproject> [--frames=N]\n";
+        std::cerr << "Usage: tinyengine_game <project.tinyproject> [--frames=N] [--renderer=opengl|vulkan]\n";
         return 2;
     }
 
     tinyengine::Engine engine;
+    engine.setRenderBackend(renderBackend);
     if (!engine.initialize(std::filesystem::absolute(projectFile).lexically_normal(), true))
         return 1;
     engine.Run(maxFrames);

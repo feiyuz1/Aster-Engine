@@ -8,11 +8,12 @@
 #include "tinyengine/ecs/components.h"
 #include "tinyengine/ecs/scene_serializer.h"
 #include "tinyengine/ecs/systems.h"
-#include "tinyengine/render/sdl_gl_render_device.h"
+#include "tinyengine/render/render_device_factory.h"
 
 #include "tinyengine/platform/platform.h"
 #include <algorithm>
 #include <chrono>
+#include <exception>
 #include <thread>
 
 namespace tinyengine
@@ -149,14 +150,24 @@ bool Engine::initialize(const std::filesystem::path& projectFile, const bool sta
         m_renderer.setEnvironmentPath(
             m_projectPakMounted ? m_projectSettings.environmentTexture.generic_string()
                                 : m_projectSettings.resolve(m_projectSettings.environmentTexture).generic_string());
-    if (!m_renderer.initialize(std::make_unique<SdlGlRenderDevice>(
-            1280, 720, projectLoaded ? m_projectSettings.name : "Aster-Engine SDL2 + OpenGL")))
+    try
     {
-        m_logger.error("Renderer initialize failed.");
+        auto device =
+            createRenderDevice(m_renderBackend, 1280, 720, projectLoaded ? m_projectSettings.name : "Aster-Engine");
+        if (!device || !m_renderer.initialize(std::move(device)))
+        {
+            m_logger.error("Renderer initialize failed for selected backend.");
+            shutdown();
+            return false;
+        }
+    }
+    catch (const std::exception& error)
+    {
+        m_logger.error(std::string{"Renderer initialize failed: "} + error.what());
         shutdown();
         return false;
     }
-    if (auto* device = dynamic_cast<SdlGlRenderDevice*>(m_renderer.getDevice()))
+    if (auto* device = m_renderer.getDevice())
     {
         // Project code owns gameplay keys such as Escape; SDL_QUIT still closes the standalone host.
         device->setEscapeQuits(!m_useProjectCode);
@@ -176,25 +187,25 @@ bool Engine::initialize(const std::filesystem::path& projectFile, const bool sta
     console.registerVariable("r.FXAA", true, "Enable post-process FXAA", false,
                              [this](const ConsoleValue& value)
                              {
-                                 if (auto* device = dynamic_cast<SdlGlRenderDevice*>(m_renderer.getDevice()))
+                                 if (auto* device = m_renderer.getDevice())
                                      device->setFxaaEnabled(std::get<bool>(value));
                              });
     console.registerVariable("r.Bloom", true, "Enable multi-level bloom", false,
                              [this](const ConsoleValue& value)
                              {
-                                 if (auto* device = dynamic_cast<SdlGlRenderDevice*>(m_renderer.getDevice()))
+                                 if (auto* device = m_renderer.getDevice())
                                      device->setBloomEnabled(std::get<bool>(value));
                              });
     console.registerVariable("r.GTAO", true, "Enable ground-truth ambient occlusion approximation", false,
                              [this](const ConsoleValue& value)
                              {
-                                 if (auto* device = dynamic_cast<SdlGlRenderDevice*>(m_renderer.getDevice()))
+                                 if (auto* device = m_renderer.getDevice())
                                      device->setGtaoEnabled(std::get<bool>(value));
                              });
     console.registerVariable("r.TAA", true, "Enable motion-vector temporal anti-aliasing", false,
                              [this](const ConsoleValue& value)
                              {
-                                 if (auto* device = dynamic_cast<SdlGlRenderDevice*>(m_renderer.getDevice()))
+                                 if (auto* device = m_renderer.getDevice())
                                      device->setTaaEnabled(std::get<bool>(value));
                              });
     console.registerVariable("asset.StreamingBudgetMB", 256, "Runtime resource memory budget in MiB", false,
@@ -202,7 +213,7 @@ bool Engine::initialize(const std::filesystem::path& projectFile, const bool sta
                                  m_assetStreaming.setMemoryBudget(
                                      static_cast<std::size_t>(std::max(1, std::get<int>(value))) * 1024u * 1024u);
                              });
-    console.registerVariable("r.GpuBudgetMB", 512, "OpenGL mesh and texture memory budget in MiB", false,
+    console.registerVariable("r.GpuBudgetMB", 512, "GPU mesh and texture memory budget in MiB", false,
                              [this](const ConsoleValue& value)
                              {
                                  if (auto* device = m_renderer.getDevice())
@@ -272,9 +283,12 @@ bool Engine::initialize(const std::filesystem::path& projectFile, const bool sta
     }
     else
         m_paused = true;
-    const auto* glDevice = dynamic_cast<const SdlGlRenderDevice*>(m_renderer.getDevice());
-    m_logger.info(std::string{"Engine initialize complete. OpenGL 4.3 core renderer active; GPU Driven: "} +
-                  (glDevice && glDevice->isGpuDrivenCullingSupported() ? "Compute + Indirect." : "fallback."));
+    const auto* device = m_renderer.getDevice();
+    const char* backendName = device->getBackend() == RenderBackend::Vulkan   ? "Vulkan 1.3"
+                              : device->getBackend() == RenderBackend::OpenGL ? "OpenGL 4.3 core"
+                                                                              : "Null";
+    m_logger.info(std::string{"Engine initialize complete. "} + backendName + " renderer active; GPU Driven: " +
+                  (device->isGpuDrivenCullingSupported() ? "Compute + Indirect." : "fallback."));
     return true;
 }
 
@@ -301,8 +315,7 @@ void Engine::Run(const std::uint32_t maxFrames)
         {
             const auto stats = m_physicsWorld.GetStatistics();
             const auto& profile = m_renderer.GetLastFrameProfile();
-            m_logger.info("FRAME " + std::to_string(m_frameIndex) +
-                          " delta_ms=" + std::to_string(deltaTime * 1000.0f) +
+            m_logger.info("FRAME " + std::to_string(m_frameIndex) + " delta_ms=" + std::to_string(deltaTime * 1000.0f) +
                           " render_ms=" + std::to_string(profile.totalMilliseconds) +
                           " sync_ms=" + std::to_string((stats.sceneSyncNanoseconds - lastSyncNanoseconds) / 1000000) +
                           " step_ms=" + std::to_string((stats.stepNanoseconds - lastStepNanoseconds) / 1000000));
@@ -318,11 +331,10 @@ void Engine::Run(const std::uint32_t maxFrames)
     m_logger.info("Engine loop end.");
     // 物理耗时分布一览（诊断大场景帧耗用）：同步毫秒 / 步进毫秒 / 接触对 / 步数与同步次数。
     const auto stats = m_physicsWorld.GetStatistics();
-    m_logger.info("PHYSICS_STATS sync_ms=" + std::to_string(stats.sceneSyncNanoseconds / 1000000) +
-                  " step_ms=" + std::to_string(stats.stepNanoseconds / 1000000) +
-                  " pairs=" + std::to_string(stats.broadphasePairs) +
-                  " steps_syncs=" + std::to_string(stats.sceneSyncs) + " sync_skips=" +
-                  std::to_string(stats.sceneSyncSkips));
+    m_logger.info("PHYSICS_STATS sync_ms=" + std::to_string(stats.sceneSyncNanoseconds / 1000000) + " step_ms=" +
+                  std::to_string(stats.stepNanoseconds / 1000000) + " pairs=" + std::to_string(stats.broadphasePairs) +
+                  " steps_syncs=" + std::to_string(stats.sceneSyncs) +
+                  " sync_skips=" + std::to_string(stats.sceneSyncSkips));
 }
 
 // 先停止产生新工作的上层系统，再等待作业和资源，最后销毁平台/渲染后端。
@@ -504,7 +516,7 @@ void Engine::Tick(const float rawDeltaTime)
     m_uiSystem.Update(input.cursorX, input.cursorY, input.primaryAction);
     if (m_textInputManagedByUi)
     {
-        if (auto* device = dynamic_cast<SdlGlRenderDevice*>(m_renderer.getDevice()))
+        if (auto* device = m_renderer.getDevice())
         {
             const auto* focused = m_uiSystem.Find(m_uiSystem.GetFocusedId());
             if (m_textInputFocus != m_uiSystem.GetFocusedId())
@@ -585,7 +597,7 @@ void Engine::Tick(const float rawDeltaTime)
     }
     m_renderer.renderFrame(m_world);
     if (m_textInputManagedByUi)
-        if (auto* device = dynamic_cast<SdlGlRenderDevice*>(m_renderer.getDevice()))
+        if (auto* device = m_renderer.getDevice())
             device->setTextInputRect(m_uiSystem.getFocusedCaretRect());
     const auto& profile = m_renderer.GetLastFrameProfile();
     auto& stats = m_diagnostics.GetStats();
@@ -599,7 +611,7 @@ void Engine::Tick(const float rawDeltaTime)
               m_renderer.getDevice() ? static_cast<double>(m_renderer.getDevice()->getResidentGpuBytes()) : 0.0);
     stats.set("asset.resident_bytes", static_cast<double>(m_assetStreaming.getResidentBytes()));
     stats.set("text.layout_builds", static_cast<double>(m_uiSystem.getTextLayoutBuildCount()));
-    if (const auto* device = dynamic_cast<SdlGlRenderDevice*>(m_renderer.getDevice()))
+    if (const auto* device = m_renderer.getDevice())
     {
         const auto atlas = device->getGlyphAtlasStats();
         stats.set("text.atlas_pages", static_cast<double>(atlas.pageCount));

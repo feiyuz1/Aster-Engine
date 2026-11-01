@@ -9,7 +9,7 @@
 #include "editor_app.h"
 #include "tinyengine/ecs/scene_serializer.h"
 #include "tinyengine/platform/platform.h"
-#include "tinyengine/render/sdl_gl_render_device.h"
+#include "tinyengine/render/renderer.h"
 #include "tinyengine/resource/asset_maintenance.h"
 #include "tinyengine/resource/material_asset_references.h"
 #include "tinyengine/ui/text_layout.h"
@@ -98,13 +98,13 @@ std::string fitAssetText(const std::string& text, float width)
 void drawAssetIcon(ImDrawList* draw, ImVec2 origin, float size, const std::string& type)
 {
     const bool folder = type == "Folder";
-    const ImU32 color = folder                                          ? IM_COL32(203, 170, 100, 255)
-                        : type == "Texture"                             ? IM_COL32(103, 169, 128, 255)
-                        : type == "Mesh" || type == "Prefab"            ? IM_COL32(110, 159, 211, 255)
-                        : type == "Material" ? IM_COL32(192, 136, 172, 255)
-                        : type == "Shader"                              ? IM_COL32(213, 164, 109, 255)
-                        : type == "Audio"                               ? IM_COL32(164, 146, 209, 255)
-                                                                        : IM_COL32(146, 163, 183, 255);
+    const ImU32 color = folder                               ? IM_COL32(203, 170, 100, 255)
+                        : type == "Texture"                  ? IM_COL32(103, 169, 128, 255)
+                        : type == "Mesh" || type == "Prefab" ? IM_COL32(110, 159, 211, 255)
+                        : type == "Material"                 ? IM_COL32(192, 136, 172, 255)
+                        : type == "Shader"                   ? IM_COL32(213, 164, 109, 255)
+                        : type == "Audio"                    ? IM_COL32(164, 146, 209, 255)
+                                                             : IM_COL32(146, 163, 183, 255);
     const float inset = size * .13f;
     if (folder)
     {
@@ -440,9 +440,9 @@ bool EditorApp::moveEditorAsset(const std::string& source, const std::filesystem
     }
     const auto materialDraftAffected = [&](const std::string& path, std::string text)
     {
-        return sameSource(path) || (!path.empty() && rewriteMaterialReferences(
-                                                         text, fromUtf8Path(path), fromUtf8Path(path), assetRoot,
-                                                         toUtf8GenericPath(sourcePath), toUtf8GenericPath(target)));
+        return sameSource(path) ||
+               (!path.empty() && rewriteMaterialReferences(text, fromUtf8Path(path), fromUtf8Path(path), assetRoot,
+                                                           toUtf8GenericPath(sourcePath), toUtf8GenericPath(target)));
     };
     auto draftGraph = m_materialGraphEditor.GetDraft().graph;
     draftGraph.GetParameters() = m_materialGraphEditor.GetDraft().parameters;
@@ -568,8 +568,7 @@ bool EditorApp::moveEditorAsset(const std::string& source, const std::filesystem
                          current->dependencies == previous.dependencies))
             continue;
         resources->reload(current->path);
-        if (auto* renderer = m_engine.GetContext().renderer;
-            renderer && (current->type == "Material"))
+        if (auto* renderer = m_engine.GetContext().renderer; renderer && (current->type == "Material"))
             renderer->GetMaterialSystem().reload(current->path);
     }
     resources->garbageCollect();
@@ -707,9 +706,7 @@ void EditorApp::drawAssetCreationMenu(const std::filesystem::path& directory)
         const auto parent = registry.Find(m_selectedAsset);
         const auto path = createUniquePath("NewMaterialInstance", ".mat");
         std::string error;
-        const auto reference = parent && (parent->type == "Material")
-                                   ? parent->path
-                                   : std::string("builtin:PBR");
+        const auto reference = parent && (parent->type == "Material") ? parent->path : std::string("builtin:PBR");
         if (MaterialAssetEditor::createInstance(toUtf8GenericPath(path), reference, error))
             publishCreated(path);
         else
@@ -1240,9 +1237,8 @@ void EditorApp::drawAssets()
     if (ImGui::BeginPopup("AssetFilters"))
     {
         std::set<std::string> availableTypes = {
-            "Material", "Texture",   "Mesh",           "Prefab", "Scene",        "Shader",
-            "Animation",   "Skeleton",      "BlendTree", "AnimationGraph", "VFX",    "BehaviorTree", "Audio",
-            "Environment", "Input",         "Font"};
+            "Material",  "Texture",        "Mesh", "Prefab",       "Scene", "Shader",      "Animation", "Skeleton",
+            "BlendTree", "AnimationGraph", "VFX",  "BehaviorTree", "Audio", "Environment", "Input",     "Font"};
         for (const auto& asset : assets)
             availableTypes.insert(asset.type);
         ImGui::TextDisabled("%s", localize("Asset types (match any selected type)", "资产类型（匹配任一勾选类型）"));
@@ -1657,7 +1653,7 @@ void EditorApp::drawAssets()
                 requestThumbnail(*asset);
                 const auto thumbnail = getThumbnailPath(*asset);
                 if (m_device && isThumbnailReady(*asset, thumbnail))
-                    texture = m_device->getUiTexture(toUtf8GenericPath(thumbnail));
+                    texture = m_guiRenderer.uiTexture(toUtf8GenericPath(thumbnail));
             }
             if (texture)
             {
@@ -1799,7 +1795,7 @@ void EditorApp::drawAssets()
             const auto previewThumbnail = getThumbnailPath(*preview);
             if (m_device && isThumbnailReady(*preview, previewThumbnail))
             {
-                const std::uintptr_t texture = m_device->getUiTexture(toUtf8GenericPath(previewThumbnail));
+                const std::uintptr_t texture = m_guiRenderer.uiTexture(toUtf8GenericPath(previewThumbnail));
                 if (texture)
                 {
                     ImGui::Image(ImTextureRef(static_cast<ImTextureID>(texture)), {96.0f, 96.0f});

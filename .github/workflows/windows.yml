@@ -39,7 +39,7 @@ jobs:
             if ($LASTEXITCODE -ne 0) { throw "Formatting check failed: $file" }
           }
       - name: Configure core build
-        run: cmake --preset core
+        run: cmake --preset core -DTINYENGINE_ENABLE_VULKAN=OFF
       - name: Build
         run: cmake --build --preset core-release
       - name: Validate content
@@ -55,3 +55,41 @@ jobs:
         with:
           name: Aster-Engine-Windows
           path: intermediate/Build/Core/Package/Aster-Engine
+
+  vulkan-compile:
+    runs-on: windows-2022
+    strategy:
+      fail-fast: false
+      matrix:
+        configuration: [Debug, Release]
+    env:
+      VULKAN_SDK_VERSION: '1.4.357.0'
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install pinned Vulkan SDK files
+        shell: pwsh
+        run: |
+          $installer = Join-Path $env:RUNNER_TEMP 'VulkanSDK.exe'
+          $sdkDirectory = Join-Path $env:RUNNER_TEMP "VulkanSDK/$env:VULKAN_SDK_VERSION"
+          $uri = "https://sdk.lunarg.com/sdk/download/$env:VULKAN_SDK_VERSION/windows/vulkansdk-windows-X64-$env:VULKAN_SDK_VERSION.exe"
+          Invoke-WebRequest -Uri $uri -OutFile $installer
+          $signature = Get-AuthenticodeSignature -LiteralPath $installer
+          if ($signature.Status -ne 'Valid' -or $signature.SignerCertificate.Subject -notmatch 'LunarG') {
+            throw 'Vulkan SDK installer signature is invalid or not signed by LunarG'
+          }
+          # https://vulkan.lunarg.com/doc/view/latest/windows/getting_started.html#unattended-installation
+          # copy_only=1 installs SDK files without registry or driver changes.
+          $installation = Start-Process -FilePath $installer -ArgumentList @('--root', $sdkDirectory, '--accept-licenses', '--default-answer', '--confirm-command', 'install', 'copy_only=1') -Wait -PassThru -WindowStyle Hidden
+          if ($installation.ExitCode -ne 0) { throw "Vulkan SDK installation failed: $($installation.ExitCode)" }
+          foreach ($relative in @('Include/vulkan/vulkan.h', 'Lib/vulkan-1.lib', 'Source/SPIRV-Reflect/spirv_reflect.c', 'Bin/spirv-val.exe')) {
+            if (-not (Test-Path -LiteralPath (Join-Path $sdkDirectory $relative))) { throw "SDK file missing: $relative" }
+          }
+          Add-Content -LiteralPath $env:GITHUB_ENV -Value "VULKAN_SDK=$sdkDirectory"
+          Add-Content -LiteralPath $env:GITHUB_PATH -Value (Join-Path $sdkDirectory 'Bin')
+      - name: Configure Vulkan editor and game
+        run: cmake --preset editor -DTINYENGINE_ENABLE_VULKAN=ON
+      - name: Compile Vulkan hosts and regressions
+        run: cmake --build intermediate/Build/Editor --config ${{ matrix.configuration }} --parallel 4 --target tinyengine_game tinyengine_editor tinyengine_vulkan_shader_tests tinyengine_vulkan_context_tests tinyengine_vulkan_render_tests
+      - name: Validate shaders without a GPU
+        run: ctest --test-dir intermediate/Build/Editor -C ${{ matrix.configuration }} -R "^tinyengine_vulkan_shader$" --output-on-failure --no-tests=error
+      # GPU/context and interactive editor validation require a machine with a Vulkan device.

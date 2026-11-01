@@ -7,6 +7,7 @@
 
 #include "animation_asset_editor.h"
 #include "asset_reference_graph.h"
+#include "editor_gui_renderer.h"
 #include "material_asset_editor.h"
 #include "material_graph_editor.h"
 #include "tinyengine/ai/behavior_tree.h"
@@ -33,7 +34,7 @@
 
 namespace tinyengine
 {
-class SdlGlRenderDevice;
+class RenderDevice;
 
 // 单窗口编辑器外壳。EditorApp 拥有 UI 状态，场景与各运行时服务仍由 Engine 统一持有。
 class EditorApp
@@ -42,7 +43,7 @@ class EditorApp
     /// @brief 初始化对象及其依赖资源。
     /// @param projectFile Aster-Engine 项目文件路径。
     /// @return 操作成功时返回 `true`，否则返回 `false`。
-    bool initialize(const std::filesystem::path& projectFile);
+    bool initialize(const std::filesystem::path& projectFile, RenderBackend backend = RenderBackend::OpenGL);
     /// @brief 运行主循环或任务流程。
     /// @param maximumFrames 最大运行帧数；为零表示不限制。
     void Run(std::uint32_t maximumFrames = 0);
@@ -328,7 +329,8 @@ class EditorApp
     std::future<SolutionResult> m_solutionFuture;
     std::string m_solutionStatus;
     std::future<PackageResult> m_packageFuture;
-    SdlGlRenderDevice* m_device = nullptr;
+    RenderDevice* m_device = nullptr;
+    EditorGuiRenderer m_guiRenderer;
     Entity m_selected = kInvalidEntity;
     std::vector<Entity> m_selection;
     std::vector<std::string> m_undo;

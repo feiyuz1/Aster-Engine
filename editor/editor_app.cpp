@@ -23,7 +23,7 @@
 #include "tinyengine/project/project_packager.h"
 #include "tinyengine/project/project_scaffolder.h"
 #include "tinyengine/project/solution_generator.h"
-#include "tinyengine/render/sdl_gl_render_device.h"
+#include "tinyengine/render/renderer.h"
 #include "tinyengine/render/shader_pipeline.h"
 #include "tinyengine/resource/asset_maintenance.h"
 #ifdef TINYENGINE_HAS_ASSIMP
@@ -34,8 +34,6 @@
 #ifdef _WIN32
 #include <SDL_syswm.h>
 #endif
-#include <backends/imgui_impl_opengl3.h>
-#include <backends/imgui_impl_sdl2.h>
 #include <imgui.h>
 
 #include <algorithm>
@@ -693,7 +691,7 @@ bool EditorApp::saveEditorSettings()
 }
 
 // 编辑器复用 Engine 的 World 与服务，但以编辑态启动，并把 ImGui 回调挂到场景渲染之后。
-bool EditorApp::initialize(const std::filesystem::path& projectFile)
+bool EditorApp::initialize(const std::filesystem::path& projectFile, const RenderBackend backend)
 {
 #ifdef _WIN32
     // Fix DPI awareness before SDL creates any HWND. Shell context-menu extensions can otherwise
@@ -708,12 +706,13 @@ bool EditorApp::initialize(const std::filesystem::path& projectFile)
         const auto parent = toUtf8Path(std::filesystem::current_path());
         std::snprintf(m_newProjectParent.data(), m_newProjectParent.size(), "%s", parent.c_str());
     }
+    m_engine.setRenderBackend(backend);
     if (!m_engine.initialize(projectFile, false))
         return false;
     loadEditorSettings();
     m_assetFolder =
         m_engine.getProjectSettings().resolve(m_engine.getProjectSettings().assetDirectory).lexically_normal();
-    m_device = dynamic_cast<SdlGlRenderDevice*>(m_engine.GetContext().renderer->getDevice());
+    m_device = m_engine.GetContext().renderer->getDevice();
     if (!m_device)
     {
         m_engine.shutdown();
@@ -745,16 +744,13 @@ bool EditorApp::initialize(const std::filesystem::path& projectFile)
     // ImGui 逻辑坐标与 96 DPI 保持一致；高分屏清晰度由 DPI 缩放模式和字体栅格密度自动保证。
     const bool chineseFontLoaded = loadChineseEditorFont(io, m_engine.getProjectSettings());
     applyEditorStyle();
-    if (!ImGui_ImplSDL2_InitForOpenGL(static_cast<SDL_Window*>(m_device->getNativeWindow()),
-                                      m_device->getGlContext()) ||
-        !ImGui_ImplOpenGL3_Init("#version 330"))
+    if (!m_guiRenderer.initialize(*m_device))
     {
         ImGui::DestroyContext();
         m_engine.shutdown();
+        m_device = nullptr;
         return false;
     }
-    m_device->setEventCallback([](const void* event)
-                               { ImGui_ImplSDL2_ProcessEvent(static_cast<const SDL_Event*>(event)); });
     m_device->setCloseRequestCallback([this]() { requestEditorExit(); });
     m_engine.GetContext().renderer->setOverlayCallback([this]() { draw(); });
     notify(localize("Editor initialized. Edit and play states are isolated.",
@@ -795,13 +791,12 @@ void EditorApp::shutdown()
     m_engine.GetContext().renderer->setOverlayCallback({});
     m_device->setEventCallback({});
     m_device->setCloseRequestCallback({});
-    m_device->enableSceneRenderTarget(false);
     saveEditorSettings();
     ImGui::SaveIniSettingsToDisk(m_workspaceIniPath.c_str());
-    ImGui_ImplOpenGL3_Shutdown();
-    ImGui_ImplSDL2_Shutdown();
+    m_guiRenderer.shutdown();
     ImGui::DestroyContext();
     m_engine.shutdown();
+    m_device = nullptr;
     m_initialized = false;
 }
 
@@ -812,8 +807,7 @@ std::filesystem::path EditorApp::takeRequestedProject()
 
 void EditorApp::draw()
 {
-    ImGui_ImplOpenGL3_NewFrame();
-    ImGui_ImplSDL2_NewFrame();
+    m_guiRenderer.newFrame();
     // SDL layout is in logical points; only framebuffer allocation uses the current monitor scale.
     m_dpiScale = std::max(0.01f, ImGui::GetIO().DisplayFramebufferScale.x);
     ImGui::NewFrame();
@@ -822,7 +816,7 @@ void EditorApp::draw()
         drawProjectLauncher();
         ImGui::Render();
         m_device->setTextInputEnabled(ImGui::GetIO().WantTextInput);
-        ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+        m_guiRenderer.renderDrawData();
         return;
     }
     m_sceneCommandsFocused = false;
@@ -874,7 +868,7 @@ void EditorApp::draw()
     updateWindowTitle();
     ImGui::Render();
     m_device->setTextInputEnabled(ImGui::GetIO().WantTextInput);
-    ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+    m_guiRenderer.renderDrawData();
 }
 
 void EditorApp::notify(std::string message, const FeedbackKind kind)
@@ -975,9 +969,8 @@ void EditorApp::openAsset(const AssetInfo& asset)
             notify(m_animationAssetEditor.error(), FeedbackKind::Warning);
         }
     }
-    else if (asset.type == "Material" ||
-             asset.extension == ".blendtree" || asset.extension == ".animgraph" || asset.extension == ".vfx" ||
-             asset.extension == ".btgraph")
+    else if (asset.type == "Material" || asset.extension == ".blendtree" || asset.extension == ".animgraph" ||
+             asset.extension == ".vfx" || asset.extension == ".btgraph")
     {
         m_editingAsset = asset.path;
         if (asset.type == "Material")
@@ -1011,7 +1004,7 @@ void EditorApp::drawAssetPreview()
         requestThumbnail(*asset);
         const auto thumbnail = getThumbnailPath(*asset);
         const auto texture =
-            m_device && isThumbnailReady(*asset, thumbnail) ? m_device->getUiTexture(toUtf8GenericPath(thumbnail)) : 0;
+            m_device && isThumbnailReady(*asset, thumbnail) ? m_guiRenderer.uiTexture(toUtf8GenericPath(thumbnail)) : 0;
         if (texture)
             ImGui::Image(ImTextureRef(static_cast<ImTextureID>(texture)), {192, 192});
         ImGui::TextWrapped("%s", asset->path.c_str());
@@ -1308,8 +1301,7 @@ void EditorApp::handleShortcuts()
     if (m_assetsFocused && !io.KeyCtrl && !io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_F2, false))
         m_assetRenameRequested = true;
     // 材质文档处理自己的保存、节点删除和撤销，不得透传为场景命令。
-    if (m_materialGraphEditor.isFocused() || m_materialAssetEditor.isFocused() ||
-        m_animationAssetEditor.isFocused())
+    if (m_materialGraphEditor.isFocused() || m_materialAssetEditor.isFocused() || m_animationAssetEditor.isFocused())
         return;
     if (m_assetsFocused)
     {
@@ -3314,8 +3306,8 @@ void EditorApp::drawMaterialGraphEditor()
     auto& system = renderer->GetMaterialSystem();
     const auto asset =
         m_editingAsset.empty() ? std::optional<AssetInfo>{} : resources->getAssetRegistry().Find(m_editingAsset);
-    if (asset && asset->type == "Material" &&
-        m_openMaterialGraphAsset != asset->path && m_openMaterialAsset != asset->path)
+    if (asset && asset->type == "Material" && m_openMaterialGraphAsset != asset->path &&
+        m_openMaterialAsset != asset->path)
     {
         MaterialResource resource;
         if (resource.load(asset->path))
@@ -3346,16 +3338,16 @@ void EditorApp::drawMaterialGraphEditor()
             if (const auto parentAsset = resources->getAssetRegistry().Find(path))
                 openAsset(*parentAsset);
             else
-                notify(localize("Parent material was not found in the asset registry.",
-                                "资产库中未找到父材质。"), FeedbackKind::Warning);
+                notify(localize("Parent material was not found in the asset registry.", "资产库中未找到父材质。"),
+                       FeedbackKind::Warning);
         });
     const auto validator = [this](const auto& compiled, auto& diagnostics)
     { return !m_device || m_device->validateMaterial(compiled, diagnostics); };
     if (!m_materialAssetEditor.GetPath().empty())
     {
         const auto& draft = m_materialAssetEditor.GetDraft();
-        const auto parent = system.resolve(resources->resolveAssetPath(
-            draft.parentPath, m_materialAssetEditor.GetPath()));
+        const auto parent =
+            system.resolve(resources->resolveAssetPath(draft.parentPath, m_materialAssetEditor.GetPath()));
         if (parent)
         {
             auto schema = parent->definition->parameters;
@@ -3382,8 +3374,8 @@ void EditorApp::drawMaterialGraphEditor()
             diagnostics = result.diagnostics;
             return result.success;
         });
-    if (!m_packageFuture.valid() && asset && (asset->type == "Material") &&
-        ImGui::GetIO().KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_R))
+    if (!m_packageFuture.valid() && asset && (asset->type == "Material") && ImGui::GetIO().KeyCtrl &&
+        ImGui::IsKeyPressed(ImGuiKey_R))
     {
         const auto result = system.reload(asset->path, validator);
         for (const auto& d : result.diagnostics)

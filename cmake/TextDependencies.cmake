@@ -130,6 +130,7 @@ foreach(_dependency freetype harfbuzz icu)
 endforeach()
 
 # 发布器只记录文件名，从被验证的 Game EXE 旁复制，不能嵌入开发机路径。
+list(APPEND TINYENGINE_TEXT_RUNTIME_FILES ${TINYENGINE_ADDITIONAL_RUNTIME_FILES})
 set(_tinyengine_runtime_names "")
 foreach(_runtime IN LISTS TINYENGINE_TEXT_RUNTIME_FILES)
     get_filename_component(_name "${_runtime}" NAME)

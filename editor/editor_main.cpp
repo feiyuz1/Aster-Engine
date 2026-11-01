@@ -17,11 +17,25 @@ int main(int argc, char** argv)
     tinyengine::CrashReporter::install("Aster-Engine-Editor");
     std::filesystem::path project;
     std::uint32_t maximumFrames = 0;
+    auto renderBackend = tinyengine::RenderBackend::OpenGL;
     for (int index = 1; index < argc; ++index)
     {
         const std::string argument = argv[index];
         if (argument.rfind("--frames=", 0) == 0)
             maximumFrames = static_cast<std::uint32_t>(std::strtoul(argument.c_str() + 9, nullptr, 10));
+        else if (argument.rfind("--renderer=", 0) == 0)
+        {
+            const auto backend = argument.substr(11);
+            if (backend == "vulkan")
+                renderBackend = tinyengine::RenderBackend::Vulkan;
+            else if (backend == "opengl")
+                renderBackend = tinyengine::RenderBackend::OpenGL;
+            else
+            {
+                std::cerr << "Unknown renderer: " << backend << ". Use opengl or vulkan.\n";
+                return 2;
+            }
+        }
         else if (project.empty())
             project = argument;
     }
@@ -38,7 +52,7 @@ int main(int argc, char** argv)
             project = validation.projectFile;
         }
         tinyengine::EditorApp editor;
-        if (!editor.initialize(project))
+        if (!editor.initialize(project, renderBackend))
             return 1;
         editor.Run(maximumFrames);
         project = editor.takeRequestedProject();

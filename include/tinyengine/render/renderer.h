@@ -10,11 +10,13 @@
 #include "tinyengine/render/material_system.h"
 #include "tinyengine/render/render_graph.h"
 #include "tinyengine/resource/resource.h"
+#include "tinyengine/text/glyph_atlas.h"
 #include "tinyengine/types.h"
 #include "tinyengine/ui/ui_system.h"
 
 #include <array>
 #include <cstddef>
+#include <cstdint>
 #include <functional>
 #include <memory>
 #include <string>
@@ -57,6 +59,13 @@ struct InputState
     bool uiDelete = false, uiCursorLeft = false, uiCursorRight = false;
     bool uiHome = false, uiEnd = false, uiSelectAll = false, uiExtendSelection = false;
     std::vector<TextInputEvent> textEvents;
+};
+
+enum class RenderBackend
+{
+    OpenGL,
+    Vulkan,
+    Null
 };
 
 enum class RenderPath
@@ -150,6 +159,118 @@ enum class PostProcessPass
 class RenderDevice
 {
   public:
+    virtual RenderBackend getBackend() const
+    {
+        return RenderBackend::Null;
+    }
+    virtual void* getNativeWindow() const
+    {
+        return nullptr;
+    }
+    virtual void setEventCallback(std::function<void(const void*)>) {}
+    virtual void setCloseRequestCallback(std::function<void()>) {}
+    virtual void setTextInputEnabled(bool) {}
+    virtual void setTextInputRect(const UIRect&) {}
+    virtual GlyphAtlasStats getGlyphAtlasStats() const
+    {
+        return {};
+    }
+    virtual void setEscapeQuits(bool) {}
+    virtual float getDpiScale() const
+    {
+        return 1.0f;
+    }
+    virtual bool rumbleController(float, float, std::uint32_t)
+    {
+        return false;
+    }
+    virtual bool isControllerConnected() const
+    {
+        return false;
+    }
+    virtual bool enableSceneRenderTarget(bool, int = 960, int = 540)
+    {
+        return false;
+    }
+    virtual bool resizeSceneRenderTarget(int, int)
+    {
+        return false;
+    }
+    virtual std::uintptr_t getSceneColorTexture() const
+    {
+        return 0;
+    }
+    virtual std::uintptr_t getUiTexture(const std::string&)
+    {
+        return 0;
+    }
+    virtual int getSceneTargetWidth() const
+    {
+        return 0;
+    }
+    virtual int getSceneTargetHeight() const
+    {
+        return 0;
+    }
+    virtual bool reloadShaders()
+    {
+        return false;
+    }
+    virtual bool validateShader(const std::string&)
+    {
+        return false;
+    }
+    virtual const std::string& GetLastShaderError() const
+    {
+        static const std::string empty;
+        return empty;
+    }
+    virtual void setExposure(float) {}
+    virtual float getExposure() const
+    {
+        return 1.0f;
+    }
+    virtual void setFxaaEnabled(bool) {}
+    virtual bool isFxaaEnabled() const
+    {
+        return false;
+    }
+    virtual void setBloomEnabled(bool) {}
+    virtual bool isBloomEnabled() const
+    {
+        return false;
+    }
+    virtual void setSsaoEnabled(bool) {}
+    virtual bool isSsaoEnabled() const
+    {
+        return false;
+    }
+    virtual void setGtaoEnabled(bool) {}
+    virtual bool isGtaoEnabled() const
+    {
+        return false;
+    }
+    virtual void setTaaEnabled(bool) {}
+    virtual bool isTaaEnabled() const
+    {
+        return false;
+    }
+    virtual float getLastGpuFrameMilliseconds() const
+    {
+        return 0.0f;
+    }
+    virtual std::size_t getHzbLevelCount() const
+    {
+        return 0;
+    }
+    virtual bool isIndirectDrawSupported() const
+    {
+        return false;
+    }
+    virtual bool isGpuDrivenCullingSupported() const
+    {
+        return false;
+    }
     virtual bool supportsDeferredRendering() const
     {
         return false;

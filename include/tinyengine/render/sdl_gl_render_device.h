@@ -17,6 +17,10 @@ namespace tinyengine
 class SdlGlRenderDevice final : public RenderDevice
 {
   public:
+    RenderBackend getBackend() const override
+    {
+        return RenderBackend::OpenGL;
+    }
     bool supportsDeferredRendering() const override;
     void beginGBufferPass() override;
     void endGBufferPass() override;
@@ -111,90 +115,90 @@ class SdlGlRenderDevice final : public RenderDevice
     void trimGpuResources() override;
     /// @brief 获取 `NativeWindow`。
     /// @return 返回目标对象指针；对象不存在时返回 `nullptr`。
-    void* getNativeWindow() const;
+    void* getNativeWindow() const override;
     /// @brief 获取 `GlContext`。
     /// @return 返回目标对象指针；对象不存在时返回 `nullptr`。
     void* getGlContext() const;
     /// @brief 设置 `EventCallback`。
     /// @param callback 满足条件时调用的回调函数。
-    void setEventCallback(std::function<void(const void*)> callback);
+    void setEventCallback(std::function<void(const void*)> callback) override;
     /// @brief 只在需要编辑文字时启用系统输入法，避免游戏按键被输入法接管。
-    void setTextInputEnabled(bool enabled);
+    void setTextInputEnabled(bool enabled) override;
     /// @brief 设置输入法候选框的光标区域，输入为当前 UI 视口物理像素。
-    void setTextInputRect(const UIRect& rect);
-    GlyphAtlasStats getGlyphAtlasStats() const;
+    void setTextInputRect(const UIRect& rect) override;
+    GlyphAtlasStats getGlyphAtlasStats() const override;
     /// @brief 设置窗口关闭请求处理器；未设置时保持运行时直接退出行为。
-    void setCloseRequestCallback(std::function<void()> callback);
+    void setCloseRequestCallback(std::function<void()> callback) override;
     /// @brief 启用 `SceneRenderTarget`。
     /// @param enabled 是否启用对应功能。
     /// @param width 目标宽度。
     /// @param height 目标高度。
     /// @return 操作成功时返回 `true`，否则返回 `false`。
-    bool enableSceneRenderTarget(bool enabled, int width = 960, int height = 540);
+    bool enableSceneRenderTarget(bool enabled, int width = 960, int height = 540) override;
     /// @brief 调整尺寸 `SceneRenderTarget`。
     /// @param width 目标宽度。
     /// @param height 目标高度。
     /// @return 操作成功时返回 `true`，否则返回 `false`。
-    bool resizeSceneRenderTarget(int width, int height);
+    bool resizeSceneRenderTarget(int width, int height) override;
     /// @brief 获取 `SceneColorTexture`。
     /// @return 返回计算得到的数值、数量或索引。
-    std::uintptr_t getSceneColorTexture() const;
+    std::uintptr_t getSceneColorTexture() const override;
     /// @brief 获取 `UiTexture`。
     /// @param path 文件、资源或目录路径。
     /// @return 返回计算得到的数值、数量或索引。
-    std::uintptr_t getUiTexture(const std::string& path);
+    std::uintptr_t getUiTexture(const std::string& path) override;
     /// @brief 获取 `SceneTargetWidth`。
     /// @return 返回计算得到的数值、数量或索引。
-    int getSceneTargetWidth() const;
+    int getSceneTargetWidth() const override;
     /// @brief 获取 `SceneTargetHeight`。
     /// @return 返回计算得到的数值、数量或索引。
-    int getSceneTargetHeight() const;
+    int getSceneTargetHeight() const override;
     /// @brief 重新加载 `Shaders`。
     /// @return 操作成功时返回 `true`，否则返回 `false`。
-    bool reloadShaders();
+    bool reloadShaders() override;
     /// @brief 验证 `Shader`。
     /// @param path 文件、资源或目录路径。
     /// @return 条件成立时返回 `true`，否则返回 `false`。
-    bool validateShader(const std::string& path);
+    bool validateShader(const std::string& path) override;
     /// @brief 设置 `Exposure`。
     /// @param exposure 本次操作使用的数值。
-    void setExposure(float exposure);
+    void setExposure(float exposure) override;
     /// @brief 获取 `Exposure`。
     /// @return 返回计算得到的数值、数量或索引。
-    float getExposure() const;
+    float getExposure() const override;
     /// @brief 获取 `LastShaderError`。
     /// @return 返回对应对象的引用；有效期不超过其所属对象。
-    const std::string& GetLastShaderError() const;
+    const std::string& GetLastShaderError() const override;
     /// @brief 设置 `FxaaEnabled`。
     /// @param enabled 是否启用对应功能。
-    void setFxaaEnabled(bool enabled);
+    void setFxaaEnabled(bool enabled) override;
     /// @brief 判断是否满足 `FxaaEnabled` 条件。
     /// @return 条件成立时返回 `true`，否则返回 `false`。
-    bool isFxaaEnabled() const;
+    bool isFxaaEnabled() const override;
     /// @brief 设置 `BloomEnabled`。
     /// @param enabled 是否启用对应功能。
-    void setBloomEnabled(bool enabled);
+    void setBloomEnabled(bool enabled) override;
     /// @brief 判断是否满足 `BloomEnabled` 条件。
     /// @return 条件成立时返回 `true`，否则返回 `false`。
-    bool isBloomEnabled() const;
+    bool isBloomEnabled() const override;
     /// @brief 设置 `SsaoEnabled`。
     /// @param enabled 是否启用对应功能。
-    void setSsaoEnabled(bool enabled);
+    void setSsaoEnabled(bool enabled) override;
     /// @brief 判断是否满足 `SsaoEnabled` 条件。
     /// @return 条件成立时返回 `true`，否则返回 `false`。
-    bool isSsaoEnabled() const;
+    bool isSsaoEnabled() const override;
     /// @brief 设置 `GtaoEnabled`。
     /// @param enabled 是否启用对应功能。
-    void setGtaoEnabled(bool enabled);
+    void setGtaoEnabled(bool enabled) override;
     /// @brief 判断是否满足 `GtaoEnabled` 条件。
     /// @return 条件成立时返回 `true`，否则返回 `false`。
-    bool isGtaoEnabled() const;
+    bool isGtaoEnabled() const override;
     /// @brief 设置 `TaaEnabled`。
     /// @param enabled 是否启用对应功能。
-    void setTaaEnabled(bool enabled);
+    void setTaaEnabled(bool enabled) override;
     /// @brief 判断是否满足 `TaaEnabled` 条件。
     /// @return 条件成立时返回 `true`，否则返回 `false`。
-    bool isTaaEnabled() const;
+    bool isTaaEnabled() const override;
     bool usesTemporalJitter() const override
     {
         // Pixel quantization needs a fixed raster grid; subpixel Halton offsets
@@ -203,31 +207,31 @@ class SdlGlRenderDevice final : public RenderDevice
     }
     /// @brief 获取 `LastGpuFrameMilliseconds`。
     /// @return 返回计算得到的数值、数量或索引。
-    float getLastGpuFrameMilliseconds() const;
+    float getLastGpuFrameMilliseconds() const override;
     /// @brief 获取 `HzbLevelCount`。
     /// @return 返回计算得到的数值、数量或索引。
-    std::size_t getHzbLevelCount() const;
+    std::size_t getHzbLevelCount() const override;
     /// @brief 判断是否满足 `IndirectDrawSupported` 条件。
     /// @return 条件成立时返回 `true`，否则返回 `false`。
-    bool isIndirectDrawSupported() const;
+    bool isIndirectDrawSupported() const override;
     /// @brief 判断是否满足 `GpuDrivenCullingSupported` 条件。
     /// @return 条件成立时返回 `true`，否则返回 `false`。
-    bool isGpuDrivenCullingSupported() const;
+    bool isGpuDrivenCullingSupported() const override;
     /// @brief 触发震动 `Controller`。
     /// @param lowFrequency 接口所需的输入参数。
     /// @param highFrequency 接口所需的输入参数。
     /// @param durationMilliseconds 时间值，单位按接口约定为秒。
     /// @return 操作成功时返回 `true`，否则返回 `false`。
-    bool rumbleController(float lowFrequency, float highFrequency, std::uint32_t durationMilliseconds);
+    bool rumbleController(float lowFrequency, float highFrequency, std::uint32_t durationMilliseconds) override;
     /// @brief 判断是否满足 `ControllerConnected` 条件。
     /// @return 条件成立时返回 `true`，否则返回 `false`。
-    bool isControllerConnected() const;
+    bool isControllerConnected() const override;
     /// @brief 设置是否允许 ESC 键退出主循环。
     /// @param enabled 是否启用对应行为。
-    void setEscapeQuits(bool enabled);
+    void setEscapeQuits(bool enabled) override;
     /// @brief 获取 `DpiScale`。
     /// @return 返回当前显示 DPI 相对 96 的缩放比例。
-    float getDpiScale() const;
+    float getDpiScale() const override;
 #ifdef TINYENGINE_TEST_HOOKS
     std::vector<Vec4> ReadHdrAttachmentForTests(std::size_t attachment = 0) const;
     std::size_t getMaterialProgramCompileCountForTests(MaterialPass pass = MaterialPass::Base) const;
@@ -244,10 +248,5 @@ class SdlGlRenderDevice final : public RenderDevice
     int m_height;
     std::string m_title;
     float m_aspect = 16.0f / 9.0f;
-    float m_dpiScale = 1.0f;
-    bool m_escapeQuits = true;
-    InputState m_inputState;
-    std::function<void(const void*)> m_eventCallback;
-    std::function<void()> m_closeRequestCallback;
 };
 } // namespace tinyengine

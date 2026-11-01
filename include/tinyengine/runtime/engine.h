@@ -68,6 +68,14 @@ struct EngineContext
 class Engine : private WorldListener
 {
   public:
+    void setRenderBackend(RenderBackend backend)
+    {
+        m_renderBackend = backend;
+    }
+    RenderBackend getRenderBackend() const
+    {
+        return m_renderBackend;
+    }
     /// @brief 初始化对象及其依赖资源。
     /// @param projectFile Aster-Engine 项目文件路径。
     /// @param startInPlayMode 目标状态、模式或类型。
@@ -155,6 +163,7 @@ class Engine : private WorldListener
     AssetStreamingManager m_assetStreaming;
     World m_world;
     Renderer m_renderer;
+    RenderBackend m_renderBackend = RenderBackend::OpenGL;
     InputSystem m_inputSystem;
     PhysicsWorld m_physicsWorld;
     AudioEngine m_audioEngine;
