@@ -9,15 +9,16 @@
       "architecture": "x64",
       "cacheVariables": {
         "FETCHCONTENT_BASE_DIR": "${sourceDir}/intermediate/Dependencies",
-        "TINYENGINE_BUILD_IMPORTERS": "OFF"
+        "TINYENGINE_BUILD_IMPORTERS": "OFF",
+        "TINYENGINE_BUILD_DEMO": "OFF"
       }
     },
     {
       "name": "editor",
-      "displayName": "Windows editor and regression tests",
+      "displayName": "Windows editor",
       "inherits": "windows-base",
       "binaryDir": "${sourceDir}/intermediate/Build/Editor",
-      "cacheVariables": { "TINYENGINE_BUILD_EDITOR": "ON", "TINYENGINE_BUILD_TESTS": "ON" }
+      "cacheVariables": { "TINYENGINE_BUILD_EDITOR": "ON", "TINYENGINE_BUILD_TESTS": "OFF", "BUILD_TESTING": "OFF" }
     },
     {
       "name": "core",

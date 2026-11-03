@@ -14,6 +14,7 @@
 !/.github/workflows/windows.yml
 !/CMakeLists.txt
 !/CMakePresets.json
+!/generate_project_files.cmd
 !/Doxyfile
 !/README.md
 !/Aster-Engine.tinyproject

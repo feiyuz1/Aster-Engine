@@ -81,7 +81,7 @@ tinyengine_game <project.tinyproject> [--frames=N] [--renderer=opengl|vulkan]
 tinyengine_editor [project.tinyproject] [--frames=N] [--renderer=opengl|vulkan]
 ```
 
-- Demo 没有帧数参数时持续运行。
+- Demo 是测试构建中的可选开发验证入口，需同时开启 `TINYENGINE_BUILD_TESTS` 和 `TINYENGINE_BUILD_DEMO`；默认关闭，没有帧数参数时持续运行。
 - Game 必须能找到项目文件；`--frames=N` 用于冒烟测试。
 - Editor 省略项目时使用默认项目查找逻辑；`--frames=N` 用于有界编辑器冒烟测试。
 - Game 与 Editor 默认使用 OpenGL。`--renderer=vulkan` 选择编译时启用的原生 Vulkan 后端；不支持或初始化失败时报告错误，不会自动切换。未知后端名返回参数错误。

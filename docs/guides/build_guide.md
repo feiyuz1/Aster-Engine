@@ -2,16 +2,27 @@
 
 ## 推荐构建入口
 
+Windows 下可直接双击仓库根目录的 `generate_project_files.cmd`，自动使用 `editor` 预设生成或更新引擎本体工程。完成后打开 `intermediate/Build/Editor/Aster-Engine.sln`，在 VS 2022 中选择 `Debug/x64`，将 `tinyengine_editor` 设为启动项目，即可编译和调试。脚本需要 CMake 3.21+ 位于 `PATH`，只生成工程，不执行 C++ 编译；窗口会保留生成结果和错误信息。自动化调用可传入 `--no-pause`，脚本会返回生成操作的退出码。
+
 Windows 安装 VS 2022 的 C++ 桌面开发和 CMake 后，在引擎根目录执行：
 
 ```powershell
 cmake --preset editor
 cmake --build --preset editor-debug
-ctest --preset editor-debug
 .\intermediate\Build\Editor\Debug\tinyengine_editor.exe
 ```
 
-引擎的构建文件位于 `intermediate/Build/Editor`，下载依赖位于 `intermediate/Dependencies`。`core` / `core-release` 用于不带编辑器的构建。Presets 默认关闭可选 Assimp 导入器；需要模型导入时，配置时追加 `-DTINYENGINE_BUILD_IMPORTERS=ON -DTINYENGINE_ASSIMP_DIR=<本机源码目录>`。
+引擎的构建文件位于 `intermediate/Build/Editor`，下载依赖位于 `intermediate/Dependencies`。`editor` 预设默认关闭测试和 Demo，双击生成脚本得到的解决方案只包含开发所需的程序、库和辅助目标。`core` / `core-release` 用于不带编辑器的构建。Presets 默认关闭可选 Assimp 导入器；需要模型导入时，配置时追加 `-DTINYENGINE_BUILD_IMPORTERS=ON -DTINYENGINE_ASSIMP_DIR=<本机源码目录>`。
+
+需要运行回归测试时，在同一构建目录中显式开启测试，再编译和执行：
+
+```powershell
+cmake --preset editor -DTINYENGINE_BUILD_TESTS=ON -DBUILD_TESTING=ON
+cmake --build --preset editor-debug
+ctest --preset editor-debug
+```
+
+再次双击生成脚本或执行 `cmake --preset editor` 会恢复默认的不带测试配置。
 
 本机离线依赖通过配置参数，或未跟踪的 `CMakeUserPresets.json` 指定。例如给 SDL 指定 `FETCHCONTENT_SOURCE_DIR_SDL2`，给 ImGui 指定 `TINYENGINE_IMGUI_DIR`，给 stb 指定 `TINYENGINE_STB_DIR`。不要把本机磁盘路径写进共享 CMake 文件。
 
@@ -78,7 +89,7 @@ cmake --build build --config Release -j 8
 | 选项 | 默认值 | 作用 |
 |---|---:|---|
 | `TINYENGINE_BUILD_TESTS` | OFF | 本地有测试源码时可手动启用 |
-| `TINYENGINE_BUILD_DEMO` | ON | 构建开发 Demo |
+| `TINYENGINE_BUILD_DEMO` | OFF | 可选运行时验证入口；还需 `TINYENGINE_BUILD_TESTS=ON` 才生成 |
 | `TINYENGINE_BUILD_GAME` | ON | 构建独立 Shipping Runtime 和 `package_game` |
 | `TINYENGINE_BUILD_EDITOR` | ON | 构建 Dear ImGui 编辑器 |
 | `TINYENGINE_BUILD_IMPORTERS` | ON | 构建 Assimp 导入库和模型导入命令 |
@@ -111,7 +122,7 @@ cmake --build build-runtime --config Release -j 8
 | 目标 | 产物/用途 |
 |---|---|
 | `tinyengine` | C++20 静态核心库 |
-| `tinyengine_demo` | 开发场景运行入口；第一个参数可限制帧数 |
+| `tinyengine_demo` | 测试构建中的可选运行时验证入口；第一个参数可限制帧数 |
 | `tinyengine_game` | 发布包使用的独立运行时；构建后同时生成兼容性 sidecar `.buildinfo` |
 | `tinyengine_editor` | Dear ImGui 场景与资产编辑器 |
 | `tinyengine_asset_tool` | 导入、扫描、Cook、TPAK、环境烘焙和资产维护 |
@@ -126,8 +137,10 @@ cmake --build build-runtime --config Release -j 8
 运行三帧 OpenGL 冒烟：
 
 ```powershell
-.\build\Debug\tinyengine_demo.exe 3
+.\intermediate\Build\Editor\Debug\tinyengine_game.exe Aster-Engine.tinyproject --frames=3
 ```
+
+`tinyengine_demo` 仅在同时开启 `TINYENGINE_BUILD_TESTS` 和 `TINYENGINE_BUILD_DEMO` 时生成，用于开发验证；日常冒烟使用上面的 Game 入口。
 
 也可使用 Commandlet 校验基础素材：
 

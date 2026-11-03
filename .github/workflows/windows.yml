@@ -87,7 +87,7 @@ jobs:
           Add-Content -LiteralPath $env:GITHUB_ENV -Value "VULKAN_SDK=$sdkDirectory"
           Add-Content -LiteralPath $env:GITHUB_PATH -Value (Join-Path $sdkDirectory 'Bin')
       - name: Configure Vulkan editor and game
-        run: cmake --preset editor -DTINYENGINE_ENABLE_VULKAN=ON
+        run: cmake --preset editor -DTINYENGINE_ENABLE_VULKAN=ON -DTINYENGINE_BUILD_TESTS=ON -DBUILD_TESTING=ON
       - name: Compile Vulkan hosts and regressions
         run: cmake --build intermediate/Build/Editor --config ${{ matrix.configuration }} --parallel 4 --target tinyengine_game tinyengine_editor tinyengine_vulkan_shader_tests tinyengine_vulkan_context_tests tinyengine_vulkan_render_tests
       - name: Validate shaders without a GPU

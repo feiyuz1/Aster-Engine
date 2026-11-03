@@ -414,7 +414,7 @@ Assets 面板可直接创建：
 
 编辑器内最常用的是顶部 `运行/停止`。Play 会使用内存场景快照，Stop 后恢复编辑态；需要保留的改动必须在进入 Play 前保存。
 
-开发 Demo：
+可选开发 Demo（仅在同时开启 `TINYENGINE_BUILD_TESTS` 和 `TINYENGINE_BUILD_DEMO` 时构建，默认关闭）：
 
 ```powershell
 .\build\Debug\tinyengine_demo.exe
