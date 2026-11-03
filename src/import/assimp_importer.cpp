@@ -273,15 +273,39 @@ aiQuaternion sampleRotationKeys(const aiQuatKey* keys, const unsigned int count,
     return result.Normalize();
 }
 
-Vec3 quaternionToEulerDegrees(const aiQuaternion& value)
+Vec3 quaternionToEulerDegrees(const aiQuaternion& value, const Vec3* previous = nullptr)
 {
-    const float sinX = 2.0f * (value.w * value.x + value.y * value.z);
-    const float cosX = 1.0f - 2.0f * (value.x * value.x + value.y * value.y);
-    const float sinY = std::clamp(2.0f * (value.w * value.y - value.z * value.x), -1.0f, 1.0f);
-    const float sinZ = 2.0f * (value.w * value.z + value.x * value.y);
-    const float cosZ = 1.0f - 2.0f * (value.y * value.y + value.z * value.z);
-    return {std::atan2(sinX, cosX) * 180.0f / kPi, std::asin(sinY) * 180.0f / kPi,
-            std::atan2(sinZ, cosZ) * 180.0f / kPi};
+    const double x = value.x, y = value.y, z = value.z, w = value.w;
+    const double norm = x * x + y * y + z * z + w * w;
+    const double sinY = std::clamp(2.0 * (w * y - z * x) / norm, -1.0, 1.0);
+    constexpr double degrees = 180.0 / kPi;
+    Vec3 euler;
+    if (std::abs(sinY) > 1.0 - 1.0e-10)
+    {
+        // At +/-90 degrees, only Z-X / Z+X is determined. Keep X near the preceding frame.
+        euler.x = previous ? previous->x : 0.0f;
+        euler.y = static_cast<float>(std::copysign(90.0, sinY));
+        euler.z = static_cast<float>(std::atan2(2.0 * (w * z - x * y), norm - 2.0 * (x * x + z * z)) * degrees +
+                                     (sinY > 0.0 ? euler.x : -euler.x));
+    }
+    else
+    {
+        euler = {static_cast<float>(std::atan2(2.0 * (w * x + y * z), norm - 2.0 * (x * x + y * y)) * degrees),
+                 static_cast<float>(std::asin(sinY) * degrees),
+                 static_cast<float>(std::atan2(2.0 * (w * z + x * y), norm - 2.0 * (y * y + z * z)) * degrees)};
+    }
+    if (!previous)
+        return euler;
+    const auto nearest = [previous](const Vec3& candidate)
+    {
+        return Vec3{previous->x + std::remainder(candidate.x - previous->x, 360.0f),
+                    previous->y + std::remainder(candidate.y - previous->y, 360.0f),
+                    previous->z + std::remainder(candidate.z - previous->z, 360.0f)};
+    };
+    // Both ZYX Euler branches describe the same orientation; choose the temporally continuous one.
+    const Vec3 first = nearest(euler);
+    const Vec3 second = nearest({euler.x + 180.0f, 180.0f - euler.y, euler.z + 180.0f});
+    return lengthSquared(first - *previous) <= lengthSquared(second - *previous) ? first : second;
 }
 } // namespace
 
@@ -498,7 +522,9 @@ ModelImportResult AssimpImporter::importModel(const std::filesystem::path& sourc
                     local.Decompose(scale, rotation, position);
                     key.localPose[boneIndex] = {
                         {position.x * options.scale, position.y * options.scale, position.z * options.scale},
-                        quaternionToEulerDegrees(rotation),
+                        quaternionToEulerDegrees(rotation, clip.keyframes.empty()
+                                                               ? nullptr
+                                                               : &clip.keyframes.back().localPose[boneIndex].rotation),
                         {scale.x, scale.y, scale.z}};
                 }
                 clip.keyframes.push_back(std::move(key));

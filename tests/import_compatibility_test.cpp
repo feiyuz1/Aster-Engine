@@ -12,6 +12,7 @@
 #include "tinyengine/resource/asset_registry.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstring>
 #include <filesystem>
@@ -127,6 +128,102 @@ bool writeSkeletalWorkflowFixture(const std::filesystem::path& directory, const 
     }
     return !error && PlatformFile::writeAllBytes(directory / "rig.bin", bytes) &&
            PlatformFile::writeAllText(directory / "rig.gltf", gltf);
+}
+
+// Quaternion-authored rotations cross Euler branch cuts and both coupled-axis gimbal singularities.
+int rotationContinuityRegression(const std::filesystem::path& outputRoot)
+{
+    int failures = 0;
+    const std::vector<std::vector<float>> rotations = {
+        {0.996194698f, 0, 0, 0.087155743f, 0.996194698f, 0, 0, -0.087155743f},
+        {0, 0, 0.996194698f, 0.087155743f, 0, 0, 0.996194698f, -0.087155743f},
+        {0.0960488600f, 0.6961352304f, -0.0885360226f, 0.7059261506f,
+         0.0885360226f, 0.7059261506f, -0.0960488600f, 0.6961352304f},
+        {0.4312483679f, -0.5548463640f, 0.4296375201f, 0.5670819683f,
+         0.4296375201f, -0.5670819683f, 0.4312483679f, 0.5548463640f}};
+    for (std::size_t test = 0; test < rotations.size(); ++test)
+    {
+        const auto fixture = outputRoot / ("RotationFixture" + std::to_string(test));
+        if (!writeSkeletalWorkflowFixture(fixture))
+            return failures + 1;
+        auto bytes = PlatformFile::ReadAllBytes(fixture / "rig.bin");
+        const auto offset = bytes.size();
+        bytes.resize(offset + 8 * sizeof(float));
+        std::memcpy(bytes.data() + offset, rotations[test].data(), 8 * sizeof(float));
+        auto gltf = PlatformFile::readAllText(fixture / "rig.gltf");
+        const auto replace = [&gltf](const std::string& from, const std::string& to)
+        {
+            std::size_t position = 0;
+            while ((position = gltf.find(from, position)) != std::string::npos)
+            {
+                gltf.replace(position, from.size(), to);
+                position += to.size();
+            }
+        };
+        replace(R"("input":4,"output":5)", R"("input":4,"output":6)");
+        replace(R"("node":2,"path":"translation")", R"("node":1,"path":"rotation")");
+        replace(R"("byteLength":268)", R"("byteLength":300)");
+        replace(R"("buffer":0,"byteOffset":244,"byteLength":24}])",
+                R"("buffer":0,"byteOffset":244,"byteLength":24},{"buffer":0,"byteOffset":268,"byteLength":32}])");
+        replace(R"("bufferView":5,"componentType":5126,"count":2,"type":"VEC3"}])",
+                R"("bufferView":5,"componentType":5126,"count":2,"type":"VEC3"},{"bufferView":6,"componentType":5126,"count":2,"type":"VEC4"}])");
+        if (!PlatformFile::writeAllBytes(fixture / "rig.bin", bytes) ||
+            !PlatformFile::writeAllText(fixture / "rig.gltf", gltf))
+            return failures + 1;
+        for (const bool compressed : {false, true})
+        {
+            ModelImportOptions options;
+            options.compressAnimations = compressed;
+            const auto result = AssimpImporter::importModel(
+                fixture / "rig.gltf", fixture / (compressed ? "Compressed" : "Raw"), options);
+            Skeleton skeleton;
+            for (const auto& asset : result.assets)
+                if (asset.type == "Skeleton")
+                    loadSkeletonAsset(asset.path, skeleton);
+            const int root = skeleton.findBone("Root");
+            if (!result.success || root < 0 || !containsAsset(result, "Animation"))
+            {
+                std::cerr << "Rotation fixture import failed: " << result.error << '\n';
+                ++failures;
+                continue;
+            }
+            for (const auto& asset : result.assets)
+            {
+                if (asset.type != "Animation")
+                    continue;
+                SkeletalClip clip;
+                bool valid = loadSkeletalClipAsset(asset.path, clip);
+                // Include baked frames and their interior points; t=.5 alone misses wrap interpolation failures.
+                for (int sample = 0; valid && sample <= 120; ++sample)
+                {
+                    const float time = static_cast<float>(sample) / 120.0f;
+                    const auto pose = clip.sample(time, skeleton.bones.size(), false);
+                    const auto matrix = rotationMatrix(Quaternion::fromEulerDegrees(pose[root].rotation));
+                    const float angle = degreesToRadians(test < 2 ? 170.0f + 20.0f * time
+                                                                 : (test == 2 ? 1.0f : -1.0f) * (89.0f + 2.0f * time));
+                    const float c = std::cos(angle), s = std::sin(angle);
+                    // Independent Rz(30)*Ry(angle)*Rx(45), or a single X/Z rotation.
+                    const std::array<float, 9> expected =
+                        test == 0 ? std::array<float, 9>{1, 0, 0, 0, c, -s, 0, s, c}
+                        : test == 1 ? std::array<float, 9>{c, -s, 0, s, c, 0, 0, 0, 1}
+                                    : std::array<float, 9>{0.866025404f * c, 0.612372436f * s - 0.353553391f,
+                                                          0.612372436f * s + 0.353553391f, 0.5f * c,
+                                                          0.353553391f * s + 0.612372436f,
+                                                          0.353553391f * s - 0.612372436f, -s,
+                                                          0.707106781f * c, 0.707106781f * c};
+                    for (int row = 0; row < 3; ++row)
+                        for (int column = 0; column < 3; ++column)
+                            valid = valid && std::abs(matrix.at(row, column) - expected[row * 3 + column]) < 0.0002f;
+                    if (!valid)
+                        std::cerr << "Rotation discontinuity: case " << test << ", compressed " << compressed
+                                  << ", t=" << time << '\n';
+                }
+                if (!valid)
+                    ++failures;
+            }
+        }
+    }
+    return failures;
 }
 
 int skeletalWorkflowRegression(const std::filesystem::path& outputRoot)
@@ -263,7 +360,7 @@ int main(int argc, char** argv)
               "| Case | Result | Meshes | Materials | Animations | Bones | Clips | Vertices | Triangles | Compression "
               "| Warnings |\n"
               "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n";
-    int failures = skeletalWorkflowRegression(outputRoot);
+    int failures = skeletalWorkflowRegression(outputRoot) + rotationContinuityRegression(outputRoot);
     if (argc > 1 && std::string(argv[1]) == "--skeletal-workflow")
         return failures == 0 ? 0 : 1;
     for (const auto& test : cases)
