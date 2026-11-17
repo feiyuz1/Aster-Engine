@@ -599,8 +599,8 @@ void EditorApp::drawSceneView()
         m_activeGizmoAxis = -1;
     const bool gizmoConsumed =
         sceneInputAllowed && !navigating && !draggingAsset &&
-        drawGizmo(imageMinimum.x, imageMinimum.y, available.x, available.y, hovered && !orientationHovered);
-    if (sceneInputAllowed && !navigating && !draggingAsset && !orientationHovered && hovered &&
+        drawGizmo(imageMinimum.x, imageMinimum.y, available.x, available.y, hovered && !hoverOnOrientation);
+    if (sceneInputAllowed && !navigating && !draggingAsset && !hoverOnOrientation && hovered &&
         ImGui::IsMouseClicked(ImGuiMouseButton_Left) && !gizmoConsumed)
     {
         const ImVec2 mouse = ImGui::GetMousePos();
@@ -1104,9 +1104,12 @@ bool EditorApp::placeAssetInScene(const AssetInfo& asset, const Vec3* position)
     }
     else if (asset.type == "Mesh")
     {
+        const auto& project = m_engine.getProjectSettings();
+        std::error_code error;
+        const bool hasDefault = std::filesystem::is_regular_file(project.resolve(project.assetDirectory / "default.mat"), error);
         recordUndo();
         m_selected = world.createEntity(toUtf8Path(fromUtf8Path(asset.path).stem()));
-        world.AddComponent(m_selected, MeshComponent{asset.path, "assets/default.mat"});
+        world.AddComponent(m_selected, MeshComponent{asset.path, hasDefault ? "assets/default.mat" : ""});
         if (position)
             world.GetComponent<TransformComponent>(m_selected)->position = *position;
         m_selection = {m_selected};

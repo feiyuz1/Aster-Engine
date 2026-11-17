@@ -124,7 +124,7 @@ std::shared_ptr<DynamicMaterialInstance> MaterialSystem::CreateDynamicInstance(c
 std::shared_ptr<const MaterialRenderProxy> MaterialSystem::BuildProxy(const std::string& assetPath,
                                                                       DynamicMaterialInstance* dynamic)
 {
-    const auto path = m_resources.resolveAssetPath(assetPath);
+    const auto path = assetPath.empty() ? "builtin:PBR" : m_resources.resolveAssetPath(assetPath);
     if (dynamic && dynamic->m_path != path)
         return {};
     if (!dynamic)

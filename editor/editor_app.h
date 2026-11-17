@@ -56,6 +56,7 @@ class EditorApp
     friend struct EditorInteractionTests;
 #endif
     void handleShortcuts();
+    void deleteSceneEntities(const std::vector<Entity>& entities);
     void requestEditorExit(bool continueExit = false);
     void resetSceneInteraction();
     void recordPropertyUndo();

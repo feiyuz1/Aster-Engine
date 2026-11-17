@@ -1034,9 +1034,9 @@ struct EditorInteractionTests
                   world.GetComponent<MeshComponent>(app.m_selected)->materialPath == "assets/z.mat",
               "dropping node material on scene mesh assigns it without spawning an entity");
         app.undo();
-        check(world.GetComponent<MeshComponent>(*world.GetEntityManager().GetAliveEntities().begin())->materialPath ==
-                  "assets/default.mat",
-              "one undo reverses viewport node material assignment");
+        check(world.GetComponent<MeshComponent>(*world.GetEntityManager().GetAliveEntities().begin())
+                  ->materialPath.empty(),
+              "undo restores an unassigned slot when the project has no default material");
         app.undo();
         check(world.GetEntityManager().GetAliveEntities().empty(), "one undo reverses the delivered viewport drop");
         app.resetSceneInteraction();
@@ -2048,6 +2048,96 @@ struct EditorInteractionTests
         const_cast<EngineContext&>(app.m_engine.GetContext()).renderer = nullptr;
     }
 
+    void viewportGizmoInput()
+    {
+        NullRenderDevice device;
+        Renderer renderer;
+        auto& context = const_cast<EngineContext&>(app.m_engine.GetContext());
+        context.renderer = &renderer;
+        app.m_device = &device;
+        auto& view = const_cast<FrameView&>(renderer.GetFrameView());
+        view.cameraPosition = {0, 0, 5};
+        view.view = lookAt(view.cameraPosition, {}, {0, 1, 0});
+        view.projection = perspective(60, 1.7f, .1f, 100);
+        app.m_editorCameraPosition = view.cameraPosition;
+        app.m_editorCameraRotation = {};
+        app.m_sceneMaximized = false;
+        app.m_gizmoSpace = EditorApp::GizmoSpace::World;
+        app.m_gizmoSnap = false;
+        world.clear();
+        app.resetSceneInteraction();
+        const auto entity = world.createEntity("Viewport Y drag");
+        app.m_selected = entity;
+        app.m_selection = {entity};
+        const auto draw = [&] { app.drawSceneView(); };
+        auto& io = ImGui::GetIO();
+        io.AddMousePosEvent(-100, -100);
+        frame(draw);
+        frame(draw);
+        const auto* scene = ImGui::FindWindowByName("Scene View");
+        ImVec2 tip{0, io.DisplaySize.y};
+        for (const auto& vertex : scene->DrawList->VtxBuffer)
+            if (vertex.col == IM_COL32(70, 220, 100, 255) && vertex.pos.y < tip.y)
+                tip = vertex.pos;
+        check(tip.y < io.DisplaySize.y, "scene view draws the green Y handle");
+        io.AddMousePosEvent(tip.x, tip.y + 4.0f);
+        frame(draw);
+        io.AddMouseButtonEvent(0, true);
+        frame(draw);
+        check(app.m_activeGizmoAxis == 1 && app.m_gizmoDragMode == EditorApp::GizmoMode::Translate,
+              "the drawn Y arrow captures the press through the scene view");
+        io.AddMousePosEvent(tip.x, tip.y - 25.0f);
+        frame(draw);
+        io.AddMouseButtonEvent(0, false);
+        frame(draw);
+        check(world.GetComponent<TransformComponent>(entity)->position.y > 0,
+              "dragging the Y arrow in the scene view moves the selected entity");
+        app.m_device = nullptr;
+        context.renderer = nullptr;
+    }
+
+    void gizmoMotionOnRelease()
+    {
+        Renderer renderer;
+        auto& context = const_cast<EngineContext&>(app.m_engine.GetContext());
+        context.renderer = &renderer;
+        auto& view = const_cast<FrameView&>(renderer.GetFrameView());
+        view.cameraPosition = {0, 0, 5};
+        view.view = lookAt(view.cameraPosition, {}, {0, 1, 0});
+        view.projection = perspective(60, 1, .1f, 100);
+        app.m_editorCameraPosition = view.cameraPosition;
+        app.m_gizmoSpace = EditorApp::GizmoSpace::World;
+        app.m_gizmoSnap = false;
+        world.clear();
+        app.resetSceneInteraction();
+        app.m_undo.clear();
+        const auto entity = world.createEntity("Fast Y drag");
+        app.m_selected = entity;
+        app.m_selection = {entity};
+        const auto draw = [&]
+        {
+            ImGui::SetNextWindowPos({0, 0});
+            ImGui::SetNextWindowSize({600, 600});
+            ImGui::Begin("GizmoRelease");
+            app.drawGizmo(50, 50, 400, 400, true);
+            ImGui::End();
+        };
+        auto& io = ImGui::GetIO();
+        io.AddMousePosEvent(250, 200);
+        frame(draw);
+        io.AddMouseButtonEvent(0, true);
+        frame(draw);
+        check(app.m_activeGizmoAxis == 1 && app.m_gizmoDragMode == EditorApp::GizmoMode::Translate,
+              "green Y translation arrow captures the press");
+        io.AddMousePosEvent(250, 160);
+        io.AddMouseButtonEvent(0, false);
+        frame(draw);
+        check(world.GetComponent<TransformComponent>(entity)->position.y > .3f && app.m_activeGizmoAxis < 0 &&
+                  app.m_undo.size() == 1,
+              "a Y drag applies motion that arrived in the release frame and records one undo");
+        context.renderer = nullptr;
+    }
+
     void inspectorBatchAndValidation()
     {
         world.clear();
@@ -2295,6 +2385,51 @@ struct EditorInteractionTests
         check(!app.m_packageFuture.valid(), "completed packaging releases the edit lock through the UI status poll");
         document.path = previousPath;
         app.resetSceneInteraction();
+    }
+
+    void hierarchyDelete()
+    {
+        world.clear();
+        app.resetSceneInteraction();
+        app.m_undo.clear();
+        const Entity selected = world.createEntity("Keep selected");
+        const Entity target = world.createEntity("Delete target");
+        app.m_selected = selected;
+        app.m_selection = {selected};
+        std::snprintf(app.m_hierarchySearch.data(), app.m_hierarchySearch.size(), "%s", "Delete target");
+        ImVec2 row{};
+        const auto draw = [&]
+        {
+            app.drawHierarchy();
+            auto* panel = ImGui::FindWindowByName("Hierarchy");
+            row = {panel->WorkRect.Min.x + 38.0f, panel->DC.CursorPosPrevLine.y + panel->DC.PrevLineSize.y * .5f};
+        };
+        auto& io = ImGui::GetIO();
+        frame(draw);
+        frame(draw);
+        io.AddMousePosEvent(row.x, row.y);
+        frame(draw);
+        io.AddMouseButtonEvent(1, true);
+        frame(draw);
+        io.AddMouseButtonEvent(1, false);
+        frame(draw);
+        frame(draw);
+        auto* menu = browserPopup();
+        check(menu != nullptr, "right clicking an entity row opens its actions");
+        ImGui::ActivateItemByID(menu->GetID("Delete Entity"));
+        frame(draw);
+        frame(draw);
+        check(!world.isAlive(target) && world.isAlive(selected) && app.m_undo.size() == 1,
+              "hierarchy delete acts on the clicked entity and records one undo");
+        app.undo();
+        const auto& alive = world.GetEntityManager().GetAliveEntities();
+        check(alive.size() == 2 && app.m_undo.empty() &&
+                  std::any_of(alive.begin(), alive.end(), [&](Entity entity) {
+                      const auto* name = world.GetComponent<NameComponent>(entity);
+                      return name && name->name == "Delete target";
+                  }),
+              "undo restores the entity removed by the menu");
+        app.m_hierarchySearch[0] = '\0';
     }
 
     void hierarchyCameraFocus()
@@ -3292,6 +3427,12 @@ int main(int argc, char** argv)
                 tests.viewCubeNavigation();
             else if (filter == "--combined-gizmo")
                 tests.combinedGizmo();
+            else if (filter == "--gizmo-release")
+                tests.gizmoMotionOnRelease();
+            else if (filter == "--viewport-gizmo")
+                tests.viewportGizmoInput();
+            else if (filter == "--hierarchy-delete")
+                tests.hierarchyDelete();
             else if (filter == "--p1-drop")
                 tests.p1SceneDrag();
             else if (filter == "--p1-orbit")
@@ -3352,7 +3493,10 @@ int main(int argc, char** argv)
         tests.typedSkeletonAndFailedOpen();
         tests.packagingWriteLock();
         tests.gizmo();
+        tests.gizmoMotionOnRelease();
+        tests.viewportGizmoInput();
         tests.hierarchyCameraFocus();
+        tests.hierarchyDelete();
         tests.combinedGizmo();
         tests.viewportRegression();
         tests.compactWorkspace();

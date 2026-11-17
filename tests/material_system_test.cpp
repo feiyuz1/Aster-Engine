@@ -447,6 +447,20 @@ void testOpacityDependency()
                .error.empty(),
           "cyclic shader template includes rejected");
 }
+void testUnassignedMaterial()
+{
+    ResourceManager resources;
+    resources.initialize(nullptr, root);
+    MaterialSystem system(resources);
+    const auto builtin = system.BuildProxy("builtin:PBR");
+    const auto unassigned = system.BuildProxy("");
+    check(builtin && unassigned == builtin && builtin->state.shadingModel == MaterialShadingModel::Lit,
+          "an unassigned material uses the built-in PBR proxy");
+    const auto missing = system.BuildProxy("assets/does-not-exist.mat");
+    check(missing && missing->state.shadingModel == MaterialShadingModel::Unlit,
+          "an explicit missing material still uses the error proxy");
+}
+
 void testDynamicIsolation()
 {
     ResourceManager resources;
@@ -821,6 +835,7 @@ int main()
         testDeterministicCompilation();
         testLimits();
         testOpacityDependency();
+        testUnassignedMaterial();
         testDynamicIsolation();
         testReloadPublication();
         testCookingAndSourceCache();

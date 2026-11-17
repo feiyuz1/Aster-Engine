@@ -1361,18 +1361,21 @@ void EditorApp::handleShortcuts()
         }
     }
     else if (!io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_Delete, false))
-    {
-        World& world = *m_engine.GetContext().world;
-        const auto selection = m_selection.empty() ? std::vector<Entity>{m_selected} : m_selection;
-        if (std::any_of(selection.begin(), selection.end(), [&](Entity entity) { return world.isAlive(entity); }))
-        {
-            recordUndo();
-            for (const Entity entity : selection)
-                if (world.isAlive(entity))
-                    world.destroyEntity(entity);
-            resetSceneInteraction();
-        }
-    }
+        deleteSceneEntities(m_selection.empty() ? std::vector<Entity>{m_selected} : m_selection);
+}
+
+void EditorApp::deleteSceneEntities(const std::vector<Entity>& entities)
+{
+    if (m_engine.isPlaying() || m_packageFuture.valid())
+        return;
+    World& world = *m_engine.GetContext().world;
+    if (std::none_of(entities.begin(), entities.end(), [&](Entity entity) { return world.isAlive(entity); }))
+        return;
+    recordUndo();
+    for (const Entity entity : entities)
+        if (world.isAlive(entity))
+            world.destroyEntity(entity);
+    resetSceneInteraction();
 }
 
 void EditorApp::requestEditorExit(const bool continueExit)
@@ -1877,6 +1880,7 @@ void EditorApp::drawHierarchy()
                              m_hierarchySearch.data(), m_hierarchySearch.size());
     const std::string search = lowercase(m_hierarchySearch.data());
     ImGui::Separator();
+    Entity deleteTarget = kInvalidEntity;
     std::function<void(Entity)> drawNode = [&](const Entity entity)
     {
         std::vector<Entity> children;
@@ -1918,6 +1922,13 @@ void EditorApp::drawHierarchy()
                 m_selection = {entity};
             }
         }
+        if (ImGui::BeginPopupContextItem())
+        {
+            if (ImGui::MenuItem(localize("Delete Entity", "删除实体"), nullptr, false,
+                                !m_engine.isPlaying() && !m_packageFuture.valid()))
+                deleteTarget = entity;
+            ImGui::EndPopup();
+        }
         if (open)
         {
             for (const Entity child : children)
@@ -1932,6 +1943,8 @@ void EditorApp::drawHierarchy()
             drawNode(entity);
     }
     ImGui::End();
+    if (deleteTarget != kInvalidEntity)
+        deleteSceneEntities({deleteTarget});
 }
 
 void EditorApp::drawInspector()
@@ -2286,7 +2299,8 @@ bool EditorApp::drawGizmo(const float minimumX, const float minimumY, const floa
     }
     const ImU32 colors[3] = {IM_COL32(235, 70, 70, 255), IM_COL32(70, 220, 100, 255), IM_COL32(75, 135, 245, 255)};
     ImVec2 start;
-    if (!ImGui::IsMouseDown(ImGuiMouseButton_Left))
+    const bool mouseReleased = ImGui::IsMouseReleased(ImGuiMouseButton_Left);
+    if (!mouseReleased && !ImGui::IsMouseDown(ImGuiMouseButton_Left))
         m_activeGizmoAxis = -1;
     if (!projectToScreen(m_engine.GetContext().renderer->GetFrameView(), origin, minimumX, minimumY, width, height,
                          start))
@@ -2476,119 +2490,119 @@ bool EditorApp::drawGizmo(const float minimumX, const float minimumY, const floa
     }
     if (m_activeGizmoAxis >= 0)
     {
-        if (!ImGui::IsMouseDown(ImGuiMouseButton_Left))
+        const int activeAxis = m_activeGizmoAxis;
+        // The release frame can carry the final pointer movement.
+        if (mouseReleased)
             m_activeGizmoAxis = -1;
-        else
+        const ImVec2 delta = ImGui::GetIO().MouseDelta;
+        const float alongAxis = delta.x * m_gizmoScreenDirection.x + delta.y * m_gizmoScreenDirection.y;
+        float rawMotion = alongAxis / m_gizmoScreenLength *
+                          (m_gizmoDragMode == GizmoMode::Translate ? m_gizmoDragHandleLength : 1.0f);
+        if (m_gizmoDragMode == GizmoMode::Rotate)
         {
-            const ImVec2 delta = ImGui::GetIO().MouseDelta;
-            const float alongAxis = delta.x * m_gizmoScreenDirection.x + delta.y * m_gizmoScreenDirection.y;
-            float rawMotion = alongAxis / m_gizmoScreenLength *
-                              (m_gizmoDragMode == GizmoMode::Translate ? m_gizmoDragHandleLength : 1.0f);
-            if (m_gizmoDragMode == GizmoMode::Rotate)
+            Vec3 radial;
+            if (rotationPlaneVector(m_gizmoDragView, mouse, m_gizmoDragOrigin, m_gizmoDragAxis, minimumX, minimumY,
+                                    width, height, radial))
             {
-                Vec3 radial;
-                if (rotationPlaneVector(m_gizmoDragView, mouse, m_gizmoDragOrigin, m_gizmoDragAxis, minimumX, minimumY,
-                                        width, height, radial))
-                {
-                    rawMotion = std::atan2(dot(m_gizmoDragAxis, cross(m_gizmoRotationVector, radial)),
-                                           dot(m_gizmoRotationVector, radial)) *
-                                180.0f / kPi;
-                    m_gizmoRotationVector = radial;
-                }
-                else
-                    rawMotion *= 180.0f / kPi;
+                rawMotion = std::atan2(dot(m_gizmoDragAxis, cross(m_gizmoRotationVector, radial)),
+                                       dot(m_gizmoRotationVector, radial)) *
+                            180.0f / kPi;
+                m_gizmoRotationVector = radial;
             }
-            m_gizmoAccumulatedMotion += rawMotion;
-            const float step = m_gizmoDragMode == GizmoMode::Translate ? m_translateSnap
-                               : m_gizmoDragMode == GizmoMode::Rotate  ? m_rotateSnap
-                                                                       : m_scaleSnap;
-            const float targetMotion = m_gizmoSnap
-                                           ? std::round(m_gizmoAccumulatedMotion / std::max(0.001f, step)) * step
-                                           : m_gizmoAccumulatedMotion;
-            const float motion = targetMotion - m_gizmoAppliedMotion;
-            const float scaleRatio =
-                std::max(0.001f, 1.0f + targetMotion) / std::max(0.001f, 1.0f + m_gizmoAppliedMotion);
-            m_gizmoAppliedMotion = targetMotion;
-            if (motion == 0.0f)
-                return true;
-            const auto snapshot = m_gizmoUndoRecorded ? std::string{} : m_engine.GetSceneManager().createSnapshot();
-            // 已选子实体只随已选祖先移动一次，不再重复叠加局部位移。
-            for (const Entity entity : targets)
+            else
+                rawMotion *= 180.0f / kPi;
+        }
+        m_gizmoAccumulatedMotion += rawMotion;
+        const float step = m_gizmoDragMode == GizmoMode::Translate ? m_translateSnap
+                           : m_gizmoDragMode == GizmoMode::Rotate  ? m_rotateSnap
+                                                                   : m_scaleSnap;
+        const float targetMotion = m_gizmoSnap
+                                       ? std::round(m_gizmoAccumulatedMotion / std::max(0.001f, step)) * step
+                                       : m_gizmoAccumulatedMotion;
+        const float motion = targetMotion - m_gizmoAppliedMotion;
+        const float scaleRatio =
+            std::max(0.001f, 1.0f + targetMotion) / std::max(0.001f, 1.0f + m_gizmoAppliedMotion);
+        m_gizmoAppliedMotion = targetMotion;
+        if (motion == 0.0f)
+            return true;
+        const auto snapshot = m_gizmoUndoRecorded ? std::string{} : m_engine.GetSceneManager().createSnapshot();
+        // 已选子实体只随已选祖先移动一次，不再重复叠加局部位移。
+        for (const Entity entity : targets)
+        {
+            bool inherited = false;
+            const auto* relationship = world.GetComponent<RelationshipComponent>(entity);
+            Entity parent = relationship ? relationship->parent : kInvalidEntity;
+            for (Entity ancestor = parent; world.isAlive(ancestor);)
             {
-                bool inherited = false;
-                const auto* relationship = world.GetComponent<RelationshipComponent>(entity);
-                Entity parent = relationship ? relationship->parent : kInvalidEntity;
-                for (Entity ancestor = parent; world.isAlive(ancestor);)
+                if (std::find(targets.begin(), targets.end(), ancestor) != targets.end())
                 {
-                    if (std::find(targets.begin(), targets.end(), ancestor) != targets.end())
-                    {
-                        inherited = true;
-                        break;
-                    }
-                    const auto* r = world.GetComponent<RelationshipComponent>(ancestor);
-                    ancestor = r ? r->parent : kInvalidEntity;
+                    inherited = true;
+                    break;
                 }
-                if (inherited)
-                    continue;
-                auto* transform = world.GetComponent<TransformComponent>(entity);
-                if (!transform)
-                    continue;
-                const Mat4 parentMatrix = world.isAlive(parent) ? world.getWorldMatrix(parent) : Mat4::identity();
-                Vec3 localAxis;
-                if (!toLocalVector(parentMatrix, m_gizmoDragAxis, localAxis))
-                    continue;
-                if (m_gizmoDragMode == GizmoMode::Translate)
-                    transform->position += localAxis * motion;
-                else if (m_gizmoDragMode == GizmoMode::Rotate)
+                const auto* r = world.GetComponent<RelationshipComponent>(ancestor);
+                ancestor = r ? r->parent : kInvalidEntity;
+            }
+            if (inherited)
+                continue;
+            auto* transform = world.GetComponent<TransformComponent>(entity);
+            if (!transform)
+                continue;
+            const Mat4 parentMatrix = world.isAlive(parent) ? world.getWorldMatrix(parent) : Mat4::identity();
+            Vec3 localAxis;
+            if (!toLocalVector(parentMatrix, m_gizmoDragAxis, localAxis))
+                continue;
+            if (m_gizmoDragMode == GizmoMode::Translate)
+                transform->position += localAxis * motion;
+            else if (m_gizmoDragMode == GizmoMode::Rotate)
+            {
+                // 围绕当前显示的轴组合旋转，不能直接累加无关的欧拉角分量。
+                const Vec3 axis = normalize(localAxis);
+                const float half = degreesToRadians(motion) * 0.5f;
+                const Mat4 deltaRotation = rotationMatrix(
+                    {axis.x * std::sin(half), axis.y * std::sin(half), axis.z * std::sin(half), std::cos(half)});
+                transform->rotation = rotationEuler(
+                    deltaRotation * rotationMatrix(Quaternion::fromEulerDegrees(transform->rotation)));
+                if (m_pivotMode != PivotMode::Individual)
                 {
-                    // 围绕当前显示的轴组合旋转，不能直接累加无关的欧拉角分量。
-                    const Vec3 axis = normalize(localAxis);
-                    const float half = degreesToRadians(motion) * 0.5f;
-                    const Mat4 deltaRotation = rotationMatrix(
-                        {axis.x * std::sin(half), axis.y * std::sin(half), axis.z * std::sin(half), std::cos(half)});
-                    transform->rotation = rotationEuler(
-                        deltaRotation * rotationMatrix(Quaternion::fromEulerDegrees(transform->rotation)));
-                    if (m_pivotMode != PivotMode::Individual)
-                    {
-                        const float worldHalf = degreesToRadians(motion) * 0.5f;
-                        const Mat4 rotation = rotationMatrix(
-                            {m_gizmoDragAxis.x * std::sin(worldHalf), m_gizmoDragAxis.y * std::sin(worldHalf),
-                             m_gizmoDragAxis.z * std::sin(worldHalf), std::cos(worldHalf)});
-                        const Vec3 position = transformPoint(parentMatrix, transform->position);
-                        Vec3 localPosition;
-                        if (toLocalVector(parentMatrix,
-                                          m_gizmoDragOrigin + transformPoint(rotation, position - m_gizmoDragOrigin) -
-                                              matrixColumn(parentMatrix, 3),
-                                          localPosition))
-                            transform->position = localPosition;
-                    }
-                }
-                else
-                {
-                    float* component = m_activeGizmoAxis == 0   ? &transform->scale.x
-                                       : m_activeGizmoAxis == 1 ? &transform->scale.y
-                                                                : &transform->scale.z;
-                    const float oldScale = *component;
-                    *component = std::max(0.001f, oldScale * scaleRatio);
-                    if (m_pivotMode != PivotMode::Individual && std::abs(oldScale) > 0.0001f)
-                    {
-                        const Vec3 position = transformPoint(parentMatrix, transform->position);
-                        const Vec3 offset = m_gizmoDragAxis * (dot(position - m_gizmoDragOrigin, m_gizmoDragAxis) *
-                                                               (*component / oldScale - 1.0f));
-                        Vec3 localOffset;
-                        if (toLocalVector(parentMatrix, offset, localOffset))
-                            transform->position += localOffset;
-                    }
+                    const float worldHalf = degreesToRadians(motion) * 0.5f;
+                    const Mat4 rotation = rotationMatrix(
+                        {m_gizmoDragAxis.x * std::sin(worldHalf), m_gizmoDragAxis.y * std::sin(worldHalf),
+                         m_gizmoDragAxis.z * std::sin(worldHalf), std::cos(worldHalf)});
+                    const Vec3 position = transformPoint(parentMatrix, transform->position);
+                    Vec3 localPosition;
+                    if (toLocalVector(parentMatrix,
+                                      m_gizmoDragOrigin + transformPoint(rotation, position - m_gizmoDragOrigin) -
+                                          matrixColumn(parentMatrix, 3),
+                                      localPosition))
+                        transform->position = localPosition;
                 }
             }
-            if (!snapshot.empty() && snapshot != m_engine.GetSceneManager().createSnapshot())
+            else
             {
-                commitUndoSnapshot(snapshot);
-                m_gizmoUndoRecorded = true;
+                float* component = activeAxis == 0   ? &transform->scale.x
+                                   : activeAxis == 1 ? &transform->scale.y
+                                                            : &transform->scale.z;
+                const float oldScale = *component;
+                *component = std::max(0.001f, oldScale * scaleRatio);
+                if (m_pivotMode != PivotMode::Individual && std::abs(oldScale) > 0.0001f)
+                {
+                    const Vec3 position = transformPoint(parentMatrix, transform->position);
+                    const Vec3 offset = m_gizmoDragAxis * (dot(position - m_gizmoDragOrigin, m_gizmoDragAxis) *
+                                                           (*component / oldScale - 1.0f));
+                    Vec3 localOffset;
+                    if (toLocalVector(parentMatrix, offset, localOffset))
+                        transform->position += localOffset;
+                }
             }
         }
+        if (!snapshot.empty() && snapshot != m_engine.GetSceneManager().createSnapshot())
+        {
+            commitUndoSnapshot(snapshot);
+            m_gizmoUndoRecorded = true;
+        }
+        return true;
     }
-    return hovered || m_activeGizmoAxis >= 0;
+    return hovered;
 }
 
 // 依据资产类型选择放置策略：Prefab 重建完整层级，Mesh 则创建或替换单个 MeshRenderer。
